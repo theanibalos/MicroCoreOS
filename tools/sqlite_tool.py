@@ -1,42 +1,54 @@
 import sqlite3
+import threading
 from core.base_tool import BaseTool
 
 class SqliteTool(BaseTool):
+    def __init__(self):
+        self._local = threading.local()
+        self._db_path = "database.db"
+
     @property
     def name(self) -> str:
         return "db"
 
+    def _get_conn(self):
+        """Obtiene la conexión única para el hilo actual"""
+        if not hasattr(self._local, "conn"):
+            self._local.conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._local.cursor = self._local.conn.cursor()
+        return self._local.conn, self._local.cursor
+
     def setup(self):
-        """Inicializa la conexión y crea una tabla de prueba"""
-        self.conn = sqlite3.connect("database.db", check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        # Creamos una tabla inicial para que la IA tenga donde trabajar
-        self.cursor.execute("""
+        """Inicializa la tabla base si no existe"""
+        conn, cursor = self._get_conn()
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 email TEXT UNIQUE NOT NULL
             )
         """)
-        self.conn.commit()
-        print("[System] SqliteTool: Base de datos lista y conectada.")
+        conn.commit()
+        print(f"[System] SqliteTool: Base de datos '{self._db_path}' lista.")
 
     def get_interface_description(self) -> str:
         return """
         Herramienta SQLite (db):
-        - query(sql, params): Ejecuta una consulta de lectura (SELECT).
-        - execute(sql, params): Ejecuta una escritura (INSERT, UPDATE, DELETE).
-        - commit(): Guarda los cambios en disco.
+        - query(sql, params): Consulta de lectura (SELECT).
+        - execute(sql, params): Escritura (INSERT, UPDATE, DELETE).
         """
 
     def query(self, sql, params=()):
-        self.cursor.execute(sql, params)
-        return self.cursor.fetchall()
+        _, cursor = self._get_conn()
+        cursor.execute(sql, params)
+        return cursor.fetchall()
 
     def execute(self, sql, params=()):
-        self.cursor.execute(sql, params)
-        self.conn.commit()
-        return self.cursor.lastrowid
+        conn, cursor = self._get_conn()
+        cursor.execute(sql, params)
+        conn.commit()
+        return cursor.lastrowid
 
     def shutdown(self):
-        self.conn.close()
+        # Al ser hilos daemon, el SO limpiará. 
+        pass

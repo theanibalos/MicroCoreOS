@@ -28,11 +28,26 @@ class Kernel:
                         module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(module)
 
+                        # Si estamos cargando dominios, intentamos capturar el nombre del dominio
+                        domain_name = None
+                        if directory == "domains":
+                            # Estructura esperada: domains/nombre_dominio/subcarpeta/archivo.py
+                            parts = path.split(os.sep)
+                            if len(parts) >= 3:
+                                domain_name = parts[1]
+
                         for name, obj in inspect.getmembers(module):
                             if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
                                 instances.append(obj)
+                                
+                        # --- MEJORA: Registro de Metadatos ---
+                        if domain_name:
+                            # Si es un modelo, guardamos su código para el ContextTool
+                            if "models" in path:
+                                with open(path, "r", encoding="utf-8") as f:
+                                    code = f.read()
+                                    self.container.register_domain_metadata(domain_name, f"model_{file}", code)
                     except Exception as e:
-                        # Resiliencia en carga de archivos: Si un archivo tiene error de sintaxis, saltamos
                         print(f"[Kernel] 🔥 Error cargando archivo {path}: {e}")
         return instances
 

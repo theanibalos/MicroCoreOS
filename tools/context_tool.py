@@ -36,15 +36,33 @@ class ContextTool(BaseTool):
         for name in container.list_tools():
             # Evitamos que la propia tool de contexto se ensucie a sí misma en el manual si prefieres
             tool = container.get(name)
-            manifest += f"### 🔧 Tool: `{name}`\n"
+            health = container.get_health(name)
+            status_emoji = "✅" if health["status"] == "OK" else "❌"
+            
+            manifest += f"### 🔧 Tool: `{name}` (Estado: {status_emoji} {health['status']})\n"
+            if health["status"] != "OK":
+                manifest += f"> **ALERTA**: {health.get('message', 'Error desconocido')}\n\n"
+            
             manifest += "**Interfaz y Capacidades:**\n"
             manifest += f"```text\n{tool.get_interface_description().strip()}\n```\n"
             manifest += "\n"
         
-        # 3. Escritura del archivo
+        # 3. Modelos del Dominio (Discovery via Registry)
+        manifest += "## 📦 Modelos del Dominio (Data Structures)\n"
+        manifest += "Estructuras de datos validadas que representan el negocio.\n\n"
+        
+        domain_metadata = container.get_domain_metadata()
+        for domain_name, data in sorted(domain_metadata.items()):
+            for key, code in sorted(data.items()):
+                if key.startswith("model_"):
+                    model_name = key.replace("model_", "")
+                    manifest += f"### 🧩 Domain `{domain_name}`: `{model_name}`\n"
+                    manifest += "```python\n" + code.strip() + "\n```\n\n"
+
+        # 4. Escritura del archivo
         try:
             with open("AI_CONTEXT.md", "w", encoding="utf-8") as f:
                 f.write(manifest)
-            print("[ContextTool] AI_CONTEXT.md actualizado con estándares de Clean Architecture.")
+            print("[ContextTool] AI_CONTEXT.md actualizado vía Architectural Registry.")
         except Exception as e:
             print(f"[ContextTool] Error al escribir el manifiesto: {e}")
