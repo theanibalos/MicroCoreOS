@@ -11,60 +11,81 @@ class Kernel:
         self.plugins = {}
 
     def _load_modules_from_dir(self, directory, base_class):
-        """
-        Busca archivos .py en un directorio e instancia clases 
-        que hereden de base_class.
-        """
         instances = []
-        if not os.path.exists(directory):
-            return instances
+        if not os.path.exists(directory): return instances
 
         for root, _, files in os.walk(directory):
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
                     path = os.path.join(root, file)
-                    module_name = file[:-3]
+                    module_name = f"{directory}_{file[:-3]}"
                     
-                    # Carga dinámica del archivo
-                    spec = importlib.util.spec_from_file_location(module_name, path)
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
+                    try:
+                        spec = importlib.util.spec_from_file_location(module_name, path)
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
 
-                    # Buscar clases que hereden de la base (pero que no sean la base misma)
-                    for name, obj in inspect.getmembers(module):
-                        if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
-                            instances.append(obj)
+                        for name, obj in inspect.getmembers(module):
+                            if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
+                                instances.append(obj)
+                    except Exception as e:
+                        # Resiliencia en carga de archivos: Si un archivo tiene error de sintaxis, saltamos
+                        print(f"[Kernel] 🔥 Error cargando archivo {path}: {e}")
         return instances
 
     def boot(self):
-        """Ciclo de vida de arranque"""
         print("--- [Kernel] Iniciando Sistema ---")
         
-        # 1. Cargar Tools
-        tool_classes = self._load_modules_from_dir("tools", BaseTool)
-        for tool_cls in tool_classes:
-            tool_instance = tool_cls()
-            tool_instance.setup() # Fase de setup de la tool
-            self.container.register(tool_instance)
+        # 1. Cargar e Iniciar Tools (Infraestructura Crítica)
+        for tool_cls in self._load_modules_from_dir("tools", BaseTool):
+            try:
+                instance = tool_cls()
+                instance.setup()
+                self.container.register(instance)
+            except Exception as e:
+                print(f"[Kernel] ❌ No se pudo iniciar Tool {tool_cls.__name__}: {e}")
 
-        # 2. Cargar Plugins (Casos de uso)
-        # Buscamos en domains/*/plugins
-        plugin_classes = self._load_modules_from_dir("domains", BasePlugin)
-        for plugin_cls in plugin_classes:
-            # Inyección de dependencia: Pasamos el container al plugin
-            plugin_instance = plugin_cls(self.container)
-            # Inicializar plugins
-            plugin_instance.on_boot()
-            # El nombre del plugin suele ser el nombre de la clase o un atributo
-            self.plugins[plugin_cls.__name__] = plugin_instance
-            print(f"[Kernel] Plugin cargado: {plugin_cls.__name__}")
+        # 2. Cargar e Iniciar Plugins (Lógica de Dominio)
+        for plugin_cls in self._load_modules_from_dir("domains", BasePlugin):
+            try:
+                instance = plugin_cls(self.container)
+                # Ejecutamos on_boot (registro de rutas, eventos, etc.)
+                instance.on_boot()
+                self.plugins[plugin_cls.__name__] = instance
+                print(f"[Kernel] Plugin cargado: {plugin_cls.__name__}")
+            except Exception as e:
+                # Si el on_boot de un plugin falla, el sistema sigue sin ese plugin
+                print(f"[Kernel] ⚠️ Fallo al inicializar plugin {plugin_cls.__name__}: {e}")
+
+        # 3. NOTIFICACIÓN FINAL: Aviso a las tools que terminamos
+        for tool_name in self.container.list_tools():
+            try:
+                tool = self.container.get(tool_name)
+                tool.on_boot_complete(self.container)
+            except Exception as e:
+                print(f"[Kernel] Error en on_boot_complete de {tool_name}: {e}")
 
         print("--- [Kernel] Sistema Listo ---")
 
     def run_plugin(self, plugin_name, **kwargs):
-        """Ejecuta un caso de uso específico"""
+        """Ejecución Resiliente: Un error en el plugin no mata el proceso."""
         if plugin_name not in self.plugins:
-            raise Exception(f"Plugin {plugin_name} no encontrado.")
-        return self.plugins[plugin_name].execute(**kwargs)
-    
-    
+            return {"success": False, "error": f"Plugin {plugin_name} no encontrado."}
+        
+        try:
+            # Envolvemos la ejecución en un try/except para capturar errores de lógica
+            return self.plugins[plugin_name].execute(**kwargs)
+        except Exception as e:
+            # Logueamos el error pero retornamos una respuesta controlada
+            print(f"[Kernel] 💥 Crash en ejecución de {plugin_name}: {e}")
+            return {"success": False, "error": "Internal Plugin Error", "details": str(e)}
+
+    def shutdown(self):
+        print("\n--- [Kernel] Iniciando apagado de herramientas ---")
+        for tool_name in self.container.list_tools():
+            try:
+                tool = self.container.get(tool_name)
+                tool.shutdown()
+                print(f"[Kernel] Tool '{tool_name}' cerrada correctamente.")
+            except Exception as e:
+                print(f"[Kernel] Error cerrando '{tool_name}': {e}")
