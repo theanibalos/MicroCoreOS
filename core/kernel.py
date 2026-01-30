@@ -6,6 +6,9 @@ from core.base_tool import BaseTool
 from core.base_plugin import BasePlugin
 
 class Kernel:
+    # Herramientas fundamentales sin las cuales el sistema no tiene sentido
+    REQUIRED_TOOLS = ["logger", "db"]
+
     def __init__(self):
         self.container = Container()
         self.plugins = {}
@@ -42,8 +45,16 @@ class Kernel:
                 instance = tool_cls()
                 instance.setup()
                 self.container.register(instance)
+                self.container.set_health(instance.name, Container.STATUS_OK)
             except Exception as e:
-                print(f"[Kernel] ❌ No se pudo iniciar Tool {tool_cls.__name__}: {e}")
+                # Si falla, registramos el error en el contenedor
+                tool_name = getattr(tool_cls(), 'name', tool_cls.__name__) # Intento de obtener nombre
+                self.container.set_health(tool_name, Container.STATUS_FAIL, str(e))
+                
+                if tool_name in self.REQUIRED_TOOLS:
+                    print(f"[Kernel] 🚨 CRÍTICO: Herramienta requerida '{tool_name}' falló: {e}")
+                else:
+                    print(f"[Kernel] ⚠️ Herramienta opcional '{tool_name}' falló: {e}")
 
         # 2. Cargar e Iniciar Plugins (Lógica de Dominio)
         for plugin_cls in self._load_modules_from_dir("domains", BasePlugin):

@@ -39,6 +39,11 @@ class UserApiPlugin(BasePlugin):
             )
             
             logger.info(f"Usuario {user.name} registrado vía API.")
+            
+            # --- 4. NOTIFICACIÓN (Event Bus) ---
+            bus = self.container.get("event_bus")
+            bus.publish("user_created", user.to_dict())
+            
             return {"success": True, "data": user.to_dict()}
             
         except Exception as e:
