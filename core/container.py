@@ -19,6 +19,10 @@ class Container:
             raise Exception(f"La herramienta '{name}' no existe.")
         return self._tools[name]
 
+    def has_tool(self, name: str) -> bool:
+        """Verifica si una herramienta existe"""
+        return name in self._tools
+
     def list_tools(self):
         """Retorna los nombres de todas las herramientas registradas"""
         return list(self._tools.keys())

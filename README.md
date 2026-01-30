@@ -11,7 +11,7 @@ MicroOS resuelve esto con:
 
 1.  **Arquitectura Fractal**: Todo es un Plugin. Todos los Plugins se ven iguales.
 2.  **Self-Documenting Context**: El sistema genera y mantiene su propio `AI_CONTEXT.md`, que sirve como "manual de instrucciones vivo" para cualquier agente que trabaje en el repo.
-3.  **Sandboxed Logic**: Reglas estrictas de aislamiento. Un plugin corrupto no tumba el Kernel.
+3.  **Real Dependency Injection**: Los Plugins no tienen acceso a todo el contenedor. Solo reciben en su constructor las herramientas que piden explícitamente. Seguridad y claridad por diseño.
 
 ## 🏗️ Arquitectura del Sistema
 
@@ -64,9 +64,9 @@ Resumen rápido para crear un Plugin:
 
 ## 🛡️ "Not Invented Here" Statement
 
-MicroOS implementa su propio contenedor de inyección y sistema de discovery deliberadamente.
+MicroOS implementa su propio sistema de **Inyección de Dependencias (DI)** y orquestación deliberadamente.
 *   **¿Por qué no FastAPI/Flask?**: Para reducir la superficie de API externa que la IA debe conocer. El "Framework" es el código que ves en `/core`, 100% auditable y modificable.
-*   **¿Por qué no Celery?**: Para mantener el stack 100% Python nativo y portable sin deps de sistema.
+*   **¿Por qué no Inyectores externos?**: Para mantener la transparencia. El Kernel es un orquestador que puedes leer en un minuto y entender exactamente cómo se inyectan tus herramientas.
 
 ---
 *Construido con <3 y Lógica Pura.*

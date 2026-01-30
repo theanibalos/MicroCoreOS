@@ -71,16 +71,30 @@ class Kernel:
                 else:
                     print(f"[Kernel] ⚠️ Herramienta opcional '{tool_name}' falló: {e}")
 
-        # 2. Cargar e Iniciar Plugins (Lógica de Dominio)
+        # 2. Cargar e Iniciar Plugins (DI Real)
         for plugin_cls in self._load_modules_from_dir("domains", BasePlugin):
             try:
-                instance = plugin_cls(self.container)
+                # Análisis de dependencias vía __init__
+                sig = inspect.signature(plugin_cls.__init__)
+                dependencies = {}
+                
+                for param_name, _ in sig.parameters.items():
+                    if param_name == "self": continue
+                    
+                    if param_name == "container":
+                        dependencies["container"] = self.container
+                    elif self.container.has_tool(param_name):
+                        dependencies[param_name] = self.container.get(param_name)
+                    else:
+                        print(f"[Kernel] ⚠️ Warning: Plugin {plugin_cls.__name__} pide '{param_name}' pero no existe.")
+
+                instance = plugin_cls(**dependencies)
+                
                 # Ejecutamos on_boot (registro de rutas, eventos, etc.)
                 instance.on_boot()
                 self.plugins[plugin_cls.__name__] = instance
-                print(f"[Kernel] Plugin cargado: {plugin_cls.__name__}")
+                print(f"[Kernel] Plugin cargado (DI): {plugin_cls.__name__}")
             except Exception as e:
-                # Si el on_boot de un plugin falla, el sistema sigue sin ese plugin
                 print(f"[Kernel] ⚠️ Fallo al inicializar plugin {plugin_cls.__name__}: {e}")
 
         # 3. NOTIFICACIÓN FINAL: Aviso a las tools que terminamos
