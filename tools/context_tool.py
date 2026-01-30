@@ -47,17 +47,18 @@ class ContextTool(BaseTool):
             manifest += f"```text\n{tool.get_interface_description().strip()}\n```\n"
             manifest += "\n"
         
-        # 3. Modelos del Dominio (Discovery via Registry)
+        # 3. Modelos del Dominio (Index via Registry)
         manifest += "## 📦 Modelos del Dominio (Data Structures)\n"
-        manifest += "Estructuras de datos validadas que representan el negocio.\n\n"
+        manifest += "Estructuras de datos registradas. Puedes leer el código directamente en su ruta para detalles.\n\n"
         
         domain_metadata = container.get_domain_metadata()
         for domain_name, data in sorted(domain_metadata.items()):
-            for key, code in sorted(data.items()):
+            manifest += f"### 🧩 Dominios `{domain_name}`\n"
+            for key in sorted(data.keys()):
                 if key.startswith("model_"):
                     model_name = key.replace("model_", "")
-                    manifest += f"### 🧩 Domain `{domain_name}`: `{model_name}`\n"
-                    manifest += "```python\n" + code.strip() + "\n```\n\n"
+                    manifest += f"- Modelo disponible: `{model_name}`\n"
+            manifest += "\n"
 
         # 4. Escritura del archivo
         try:

@@ -68,33 +68,19 @@ Herramienta de Autenticación (auth):
         - get_user_from_token(token): Retorna datos del usuario (SIMULADO).
 ```
 
-## 📦 Modelos del Dominio (Data Structures)
-Estructuras de datos validadas que representan el negocio.
-
-### 🧩 Domain `users`: `user_model.py`
-```python
-import re
-
-class UserModel:
-    def __init__(self, name=None, email=None, id=None):
-        self.id = id
-        self.name = name
-        self.email = email
-
-    @staticmethod
-    def validate_name(name):
-        if not name or not isinstance(name, str) or len(name) < 3:
-            return False, "Debe tener al menos 3 caracteres."
-        return True, None
-
-    @staticmethod
-    def validate_email(email):
-        regex = r'^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w+$'
-        if not email or not re.match(regex, email):
-            return False, "Formato no válido."
-        return True, None
-
-    def to_dict(self):
-        return {"id": self.id, "name": self.name, "email": self.email}
+### 🔧 Tool: `state` (Estado: ✅ OK)
+**Interfaz y Capacidades:**
+```text
+Herramienta de Estado (state):
+        - set(key, value, namespace='default'): Guarda un valor.
+        - get(key, default=None, namespace='default'): Recupera un valor.
+        - increment(key, amount=1, namespace='default'): Incremento atómico.
+        - delete(key, namespace='default'): Elimina una clave.
 ```
+
+## 📦 Modelos del Dominio (Data Structures)
+Estructuras de datos registradas. Puedes leer el código directamente en su ruta para detalles.
+
+### 🧩 Dominios `users`
+- Modelo disponible: `user_model.py`
 
