@@ -16,21 +16,13 @@ class ConfigTool(BaseTool):
         return "config"
 
     def setup(self):
-        """Carga la configuración inicial"""
-        # Intentar cargar .env de forma manual para evitar dependencias externas pesadas
-        if os.path.exists(".env"):
-            with open(".env", "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        self._config[key.strip()] = value.strip()
-        
-        # Las variables de entorno reales tienen prioridad
+        """Carga la configuración desde el entorno global"""
+        # Simplemente copiamos lo que haya en el sistema
+        # (main.py ya se encargó de cargar el .env)
         for key, value in os.environ.items():
             self._config[key] = value
             
-        print(f"[System] ConfigTool: {len(self._config)} variables cargadas.")
+        print(f"[System] ConfigTool: {len(self._config)} variables expuestas a plugins.")
 
     def get_interface_description(self) -> str:
         return """

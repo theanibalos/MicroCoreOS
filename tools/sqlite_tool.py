@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import threading
 from core.base_tool import BaseTool
@@ -5,7 +6,8 @@ from core.base_tool import BaseTool
 class SqliteTool(BaseTool):
     def __init__(self):
         self._local = threading.local()
-        self._db_path = "database.db"
+        # Leemos directamente del entorno global (main.py ya lo cargó)
+        self._db_path = os.getenv("DB_PATH", "database.db")
 
     @property
     def name(self) -> str:

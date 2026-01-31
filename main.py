@@ -1,8 +1,13 @@
 import signal
 import threading
+from dotenv import load_dotenv
 from core.kernel import Kernel
 
 def main():
+    # 0. Carga Estándar del Entorno (Dotenv)
+    # En local lee el .env, en Prod usa las variables del sistema (K8s/Docker)
+    load_dotenv()
+    
     stop_event = threading.Event()
     app = Kernel()
 
