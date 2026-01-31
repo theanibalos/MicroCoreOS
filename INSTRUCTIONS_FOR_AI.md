@@ -49,7 +49,11 @@ class UserModel:
 
 - **DB**: Usa `self.db.execute(sql, params)` con parámetros `?` para evitar SQL Injection.
 - **HTTP**: Usa `self.http.add_endpoint(path, method, handler)`.
-- **EventBus**: Usa `self.bus.publish(event_name, data)` y `self.bus.subscribe(event_name, callback)`.
+- **EventBus**: 
+    - `self.bus.publish(name, data)`: Dispara y olvida.
+    - `self.bus.subscribe(name, callback)`: Escucha eventos.
+    - `self.bus.request(name, data, timeout=5)`: Envía y espera respuesta (RPC).
+    - **Patrón Respuesta**: Si recibes un evento con `data.get('_metadata', {}).get('reply_to')`, DEBES publicar la respuesta en ese topic incluyendo el mismo `correlation_id`.
 
 ---
 

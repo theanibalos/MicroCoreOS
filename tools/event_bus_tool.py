@@ -1,25 +1,81 @@
+import uuid
+import threading
 from core.base_tool import BaseTool
 
 class EventBusTool(BaseTool):
     def __init__(self):
         self._subscribers = {}
+        self._lock = threading.Lock()
 
     @property
     def name(self) -> str:
         return "event_bus"
 
     def setup(self):
-        print("[System] EventBusTool: Listo para orquestar eventos.")
+        print("[System] EventBusTool: Listo para orquestar eventos bidireccionales.")
 
     def get_interface_description(self) -> str:
-        return "Permite publicar eventos con .publish(nombre, datos) y suscribirse con .subscribe(nombre, callback)."
+        return """
+        Permite comunicación entre plugins:
+        - publish(nombre, datos): Dispara y olvida.
+        - subscribe(nombre, callback): Escucha eventos.
+        - request(nombre, datos, timeout=5): Envía y espera respuesta (RPC).
+        """
 
     def subscribe(self, event_name, callback):
-        if event_name not in self._subscribers:
-            self._subscribers[event_name] = []
-        self._subscribers[event_name].append(callback)
+        with self._lock:
+            if event_name not in self._subscribers:
+                self._subscribers[event_name] = []
+            self._subscribers[event_name].append(callback)
 
     def publish(self, event_name, data):
-        if event_name in self._subscribers:
-            for callback in self._subscribers[event_name]:
+        with self._lock:
+            callbacks = list(self._subscribers.get(event_name, []))
+        
+        for callback in callbacks:
+            try:
                 callback(data)
+            except Exception as e:
+                print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
+
+    def request(self, event_name, data, timeout=5):
+        """
+        Envía un evento y espera una respuesta usando un Correlation ID único.
+        """
+        correlation_id = str(uuid.uuid4())
+        reply_to = f"reply.{event_name}.{correlation_id[:8]}"
+        
+        # Inyectamos metadatos de control
+        data["_metadata"] = {
+            "correlation_id": correlation_id,
+            "reply_to": reply_to
+        }
+
+        response_container = {"data": None}
+        event_ready = threading.Event()
+
+        def response_handler(payload):
+            meta = payload.get("_metadata", {})
+            if meta.get("correlation_id") == correlation_id:
+                response_container["data"] = payload
+                event_ready.set()
+
+        # Nos suscribimos al canal de respuesta temporal
+        self.subscribe(reply_to, response_handler)
+
+        try:
+            # Lanzamos la petición
+            self.publish(event_name, data)
+
+            # Esperamos la respuesta
+            if not event_ready.wait(timeout):
+                raise TimeoutError(f"Timeout esperando respuesta de '{event_name}' ({timeout}s)")
+
+            return response_container["data"]
+        finally:
+            # Limpieza: eliminamos el suscriptor temporal
+            with self._lock:
+                if reply_to in self._subscribers:
+                    self._subscribers[reply_to].remove(response_handler)
+                    if not self._subscribers[reply_to]:
+                        del self._subscribers[reply_to]

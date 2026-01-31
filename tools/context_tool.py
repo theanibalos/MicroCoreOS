@@ -24,14 +24,14 @@ class ContextTool(BaseTool):
         manifest += "Al crear un plugin, el método `execute` debe seguir estrictamente este orden:\n\n"
         manifest += "1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos.\n"
         manifest += "2. **Lógica de Negocio**: Procesamiento, cálculos y uso de modelos del dominio.\n"
-        manifest += "3. **Persistencia y Acción**: Uso de tools (`db`, `event_bus`, etc.) para guardar cambios o notificar.\n"
+        manifest += "3. **Persistencia y Acción**: Uso de las tools inyectadas en el constructor (`self.db`, `self.event_bus`, etc.) para guardar cambios o notificar.\n"
         manifest += "4. **Respuesta**: Retornar un diccionario: `{'success': bool, 'data': ...}` o `{'success': False, 'error': str}`.\n\n"
         
         manifest += "---\n\n"
 
         # 2. Listado Dinámico de Herramientas
         manifest += "## 🛠️ Herramientas Disponibles (Tools)\n"
-        manifest += "Inyectadas mediante el contenedor. Acceso: `self.container.get('nombre_tool')`.\n\n"
+        manifest += "Inyectadas automáticamente por el Kernel. **Debes pedirlas en tu `__init__`** usando el nombre de la tool como parámetro.\n\n"
         
         for name in container.list_tools():
             # Evitamos que la propia tool de contexto se ensucie a sí misma en el manual si prefieres

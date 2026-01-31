@@ -68,5 +68,13 @@ MicroOS implementa su propio sistema de **Inyección de Dependencias (DI)** y or
 *   **¿Por qué no FastAPI/Flask?**: Para reducir la superficie de API externa que la IA debe conocer. El "Framework" es el código que ves en `/core`, 100% auditable y modificable.
 *   **¿Por qué no Inyectores externos?**: Para mantener la transparencia. El Kernel es un orquestador que puedes leer en un minuto y entender exactamente cómo se inyectan tus herramientas.
 
+## 🗺️ Roadmap de MicroOS
+
+El sistema está en evolución. Próximas capacidades planificadas:
+
+- **Middleware / Hooks**: Capacidad de interceptar ejecuciones de plugins para auditoría, seguridad o métricas globales.
+- **Observability (Telemetría)**: Integración nativa con OpenTelemetry para trazado distribuido de eventos.
+- **Plugins Políglotas**: Soporte para plugins en otros lenguajes vía WASM o gRPC, manteniendo al Kernel como orquestador central.
+
 ---
 *Construido con <3 y Lógica Pura.*

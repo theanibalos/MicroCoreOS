@@ -7,13 +7,13 @@ Al crear un plugin, el método `execute` debe seguir estrictamente este orden:
 
 1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos.
 2. **Lógica de Negocio**: Procesamiento, cálculos y uso de modelos del dominio.
-3. **Persistencia y Acción**: Uso de tools (`db`, `event_bus`, etc.) para guardar cambios o notificar.
+3. **Persistencia y Acción**: Uso de las tools inyectadas en el constructor (`self.db`, `self.event_bus`, etc.) para guardar cambios o notificar.
 4. **Respuesta**: Retornar un diccionario: `{'success': bool, 'data': ...}` o `{'success': False, 'error': str}`.
 
 ---
 
 ## 🛠️ Herramientas Disponibles (Tools)
-Inyectadas mediante el contenedor. Acceso: `self.container.get('nombre_tool')`.
+Inyectadas automáticamente por el Kernel. **Debes pedirlas en tu `__init__`** usando el nombre de la tool como parámetro.
 
 ### 🔧 Tool: `logger` (Estado: ✅ OK)
 **Interfaz y Capacidades:**
@@ -35,7 +35,10 @@ Herramienta SQLite (db):
 ### 🔧 Tool: `event_bus` (Estado: ✅ OK)
 **Interfaz y Capacidades:**
 ```text
-Permite publicar eventos con .publish(nombre, datos) y suscribirse con .subscribe(nombre, callback).
+Permite comunicación entre plugins:
+        - publish(nombre, datos): Dispara y olvida.
+        - subscribe(nombre, callback): Escucha eventos.
+        - request(nombre, datos, timeout=5): Envía y espera respuesta (RPC).
 ```
 
 ### 🔧 Tool: `context_manager` (Estado: ✅ OK)
