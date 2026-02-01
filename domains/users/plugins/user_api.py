@@ -9,19 +9,16 @@ class UserApiPlugin(BasePlugin):
         self.bus = event_bus
 
     def on_boot(self):
-        """Registro del endpoint en la Tool HTTP"""
-        self.http.add_endpoint("/users/create", "POST", self.create_user_handler)
+        """Registro de endpoints en FastAPI"""
+        self.http.add_endpoint("/users/create", "POST", self.execute)
+        self.logger.info("Plugin UserApi listo y registrado en FastAPI.")
 
-    def create_user_handler(self, data):
-        """Bridge entre HTTP y la lógica del Plugin"""
-        return self.execute(**data)
+    def execute(self, data: dict):
+        """Lógica principal de creación de usuario"""
+        name = data.get("name")
+        email = data.get("email")
 
-    def execute(self, **kwargs):
-        # --- 1. VALIDACIÓN SOBERANA (El Plugin decide qué pedir al Modelo) ---
-        name = kwargs.get("name")
-        email = kwargs.get("email")
-
-        # El plugin valida campo por campo usando la lógica centralizada del Modelo
+        # 1. Validación usando el Modelo
         ok, err = UserModel.validate_name(name)
         if not ok: 
             return {"success": False, "error": f"Nombre inválido: {err}"}
@@ -30,23 +27,23 @@ class UserApiPlugin(BasePlugin):
         if not ok: 
             return {"success": False, "error": f"Email inválido: {err}"}
 
-        # --- 2. LÓGICA DE NEGOCIO (Uso del Modelo como DTO) ---
+        # 2. Creación del objeto de dominio
         user = UserModel(name=name, email=email)
         
-        # --- 3. PERSISTENCIA ---
+        # 3. Persistencia
         try:
             self.db.execute(
                 "INSERT INTO users (name, email) VALUES (?, ?)", 
                 (user.name, user.email)
             )
             
-            self.logger.info(f"Usuario {user.name} registrado vía API.")
+            self.logger.info(f"Usuario {user.name} ({user.email}) creado exitosamente.")
             
-            # --- 4. NOTIFICACIÓN (Event Bus) ---
+            # 4. Notificación al Bus de Eventos
             self.bus.publish("user_created", user.to_dict())
             
-            return {"success": True, "data": user.to_dict()}
+            return {"success": True, "user": user.to_dict()}
             
         except Exception as e:
-            self.logger.error(f"Fallo en DB al crear usuario: {e}")
-            return {"success": False, "error": "Error interno al guardar"}
+            self.logger.error(f"Error al guardar usuario en BD: {e}")
+            return {"success": False, "error": "Error interno de base de datos"}

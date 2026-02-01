@@ -50,10 +50,9 @@ Genera automáticamente el manifiesto AI_CONTEXT.md que sirve de manual técnico
 ### 🔧 Tool: `http_server` (Estado: ✅ OK)
 **Interfaz y Capacidades:**
 ```text
-Herramienta HTTP Server:
+Herramienta HTTP Server (FastAPI):
         - add_endpoint(path, method, handler): Registra una nueva URL.
-        - El 'handler' debe ser una función que reciba datos (dict) y retorne un dict.
-        - Los datos se extraen de JSON body o Query Params automáticamente.
+        - El 'handler' debe recibir un diccionario 'data'.
 ```
 
 ### 🔧 Tool: `config` (Estado: ✅ OK)

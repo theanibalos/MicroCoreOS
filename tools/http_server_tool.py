@@ -1,10 +1,13 @@
 from core.base_tool import BaseTool
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn
 import threading
+import asyncio
 
 class HttpServerTool(BaseTool):
     def __init__(self):
-        self.app = Flask(__name__)
+        self.app = FastAPI(title="MicroOS Gateway")
         self._endpoints = []
 
     @property
@@ -13,55 +16,60 @@ class HttpServerTool(BaseTool):
 
     def setup(self):
         """Configuración inicial del servidor."""
-        print("[HttpServer] Configurando Flask...")
+        print("[HttpServer] Configurando FastAPI...")
         
-        @self.app.route("/health", methods=["GET"])
-        def health():
-            return {"status": "ok", "tools": "active"}
+        @self.app.get("/health")
+        async def health():
+            return {"status": "ok", "tools": "active", "engine": "fastapi"}
 
     def get_interface_description(self) -> str:
         return """
-        Herramienta HTTP Server:
+        Herramienta HTTP Server (FastAPI):
         - add_endpoint(path, method, handler): Registra una nueva URL.
-        - El 'handler' debe ser una función que reciba datos (dict) y retorne un dict.
-        - Los datos se extraen de JSON body o Query Params automáticamente.
+        - El 'handler' debe recibir un diccionario 'data'.
         """
 
     def add_endpoint(self, path, method, handler):
-        def flask_wrapper():
-            data = request.get_json(silent=True) or {}
-            data.update(request.args.to_dict())
+        async def fastapi_wrapper(request: Request):
+            # Extraer datos de Query Params
+            data = dict(request.query_params)
+            
+            # Intentar extraer datos de JSON body
+            try:
+                body = await request.json()
+                if isinstance(body, dict):
+                    data.update(body)
+            except Exception:
+                pass
             
             try:
-                # Intentamos ejecutar el plugin
-                # Pasamos 'data' como kwargs para que coincida con def execute(self, **kwargs)
-                result = handler(**data) 
-                return jsonify(result)
+                # Ejecutamos el plugin pasando los datos como un único argumento 'data'
+                result = handler(data) 
+                return result
             except Exception as e:
-                # AQUÍ capturamos el fallo antes que Flask
-                print(f"[HttpServer] 💥 Error controlado en ruta {path}: {e}")
-                return jsonify({
-                    "success": False, 
-                    "error": "Plugin Execution Error",
-                    "details": str(e)
-                }), 500
+                print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "error": str(e)}
+                )
 
-        endpoint_name = f"{method}_{path.replace('/', '_')}"
-        self.app.add_url_rule(path, endpoint_name, flask_wrapper, methods=[method])
+        self.app.add_api_route(
+            path, 
+            fastapi_wrapper, 
+            methods=[method.upper()]
+        )
 
     def on_boot_complete(self, container):
-        """Arranca el servidor en un hilo separado al finalizar el boot del Kernel."""
+        """Arranca el servidor en un hilo separado."""
         def run():
-            # use_reloader=False es crítico al usar hilos
-            self.app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+            uvicorn.run(self.app, host="0.0.0.0", port=5000, log_level="warning")
 
         server_thread = threading.Thread(target=run, daemon=True)
         server_thread.start()
-        print(f"[HttpServer] Servidor HTTP activo en http://localhost:5000")
+        print(f"[HttpServer] Servidor FastAPI activo en http://localhost:5000")
 
     def shutdown(self):
         """Cierre limpio del servidor HTTP"""
-        print("[HttpServer] Deteniendo servidor...")
-        # Flask no tiene un método .stop() sencillo en su servidor de desarrollo, 
-        # pero al ser un hilo daemon, el SO lo limpiará si el Kernel cierra bien.
-        # Aquí cerraríamos conexiones a sockets o proxies si los hubiera.
+        print("[HttpServer] Deteniendo servidor (vía Thread termination)...")
+        # Uvicorn no tiene un stop() trivial desde hilos externos sin usar señales o Server class
+        # Al ser daemon thread, se cerrará con el proceso principal.
