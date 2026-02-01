@@ -9,7 +9,7 @@ class Container:
         self._tools = {}
         self._health = {}
         self._metadata = {"domains": {}}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def register(self, tool):
         """Registra la instancia de la herramienta usando su nombre"""
