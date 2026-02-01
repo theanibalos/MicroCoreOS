@@ -55,6 +55,22 @@ class Container:
                 self._metadata["domains"][domain_name] = {}
             self._metadata["domains"][domain_name][key] = value
 
+    def register_plugin_info(self, plugin_name: str, info: dict):
+        """Registra información técnica de un plugin."""
+        with self._lock:
+            if "plugins" not in self._metadata:
+                self._metadata["plugins"] = {}
+            self._metadata["plugins"][plugin_name] = info
+
+    def get_system_info(self):
+        """Retorna un dump completo del estado interno del sistema."""
+        with self._lock:
+            return {
+                "tools": {name: self.get_health(name) for name in self.list_tools()},
+                "domains": self._metadata["domains"],
+                "plugins": self._metadata.get("plugins", {})
+            }
+
     def get_domain_metadata(self):
         """Retorna todo el registro de metadatos de dominios"""
         with self._lock:

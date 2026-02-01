@@ -39,7 +39,7 @@ class Kernel:
 
                         for name, obj in inspect.getmembers(module):
                             if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
-                                instances.append(obj)
+                                instances.append((obj, domain_name))
                                 
                         # --- MEJORA: Registro de Metadatos ---
                         if domain_name:
@@ -56,7 +56,7 @@ class Kernel:
         print("--- [Kernel] Iniciando Sistema ---")
         
         # 1. Cargar e Iniciar Tools (Infraestructura Crítica)
-        for tool_cls in self._load_modules_from_dir("tools", BaseTool):
+        for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
             try:
                 instance = tool_cls()
                 instance.setup()
@@ -73,7 +73,7 @@ class Kernel:
                     print(f"[Kernel] ⚠️ Herramienta opcional '{tool_name}' falló: {e}")
 
         # 2. Cargar e Iniciar Plugins (DI Real)
-        for plugin_cls in self._load_modules_from_dir("domains", BasePlugin):
+        for plugin_cls, domain_name in self._load_modules_from_dir("domains", BasePlugin):
             try:
                 # Análisis de dependencias vía __init__
                 sig = inspect.signature(plugin_cls.__init__)
@@ -88,6 +88,13 @@ class Kernel:
                         dependencies[param_name] = self.container.get(param_name)
                     else:
                         print(f"[Kernel] ⚠️ Warning: Plugin {plugin_cls.__name__} pide '{param_name}' pero no existe.")
+
+                # Guardamos metadatos del plugin en el contenedor para auditoría y registro
+                self.container.register_plugin_info(plugin_cls.__name__, {
+                    "dependencies": list(dependencies.keys()),
+                    "domain": domain_name,
+                    "class": plugin_cls.__name__
+                })
 
                 instance = plugin_cls(**dependencies)
                 
