@@ -1,6 +1,7 @@
 import os
 import importlib.util
 import inspect
+import threading
 from core.container import Container
 from core.base_tool import BaseTool
 from core.base_plugin import BasePlugin
@@ -90,10 +91,23 @@ class Kernel:
 
                 instance = plugin_cls(**dependencies)
                 
-                # Ejecutamos on_boot (registro de rutas, eventos, etc.)
-                instance.on_boot()
+                # Ejecutamos on_boot en un hilo separado para evitar bloqueos
+                def boot_plugin_task(plugin_instance, name):
+                    try:
+                        plugin_instance.on_boot()
+                        print(f"[Kernel] Plugin listo: {name}")
+                    except Exception as e:
+                        print(f"[Kernel] ⚠️ Fallo en on_boot del plugin {name}: {e}")
+
+                boot_thread = threading.Thread(
+                    target=boot_plugin_task, 
+                    args=(instance, plugin_cls.__name__),
+                    daemon=True
+                )
+                boot_thread.start()
+                
                 self.plugins[plugin_cls.__name__] = instance
-                print(f"[Kernel] Plugin cargado (DI): {plugin_cls.__name__}")
+                print(f"[Kernel] Plugin cargado (DI) y arrancando en hilo: {plugin_cls.__name__}")
             except Exception as e:
                 print(f"[Kernel] ⚠️ Fallo al inicializar plugin {plugin_cls.__name__}: {e}")
 

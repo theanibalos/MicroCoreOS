@@ -33,10 +33,19 @@ class EventBusTool(BaseTool):
             callbacks = list(self._subscribers.get(event_name, []))
         
         for callback in callbacks:
-            try:
-                callback(data)
-            except Exception as e:
-                print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
+            def safe_callback_execution(cb, payload):
+                try:
+                    cb(payload)
+                except Exception as e:
+                    print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
+
+            # Ejecutar cada callback en un hilo separado para no bloquear el EventBus
+            t = threading.Thread(
+                target=safe_callback_execution, 
+                args=(callback, data), 
+                daemon=True
+            )
+            t.start()
 
     def request(self, event_name, data, timeout=5):
         """
