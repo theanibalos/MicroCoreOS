@@ -1,18 +1,21 @@
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from core.base_tool import BaseTool
 
 class EventBusTool(BaseTool):
     def __init__(self):
         self._subscribers = {}
         self._lock = threading.Lock()
+        # Creamos un pool de hilos para procesar eventos sin saturar el sistema
+        self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="BusWorker")
 
     @property
     def name(self) -> str:
         return "event_bus"
 
     def setup(self):
-        print("[System] EventBusTool: Listo para orquestar eventos bidireccionales.")
+        print("[System] EventBusTool: Listo para orquestar eventos con ThreadPool (max=10).")
 
     def get_interface_description(self) -> str:
         return """
@@ -30,6 +33,7 @@ class EventBusTool(BaseTool):
 
     def publish(self, event_name, data):
         with self._lock:
+            # Capturamos la lista actual para evitar problemas de concurrencia al iterar
             callbacks = list(self._subscribers.get(event_name, []))
         
         for callback in callbacks:
@@ -39,13 +43,13 @@ class EventBusTool(BaseTool):
                 except Exception as e:
                     print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
 
-            # Ejecutar cada callback en un hilo separado para no bloquear el EventBus
-            t = threading.Thread(
-                target=safe_callback_execution, 
-                args=(callback, data), 
-                daemon=True
-            )
-            t.start()
+            # Enviamos el trabajo al pool de hilos en lugar de crear un hilo nuevo cada vez
+            self._executor.submit(safe_callback_execution, callback, data)
+
+    def shutdown(self):
+        """Cierre ordenado del pool de hilos"""
+        print("[EventBus] Cerrando ThreadPool...")
+        self._executor.shutdown(wait=False)
 
     def request(self, event_name, data, timeout=5):
         """
