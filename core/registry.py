@@ -31,7 +31,17 @@ class Registry:
     def register_plugin(self, name: str, info: dict):
         """Registra metadatos técnicos de un plugin."""
         with self._lock:
+            # Inicializamos estado por defecto
+            info["status"] = "BOOTING" 
+            info["error"] = None
             self._data["plugins"][name] = info
+
+    def update_plugin_status(self, name: str, status: str, error: str = None):
+        """Actualiza el estado de salud de un plugin."""
+        with self._lock:
+            if name in self._data["plugins"]:
+                self._data["plugins"][name]["status"] = status
+                self._data["plugins"][name]["error"] = error
 
     def get_system_dump(self) -> dict:
         """Retorna un dump completo del estado del sistema para observabilidad."""
