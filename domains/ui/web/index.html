@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MicroOS | System Town</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-body: #0d1117;
+            --bg-ground: #161b22;
+            --bg-building: rgba(30, 37, 46, 0.9);
+            --border-building: rgba(99, 102, 241, 0.3);
+            --accent-primary: #6366f1;
+            --accent-secondary: #a855f7;
+            --accent-event: #22d3ee;
+            --text-main: #f0f6fc;
+            --text-dim: #8b949e;
+            --status-ok: #3fb950;
+            --status-fail: #f85149;
+            --status-warning: #d29922;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* === HEADER === */
+        header {
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            background: rgba(13, 17, 23, 0.8);
+            backdrop-filter: blur(10px);
+            position: fixed;
+            width: 100%;
+            z-index: 1000;
+        }
+
+        .logo {
+            font-size: 1.4rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .ws-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .ws-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--status-fail);
+            transition: background 0.3s;
+        }
+
+        .ws-dot.connected {
+            background: var(--status-ok);
+            box-shadow: 0 0 10px var(--status-ok);
+        }
+
+        /* === MAIN LAYOUT === */
+        main {
+            padding-top: 80px;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* === TOWN VIEW (SKYLINE) === */
+        #town {
+            flex: 1;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 2rem;
+            padding: 2rem 5%;
+            background: linear-gradient(180deg, transparent 0%, rgba(99, 102, 241, 0.05) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Ground */
+        #town::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: var(--bg-ground);
+            border-top: 2px solid var(--accent-primary);
+            box-shadow: 0 -10px 30px rgba(99, 102, 241, 0.2);
+        }
+
+        /* === BUILDINGS (DOMAINS) === */
+        .building {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 150px;
+            transition: transform 0.3s;
+        }
+
+        .building:hover {
+            transform: translateY(-10px);
+        }
+
+        .building-structure {
+            background: var(--bg-building);
+            border: 1px solid var(--border-building);
+            border-radius: 0.75rem 0.75rem 0 0;
+            padding: 1rem;
+            min-height: 200px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 -10px 40px rgba(99, 102, 241, 0.1);
+        }
+
+        .building-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-align: center;
+            margin-bottom: 0.75rem;
+            color: var(--accent-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .building-windows {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            flex: 1;
+        }
+
+        .window {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 0.25rem;
+            padding: 0.4rem;
+            font-size: 0.65rem;
+            text-align: center;
+            color: var(--text-dim);
+            transition: all 0.3s;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .window.active {
+            background: rgba(34, 211, 238, 0.2);
+            border-color: var(--accent-event);
+            color: var(--text-main);
+            animation: windowPulse 0.5s ease-out;
+        }
+
+        @keyframes windowPulse {
+            0% {
+                transform: scale(1.1);
+                box-shadow: 0 0 15px var(--accent-event);
+            }
+
+            100% {
+                transform: scale(1);
+                box-shadow: none;
+            }
+        }
+
+        /* === EVENT BILLBOARD === */
+        #billboard {
+            position: absolute;
+            top: 100px;
+            right: 5%;
+            width: 300px;
+            background: rgba(30, 37, 46, 0.95);
+            border: 1px solid var(--border-building);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            z-index: 100;
+            max-height: 400px;
+            overflow: hidden;
+        }
+
+        .billboard-title {
+            font-size: 0.8rem;
+            color: var(--accent-event);
+            text-transform: uppercase;
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .billboard-title::before {
+            content: '📡';
+        }
+
+        #event-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            background: rgba(99, 102, 241, 0.1);
+            border-left: 3px solid var(--accent-primary);
+            padding: 0.5rem 0.75rem;
+            border-radius: 0 0.5rem 0.5rem 0;
+            font-size: 0.75rem;
+            animation: eventSlideIn 0.3s ease-out;
+        }
+
+        .event-item.log-INFO {
+            border-color: var(--status-ok);
+        }
+
+        .event-item.log-ERROR {
+            border-color: var(--status-fail);
+            background: rgba(248, 81, 73, 0.1);
+        }
+
+        .event-item.log-WARN {
+            border-color: var(--status-warning);
+        }
+
+        @keyframes eventSlideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .event-name {
+            font-weight: 600;
+            color: var(--accent-secondary);
+        }
+
+        .event-time {
+            color: var(--text-dim);
+            font-size: 0.65rem;
+        }
+
+        /* === LOG TICKER === */
+        #ticker {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(13, 17, 23, 0.95);
+            border-top: 1px solid var(--border-building);
+            padding: 0.75rem 2rem;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            overflow: hidden;
+            z-index: 1000;
+        }
+
+        .ticker-label {
+            color: var(--accent-event);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        #ticker-content {
+            flex: 1;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .ticker-message {
+            display: inline-block;
+            animation: tickerScroll 15s linear infinite;
+        }
+
+        @keyframes tickerScroll {
+            0% {
+                transform: translateX(100%);
+            }
+
+            100% {
+                transform: translateX(-100%);
+            }
+        }
+
+        /* === TOOLS BASEMENT === */
+        #tools-bar {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            padding: 1rem 2rem;
+            background: var(--bg-ground);
+            position: relative;
+            z-index: 20;
+        }
+
+        .tool-icon {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid var(--border-building);
+            border-radius: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s;
+        }
+
+        .tool-icon:hover {
+            background: rgba(99, 102, 241, 0.3);
+            transform: translateY(-3px);
+        }
+
+        .tool-icon .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--status-ok);
+        }
+
+        .tool-icon .dot.fail {
+            background: var(--status-fail);
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="logo">🏘️ MicroOS Town</div>
+        <div class="ws-status">
+            <div class="ws-dot" id="ws-dot"></div>
+            <span id="ws-label">Conectando...</span>
+        </div>
+    </header>
+
+    <main>
+        <div id="town">
+            <!-- Buildings will be injected here -->
+        </div>
+
+        <div id="tools-bar">
+            <!-- Tool icons will be injected here -->
+        </div>
+
+        <div id="billboard">
+            <div class="billboard-title">Eventos en Vivo</div>
+            <div id="event-list"></div>
+        </div>
+    </main>
+
+    <div id="ticker">
+        <span class="ticker-label">📰 LOGS:</span>
+        <div id="ticker-content">
+            <span class="ticker-message">Esperando logs del sistema...</span>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let systemData = { tools: {}, plugins: {}, domains: {} };
+
+        // === WEBSOCKET CONNECTION ===
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
+
+            ws.onopen = () => {
+                document.getElementById('ws-dot').classList.add('connected');
+                document.getElementById('ws-label').textContent = 'En Vivo';
+            };
+
+            ws.onclose = () => {
+                document.getElementById('ws-dot').classList.remove('connected');
+                document.getElementById('ws-label').textContent = 'Desconectado';
+                setTimeout(connectWebSocket, 3000); // Reconectar
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleEvent(data);
+            };
+        }
+
+        // === EVENT HANDLER ===
+        function handleEvent(data) {
+            const eventName = data.event;
+            const payload = data.data?.payload || data.data || {};
+
+            // Add to billboard
+            addEventToBillboard(eventName, payload);
+
+            // Special handling for logs
+            if (eventName === 'system.log') {
+                updateTicker(payload);
+            }
+
+            // Flash the corresponding building window
+            flashBuildingWindow(eventName);
+        }
+
+        function addEventToBillboard(eventName, payload) {
+            const list = document.getElementById('event-list');
+            const item = document.createElement('div');
+
+            let extraClass = '';
+            if (eventName === 'system.log' && payload.level) {
+                extraClass = `log-${payload.level}`;
+            }
+
+            item.className = `event-item ${extraClass}`;
+            item.innerHTML = `
+                <span class="event-name">${eventName}</span>
+                <span class="event-time">${new Date().toLocaleTimeString()}</span>
+                <div style="color: var(--text-dim); margin-top: 0.25rem; word-break: break-all;">
+                    ${payload.message || JSON.stringify(payload).slice(0, 80)}
+                </div>
+            `;
+
+            list.insertBefore(item, list.firstChild);
+
+            // Keep only last 20 events
+            while (list.children.length > 20) {
+                list.removeChild(list.lastChild);
+            }
+        }
+
+        function updateTicker(logPayload) {
+            const ticker = document.getElementById('ticker-content');
+            const level = logPayload.level || 'INFO';
+            const message = logPayload.message || '';
+            ticker.innerHTML = `<span class="ticker-message">[${level}] ${message}</span>`;
+        }
+
+        function flashBuildingWindow(eventName) {
+            // Try to find a window related to this event
+            const windows = document.querySelectorAll('.window');
+            windows.forEach(w => {
+                if (eventName.includes(w.dataset.domain)) {
+                    w.classList.add('active');
+                    setTimeout(() => w.classList.remove('active'), 1000);
+                }
+            });
+        }
+
+        // === RENDER TOWN ===
+        async function fetchAndRenderTown() {
+            try {
+                const response = await fetch('/api/system/info');
+                const result = await response.json();
+
+                if (result.success) {
+                    systemData = result.data;
+                    renderBuildings(systemData.plugins, systemData.domains);
+                    renderTools(systemData.tools);
+                }
+            } catch (error) {
+                console.error("Error fetching system info:", error);
+            }
+        }
+
+        function renderBuildings(plugins, domains) {
+            const town = document.getElementById('town');
+            town.innerHTML = '';
+
+            // Group plugins by domain
+            const domainMap = {};
+            Object.entries(plugins).forEach(([name, info]) => {
+                const domain = info.domain || 'global';
+                if (!domainMap[domain]) domainMap[domain] = [];
+                domainMap[domain].push(name);
+            });
+
+            // Create a building for each domain
+            Object.entries(domainMap).forEach(([domain, pluginNames]) => {
+                const building = document.createElement('div');
+                building.className = 'building';
+
+                const windowsHTML = pluginNames.map(p =>
+                    `<div class="window" data-domain="${domain}">${p.replace('Plugin', '')}</div>`
+                ).join('');
+
+                building.innerHTML = `
+                    <div class="building-structure">
+                        <div class="building-name">${domain}</div>
+                        <div class="building-windows">
+                            ${windowsHTML}
+                        </div>
+                    </div>
+                `;
+                town.appendChild(building);
+            });
+        }
+
+        function renderTools(tools) {
+            const bar = document.getElementById('tools-bar');
+            bar.innerHTML = '';
+
+            Object.entries(tools).forEach(([name, info]) => {
+                const isOk = info.status === 'OK';
+                const icon = document.createElement('div');
+                icon.className = 'tool-icon';
+                icon.innerHTML = `
+                    <span class="dot ${isOk ? '' : 'fail'}"></span>
+                    ${name}
+                `;
+                bar.appendChild(icon);
+            });
+        }
+
+        // === INIT ===
+        fetchAndRenderTown();
+        connectWebSocket();
+        setInterval(fetchAndRenderTown, 10000); // Refresh town every 10s
+    </script>
+</body>
+
+</html>

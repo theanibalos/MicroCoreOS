@@ -21,7 +21,7 @@ class EventBusTool(BaseTool):
         return """
         Permite comunicación entre plugins:
         - publish(nombre, datos): Dispara y olvida.
-        - subscribe(nombre, callback): Escucha eventos.
+        - subscribe(nombre, callback): Escucha eventos. Usa '*' para escuchar TODOS.
         - request(nombre, datos, timeout=5): Envía y espera respuesta (RPC).
         """
 
@@ -35,7 +35,15 @@ class EventBusTool(BaseTool):
         with self._lock:
             # Capturamos la lista actual para evitar problemas de concurrencia al iterar
             callbacks = list(self._subscribers.get(event_name, []))
+            # Añadimos los suscriptores con wildcard '*'
+            callbacks += list(self._subscribers.get('*', []))
         
+        # Enriquecemos el payload con metadatos del evento
+        enriched_data = {
+            "_event_name": event_name,
+            "payload": data
+        }
+
         for callback in callbacks:
             def safe_callback_execution(cb, payload):
                 try:
@@ -44,7 +52,7 @@ class EventBusTool(BaseTool):
                     print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
 
             # Enviamos el trabajo al pool de hilos en lugar de crear un hilo nuevo cada vez
-            self._executor.submit(safe_callback_execution, callback, data)
+            self._executor.submit(safe_callback_execution, callback, enriched_data)
 
     def shutdown(self):
         """Cierre ordenado del pool de hilos"""

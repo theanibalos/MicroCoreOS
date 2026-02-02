@@ -21,3 +21,9 @@ class UserModel:
 
     def to_dict(self):
         return {"id": self.id, "name": self.name, "email": self.email}
+
+    @staticmethod
+    def from_row(row):
+        """Convierte una fila de la base de datos (id, name, email) en un objeto UserModel."""
+        if not row: return None
+        return UserModel(id=row[0], name=row[1], email=row[2])

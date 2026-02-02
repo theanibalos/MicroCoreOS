@@ -22,6 +22,7 @@ Herramienta de Logs:
         - info(message): Registra información general.
         - error(message): Registra errores críticos.
         - warning(message): Registra advertencias.
+        Todos los logs se publican también al event_bus como 'system.log'.
 ```
 
 ### 🔧 Tool: `db` (Estado: ✅ OK)
@@ -37,7 +38,7 @@ Herramienta SQLite (db):
 ```text
 Permite comunicación entre plugins:
         - publish(nombre, datos): Dispara y olvida.
-        - subscribe(nombre, callback): Escucha eventos.
+        - subscribe(nombre, callback): Escucha eventos. Usa '*' para escuchar TODOS.
         - request(nombre, datos, timeout=5): Envía y espera respuesta (RPC).
 ```
 
@@ -51,7 +52,9 @@ Genera automáticamente el manifiesto AI_CONTEXT.md que sirve de manual técnico
 **Interfaz y Capacidades:**
 ```text
 Herramienta HTTP Server (FastAPI):
-        - add_endpoint(path, method, handler): Registra una nueva URL.
+        - add_endpoint(path, method, handler, tags=None): Registra una nueva URL con tags opcionales.
+        - mount_static(path, directory): Sirve archivos estáticos.
+        - add_ws_endpoint(path, handler): Registra un endpoint WebSocket.
         - El 'handler' debe recibir un diccionario 'data'.
 ```
 
