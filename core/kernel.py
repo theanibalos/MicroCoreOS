@@ -8,7 +8,7 @@ from core.base_plugin import BasePlugin
 
 class Kernel:
     # Herramientas fundamentales sin las cuales el sistema no tiene sentido
-    REQUIRED_TOOLS = ["logger", "db"]
+    REQUIRED_TOOLS = []
 
     def __init__(self):
         self.container = Container()
