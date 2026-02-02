@@ -6,17 +6,14 @@
 MicroOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.
 
 - **Core Resiliente**: El Kernel y Container son el corazón estable. Los fallos en plugins no detienen el sistema.
+- **Registry Nativo**: El inventario del sistema es ahora parte del Core, garantizando observabilidad total.
 - **Modelo de Hilos**: Los plugins arrancan en hilos independientes. El Kernel usa `RLock` para seguridad entre hilos.
 - **Concurrency Control**: El `event_bus` utiliza un `ThreadPoolExecutor` para manejar eventos de forma eficiente.
 - **Inyección de Dependencias**: Los plugins reciben herramientas en el constructor. **Consulta siempre la sección 'Tools' para ver la firma de los métodos.**
 
-## 📐 Estándar de Construcción de Plugins (Single-File Clean Architecture)
-Al crear un plugin, el método `execute` debe seguir estrictamente este orden:
-
-1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos usando el Modelo del dominio.
-2. **Lógica de Negocio**: Procesamiento, cálculos y uso de lógica interna del dominio.
-3. **Persistencia y Acción**: Uso de las tools inyectadas (`self.db`, `self.event_bus`, etc.) para guardar o notificar.
-4. **Respuesta**: Retornar un diccionario: `{'success': bool, 'data': ...}` o `{'success': False, 'error': str}`.
+## 🚀 Ejecución y Desarrollo
+- **Comando**: Usa `uv run main.py`. No uses `python main.py` directamente.
+- **Pydantic**: Pasa tus modelos a `http_server.add_endpoint` para generar Swagger automáticamente.
 
 ---
 
@@ -92,9 +89,15 @@ Herramienta de Estado (state):
         - delete(key, namespace='default'): Elimina una clave.
 ```
 
+### 🔧 Tool: `registry` (Estado: ✅ OK)
+**Interfaz y Capacidades:**
+```text
+Acceso al Inventario Arquitectónico del Core (Herramientas, Dominios y Plugins).
+```
+
 ## 📦 Modelos del Dominio (Data Structures)
 Estructuras de datos registradas. Puedes leer el código directamente en su ruta para detalles.
 
-### 🧩 Dominios `users`
+### 🧩 Dominio `users`
 - Modelo disponible: `user_model.py`
 

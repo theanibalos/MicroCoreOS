@@ -1,4 +1,5 @@
 import threading
+from core.registry import Registry
 
 class Container:
     STATUS_OK = "OK"
@@ -8,8 +9,9 @@ class Container:
     def __init__(self):
         self._tools = {}
         self._health = {}
-        self._metadata = {"domains": {}}
         self._lock = threading.RLock()
+        # El registro es ahora parte integral del contenedor desde el nacimiento
+        self.registry = Registry()
 
     def register(self, tool):
         """Registra la instancia de la herramienta usando su nombre"""
@@ -38,6 +40,8 @@ class Container:
         """Actualiza el estado de salud de una herramienta"""
         with self._lock:
             self._health[tool_name] = {"status": status, "message": message}
+            # Sincronizamos con el registro interno
+            self.registry.register_tool(tool_name, status, message)
 
     def get_health(self, tool_name: str):
         """Retorna el estado de salud de una herramienta"""
@@ -47,31 +51,3 @@ class Container:
     def is_healthy(self, tool_name: str) -> bool:
         """Verifica si una herramienta está en estado OK"""
         return self.get_health(tool_name)["status"] == self.STATUS_OK
-
-    def register_domain_metadata(self, domain_name: str, key: str, value: any):
-        """Registra metadatos para un dominio específico (modelos, plugins, etc)"""
-        with self._lock:
-            if domain_name not in self._metadata["domains"]:
-                self._metadata["domains"][domain_name] = {}
-            self._metadata["domains"][domain_name][key] = value
-
-    def register_plugin_info(self, plugin_name: str, info: dict):
-        """Registra información técnica de un plugin."""
-        with self._lock:
-            if "plugins" not in self._metadata:
-                self._metadata["plugins"] = {}
-            self._metadata["plugins"][plugin_name] = info
-
-    def get_system_info(self):
-        """Retorna un dump completo del estado interno del sistema."""
-        with self._lock:
-            return {
-                "tools": {name: self.get_health(name) for name in self.list_tools()},
-                "domains": self._metadata["domains"],
-                "plugins": self._metadata.get("plugins", {})
-            }
-
-    def get_domain_metadata(self):
-        """Retorna todo el registro de metadatos de dominios"""
-        with self._lock:
-            return self._metadata["domains"]

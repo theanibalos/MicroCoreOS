@@ -22,7 +22,6 @@ class Kernel:
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
                     path = os.path.abspath(os.path.join(root, file))
-                    # Generamos un nombre de módulo único basado en la ruta absoluta para evitar colisiones
                     module_name = path.replace(os.sep, "_").replace(".", "_")
                     
                     try:
@@ -30,10 +29,8 @@ class Kernel:
                         module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(module)
 
-                        # Si estamos cargando dominios, intentamos capturar el nombre del dominio
                         domain_name = None
                         if directory == "domains":
-                            # Estructura esperada: domains/nombre_dominio/subcarpeta/archivo.py
                             rel_path = os.path.relpath(path, os.path.abspath(directory))
                             parts = rel_path.split(os.sep)
                             if len(parts) >= 1:
@@ -43,13 +40,11 @@ class Kernel:
                             if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
                                 instances.append((obj, domain_name))
                                 
-                        # --- MEJORA: Registro de Metadatos ---
-                        if domain_name:
-                            # Si es un modelo, guardamos su código para el ContextTool
-                            if "models" in path:
-                                with open(path, "r", encoding="utf-8") as f:
-                                    code = f.read()
-                                    self.container.register_domain_metadata(domain_name, f"model_{file}", code)
+                        # --- Registro de Modelos (Uso de Registry del Core) ---
+                        if domain_name and "models" in path:
+                            with open(path, "r", encoding="utf-8") as f:
+                                self.container.registry.register_domain_metadata(domain_name, f"model_{file}", f.read())
+                                
                     except Exception as e:
                         print(f"[Kernel] 🔥 Error cargando archivo {path}: {e}")
         return instances
@@ -57,7 +52,7 @@ class Kernel:
     def boot(self):
         print("--- [Kernel] Iniciando Sistema ---")
         
-        # 1. Cargar e Iniciar Tools (Infraestructura Crítica)
+        # 1. Cargar e Iniciar Tools
         for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
             try:
                 instance = tool_cls()
@@ -65,8 +60,7 @@ class Kernel:
                 self.container.register(instance)
                 self.container.set_health(instance.name, Container.STATUS_OK)
             except Exception as e:
-                # Si falla, registramos el error en el contenedor
-                tool_name = getattr(tool_cls(), 'name', tool_cls.__name__) # Intento de obtener nombre
+                tool_name = getattr(tool_cls(), 'name', tool_cls.__name__)
                 self.container.set_health(tool_name, Container.STATUS_FAIL, str(e))
                 
                 if tool_name in self.REQUIRED_TOOLS:
@@ -74,16 +68,15 @@ class Kernel:
                 else:
                     print(f"[Kernel] ⚠️ Herramienta opcional '{tool_name}' falló: {e}")
 
-        # 2. Cargar e Iniciar Plugins (DI Real)
+        # 2. Cargar e Iniciar Plugins
+        plugin_threads = []
         for plugin_cls, domain_name in self._load_modules_from_dir("domains", BasePlugin):
             try:
-                # Análisis de dependencias vía __init__
                 sig = inspect.signature(plugin_cls.__init__)
                 dependencies = {}
                 
                 for param_name, _ in sig.parameters.items():
                     if param_name == "self": continue
-                    
                     if param_name == "container":
                         dependencies["container"] = self.container
                     elif self.container.has_tool(param_name):
@@ -91,8 +84,8 @@ class Kernel:
                     else:
                         print(f"[Kernel] ⚠️ Warning: Plugin {plugin_cls.__name__} pide '{param_name}' pero no existe.")
 
-                # Guardamos metadatos del plugin en el contenedor para auditoría y registro
-                self.container.register_plugin_info(plugin_cls.__name__, {
+                # Notificar al Registry del Core
+                self.container.registry.register_plugin(plugin_cls.__name__, {
                     "dependencies": list(dependencies.keys()),
                     "domain": domain_name,
                     "class": plugin_cls.__name__
@@ -100,7 +93,6 @@ class Kernel:
 
                 instance = plugin_cls(**dependencies)
                 
-                # Ejecutamos on_boot en un hilo separado para evitar bloqueos
                 def boot_plugin_task(plugin_instance, name):
                     try:
                         plugin_instance.on_boot()
@@ -108,19 +100,20 @@ class Kernel:
                     except Exception as e:
                         print(f"[Kernel] ⚠️ Fallo en on_boot del plugin {name}: {e}")
 
-                boot_thread = threading.Thread(
-                    target=boot_plugin_task, 
-                    args=(instance, plugin_cls.__name__),
-                    daemon=True
-                )
-                boot_thread.start()
+                t = threading.Thread(target=boot_plugin_task, args=(instance, plugin_cls.__name__), daemon=True)
+                t.start()
+                plugin_threads.append(t)
                 
                 self.plugins[plugin_cls.__name__] = instance
                 print(f"[Kernel] Plugin cargado (DI) y arrancando en hilo: {plugin_cls.__name__}")
             except Exception as e:
                 print(f"[Kernel] ⚠️ Fallo al inicializar plugin {plugin_cls.__name__}: {e}")
 
-        # 3. NOTIFICACIÓN FINAL: Aviso a las tools que terminamos
+        # Esperar a que todos los plugins terminen su on_boot
+        for t in plugin_threads:
+            t.join()
+
+        # 3. Lanzar on_boot_complete
         for tool_name in self.container.list_tools():
             try:
                 tool = self.container.get(tool_name)
@@ -131,15 +124,11 @@ class Kernel:
         print("--- [Kernel] Sistema Listo ---")
 
     def run_plugin(self, plugin_name, **kwargs):
-        """Ejecución Resiliente: Un error en el plugin no mata el proceso."""
         if plugin_name not in self.plugins:
             return {"success": False, "error": f"Plugin {plugin_name} no encontrado."}
-        
         try:
-            # Envolvemos la ejecución en un try/except para capturar errores de lógica
             return self.plugins[plugin_name].execute(**kwargs)
         except Exception as e:
-            # Logueamos el error pero retornamos una respuesta controlada
             print(f"[Kernel] 💥 Crash en ejecución de {plugin_name}: {e}")
             return {"success": False, "error": "Internal Plugin Error", "details": str(e)}
 

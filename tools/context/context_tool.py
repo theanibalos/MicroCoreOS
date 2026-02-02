@@ -14,7 +14,10 @@ class ContextTool(BaseTool):
         return "Genera automáticamente el manifiesto AI_CONTEXT.md que sirve de manual técnico para la IA."
 
     def on_boot_complete(self, container):
-        """Genera el manifiesto en formato Markdown con estándares de Clean Architecture."""
+        """Genera el manifiesto usando el Registro interno del Core."""
+        
+        # El registro ahora es una GARANTÍA en el contenedor (Core)
+        registry = container.registry
         
         # 1. Encabezado y Reglas de Arquitectura
         manifest = "# 📜 SYSTEM MANIFEST FOR AI AGENT\n\n"
@@ -23,16 +26,14 @@ class ContextTool(BaseTool):
         manifest += "## 🏗️ Filosofía y Arquitectura de Ejecución\n"
         manifest += "MicroOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.\n\n"
         manifest += "- **Core Resiliente**: El Kernel y Container son el corazón estable. Los fallos en plugins no detienen el sistema.\n"
+        manifest += "- **Registry Nativo**: El inventario del sistema es ahora parte del Core, garantizando observabilidad total.\n"
         manifest += "- **Modelo de Hilos**: Los plugins arrancan en hilos independientes. El Kernel usa `RLock` para seguridad entre hilos.\n"
         manifest += "- **Concurrency Control**: El `event_bus` utiliza un `ThreadPoolExecutor` para manejar eventos de forma eficiente.\n"
         manifest += "- **Inyección de Dependencias**: Los plugins reciben herramientas en el constructor. **Consulta siempre la sección 'Tools' para ver la firma de los métodos.**\n\n"
 
-        manifest += "## 📐 Estándar de Construcción de Plugins (Single-File Clean Architecture)\n"
-        manifest += "Al crear un plugin, el método `execute` debe seguir estrictamente este orden:\n\n"
-        manifest += "1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos usando el Modelo del dominio.\n"
-        manifest += "2. **Lógica de Negocio**: Procesamiento, cálculos y uso de lógica interna del dominio.\n"
-        manifest += "3. **Persistencia y Acción**: Uso de las tools inyectadas (`self.db`, `self.event_bus`, etc.) para guardar o notificar.\n"
-        manifest += "4. **Respuesta**: Retornar un diccionario: `{'success': bool, 'data': ...}` o `{'success': False, 'error': str}`.\n\n"
+        manifest += "## 🚀 Ejecución y Desarrollo\n"
+        manifest += "- **Comando**: Usa `uv run main.py`. No uses `python main.py` directamente.\n"
+        manifest += "- **Pydantic**: Pasa tus modelos a `http_server.add_endpoint` para generar Swagger automáticamente.\n\n"
         
         manifest += "---\n\n"
 
@@ -41,7 +42,6 @@ class ContextTool(BaseTool):
         manifest += "Inyectadas automáticamente por el Kernel. **Debes pedirlas en tu `__init__`** usando el nombre de la tool como parámetro.\n\n"
         
         for name in container.list_tools():
-            # Evitamos que la propia tool de contexto se ensucie a sí misma en el manual si prefieres
             tool = container.get(name)
             health = container.get_health(name)
             status_emoji = "✅" if health["status"] == "OK" else "❌"
@@ -54,13 +54,13 @@ class ContextTool(BaseTool):
             manifest += f"```text\n{tool.get_interface_description().strip()}\n```\n"
             manifest += "\n"
         
-        # 3. Modelos del Dominio (Index via Registry)
+        # 3. Modelos del Dominio (Index via Core Registry)
         manifest += "## 📦 Modelos del Dominio (Data Structures)\n"
         manifest += "Estructuras de datos registradas. Puedes leer el código directamente en su ruta para detalles.\n\n"
         
-        domain_metadata = container.get_domain_metadata()
+        domain_metadata = registry.get_domain_metadata()
         for domain_name, data in sorted(domain_metadata.items()):
-            manifest += f"### 🧩 Dominios `{domain_name}`\n"
+            manifest += f"### 🧩 Dominio `{domain_name}`\n"
             for key in sorted(data.keys()):
                 if key.startswith("model_"):
                     model_name = key.replace("model_", "")
@@ -71,6 +71,6 @@ class ContextTool(BaseTool):
         try:
             with open("AI_CONTEXT.md", "w", encoding="utf-8") as f:
                 f.write(manifest)
-            print("[ContextTool] AI_CONTEXT.md actualizado vía Architectural Registry.")
+            print("[ContextTool] AI_CONTEXT.md actualizado vía Core Registry.")
         except Exception as e:
             print(f"[ContextTool] Error al escribir el manifiesto: {e}")

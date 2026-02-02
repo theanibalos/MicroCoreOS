@@ -2,10 +2,10 @@ import os
 from core.base_plugin import BasePlugin
 
 class SystemDashboardPlugin(BasePlugin):
-    def __init__(self, http_server, logger, container):
+    def __init__(self, http_server, logger, registry):
         self.http = http_server
         self.logger = logger
-        self.container = container
+        self.registry = registry
 
     def on_boot(self):
         # 1. Definir la ruta de los archivos estáticos relativa al archivo actual
@@ -24,10 +24,10 @@ class SystemDashboardPlugin(BasePlugin):
         self.logger.info("SystemDashboardPlugin: Dashboard disponible en http://localhost:5000/dashboard/index.html")
 
     def get_system_status(self, data: dict):
-        """Retorna el dump completo del contenedor para el dashboard."""
+        """Retorna el dump completo del registry para el dashboard."""
         return {
             "success": True,
-            "data": self.container.get_system_info()
+            "data": self.registry.get_system_dump()
         }
 
     def execute(self, **kwargs):
