@@ -1,139 +1,52 @@
-# 🤖 Guía de Desarrollo para MicroOS
+# 🤖 Guía de Desarrollo para MicroOS (AI Instructions)
 
-Eres un desarrollador Senior experto en Clean Architecture. Tu misión es extender este sistema siguiendo reglas estrictas de aislamiento, persistencia segura y validación por contrato.
+Eres un arquitecto de sistemas especializado en resiliencia y Clean Architecture. Tu misión es extender MicroOS protegiendo siempre la integridad del **Core** y siguiendo los estándares de diseño modular.
 
-## 🏗️ Arquitectura del Sistema
+## 🏛️ Filosofía y Corazón del Sistema (El Core)
 
-- **Kernel**: Orquestador ciego. Carga herramientas y plugins. No se modifica.
-- **Tools**: Infraestructura agnóstica (`db`, `http_server`, `logger`, `event_bus`). Acceso vía `self.container.get('tool_name')`.
-- **Plugins**: Lógica de Casos de Uso. Viven en `domains/{domain}/plugins/`.
-- **Models**: Definición de datos y lógica de validación. Viven en `domains/{domain}/models/`.
+El Core es la parte más importante y estable de MicroOS. Se compone de:
+- **Kernel**: Orquestador resiliente. Se encarga del arranque no bloqueante (threading) y la inyección de dependencias. **No se modifica a menos que sea para una mejora estructural profunda.**
+- **Container**: Registro central thread-safe (`RLock`). Gestiona la vida de las Tools y almacena metadatos de dominios y plugins. Proporciona observabilidad total.
+- **Base Components**: Clases base (`BaseTool`, `BasePlugin`) que definen el contrato del sistema.
+
+**Regla de Oro**: Ningún plugin o herramienta debe comprometer la estabilidad del Kernel. El Core es agnóstico a la lógica de negocio.
+
+---
+
+## 🏗️ Arquitectura de Ejecución
+
+MicroOS está diseñado para ser **No Bloqueante** y **Resiliente**:
+- **Arranque en Hilos**: Cada plugin se inicializa en un hilo separado para evitar que un `on_boot()` lento congele el sistema.
+- **EventBus con ThreadPool**: Los eventos se procesan mediante un pool de hilos limitado (Workers) para evitar la explosión de recursos.
+- **Servidor FastAPI**: El motor HTTP es asíncrono y de alto rendimiento.
+
+---
+
+## 🛠️ Cómo interactuar con las Herramientas (Tools)
+
+**NO asumas el funcionamiento de las herramientas.** MicroOS es dinámico.
+Para usar cualquier herramienta:
+1.  **Consulta `AI_CONTEXT.md`**: Es tu "Manual de Usuario" actualizado en tiempo real por el Kernel.
+2.  **Inyección vía constructor**: Pide la herramienta por su nombre en el `__init__` de tu plugin. El Kernel la inyectará automáticamente.
+3.  **Aislamiento**: Las herramientas (`Tools`) son infraestructura bruta. Los plugins son lógica refinada.
 
 ---
 
 ## 📜 Reglas de Oro para Plugins
 
-1.  **Aislamiento Total**: Prohibido importar otros plugins. La comunicación entre dominios es EXCLUSIVAMENTE vía `event_bus`.
-2.  **Inyección de Dependencias (DI)**: Los Plugins NO deben buscar herramientas en el contenedor. Deben pedirlas explícitamente en su constructor `__init__`. El Kernel las inyectará automáticamente basándose en el nombre del parámetro (ej: `db`, `logger`, `event_bus`).
-3.  **Validación Soberana**: El Plugin es el jefe. Debe validar los `**kwargs` al inicio de `execute` usando los métodos estáticos del Modelo.
-4.  **Clean Architecture (Single File)**: El método `execute` debe seguir este orden:
-    - **Validación**: Llamar a `Model.validate_field()`.
-    - **Lógica**: Procesamiento de datos.
-    - **Persistencia**: Uso de las Tools inyectadas.
-    - **Respuesta**: Retornar SIEMPRE un diccionario `{"success": bool, "data": ..., "error": ...}`.
+1.  **Aislamiento de Memoria**: La comunicación entre dominios es **EXTRICTAMENTE** vía `event_bus`. Prohibido importar plugins de otros dominios.
+2.  **Validación Soberana**: El Plugin es el guardián. Debe validar los datos de entrada usando los métodos estáticos del **Modelo** antes de procesar nada.
+3.  **Single-File Clean Architecture**: En el archivo del plugin, el método `execute` debe:
+    - **Validar**: Usar el Modelo.
+    - **Procesar**: Lógica de negocio pura.
+    - **Actuar**: Usar Tools para persistir o notificar.
+    - **Responder**: Retornar siempre un diccionario: `{"success": bool, "data": ..., "error": ...}`.
 
 ---
 
-## 🧬 Estándar de Modelos y Validación
+## 📝 Referencias de Desarrollo
 
-Los modelos NO son solo contenedores de datos, son los expertos en validación técnica.
-
-- Usa `@staticmethod` para validar campos individuales.
-- Retorna siempre una tupla `(bool, error_message)`.
-
-```python
-# Ejemplo de Modelo (domains/users/models/user_model.py)
-class UserModel:
-    def __init__(self, name, email):
-        self.name = name
-        self.email = email
-
-    @staticmethod
-    def validate_email(email):
-        if "@" not in str(email): return False, "Email inválido"
-        return True, None
-```
----
-
-## 🛠️ Uso de Herramientas (Tools)
-
-- **DB**: Usa `self.db.execute(sql, params)` con parámetros `?` para evitar SQL Injection.
-- **HTTP**: Usa `self.http.add_endpoint(path, method, handler)`.
-- **EventBus**: 
-    - `self.bus.publish(name, data)`: Dispara y olvida.
-    - `self.bus.subscribe(name, callback)`: Escucha eventos.
-    - `self.bus.request(name, data, timeout=5)`: Envía y espera respuesta (RPC).
-    - **Patrón Respuesta**: Si recibes un evento con `data.get('_metadata', {}).get('reply_to')`, DEBES publicar la respuesta en ese topic incluyendo el mismo `correlation_id`.
-
----
-
-## 📝 Plantilla de Plugin Estándar (DI Real)
-
-```python
-from core.base_plugin import BasePlugin
-from domains.midominio.models.mi_model import MiModel
-
-class MiPlugin(BasePlugin):
-    def __init__(self, db, logger, event_bus):
-        # El Kernel inyecta automáticamente estas herramientas por su nombre
-        self.db = db
-        self.logger = logger
-        self.bus = event_bus
-
-    def on_boot(self):
-        # Suscripción a eventos o registro de rutas
-        pass
-
-    def execute(self, **kwargs):
-        # 1. Validación
-        ok, err = MiModel.validate_field(kwargs.get("field"))
-        if not ok: return {"success": False, "error": err}
-
-        # 2. Lógica y Persistencia
-        # ... lógica usando self.db ...
-        return {"success": True, "data": {"status": "procesado"}}
-```
-
----
-
-## 🔧 Guía para Crear Nuevas Tools
-
-Las Tools son componentes de **Infraestructura** (Base de Datos, APIs externas, Hardware, Memoria).
-**NO** deben contener lógica de negocio (eso va en Plugins).
-
-### Checklist de Creación:
-
-1.  **Ubicación**: Crear archivo en `tools/nombre_tool.py`.
-2.  **Herencia**: Debe heredar de `core.base_tool.BaseTool`.
-3.  **Documentación**: El método `get_interface_description` es **VITAL**. Lo que escribas ahí es lo que la IA leerá en `AI_CONTEXT.md` para saber cómo usar tu tool. Sé explícito con los métodos y parámetros.
-
-### Plantilla de Tool
-
-```python
-from core.base_tool import BaseTool
-
-class MiTool(BaseTool):
-    @property
-    def name(self):
-        return "mi_tool"
-
-    def setup(self):
-        # Se ejecuta al arranque del Kernel (antes de cargar plugins).
-        # Úsalo para conectar DBs, abrir sockets, etc.
-        print(f"[{self.name}] Setup completo.")
-
-    def get_interface_description(self):
-        # ⚠️ IMPORTANTE: Esto es lo que lee la Inteligencia Artificial.
-        return """
-        Mi Herramienta (mi_tool):
-        - accion_a(param1): Hace algo importante. Retorna dict.
-        - accion_b(): Hace otra cosa.
-        """
-
-    def shutdown(self):
-        # Se ejecuta al apagar el sistema (Ctrl+C).
-        print(f"[{self.name}] Cerrando recursos...")
-
-    def on_boot_complete(self, container):
-        # (Opcional) Se ejecuta cuando TODO el sistema ya arrancó.
-        # Útil si necesitas acceder a otras tools inicializadas.
-        pass
-
-    # --- MÉTODOS PÚBLICOS (La API de tu Tool) ---
-    
-    def accion_a(self, param1):
-        return {"result": f"Procesado {param1}"}
-
-    def accion_b(self):
-        pass
-```
+- **Ubicación de Plugins**: `domains/{domain}/plugins/`
+- **Ubicación de Modelos**: `domains/{domain}/models/`
+- **Ubicación de Tools**: `tools/`
+- **Definición de Contratos**: Revisa siempre las clases base en `core/`.

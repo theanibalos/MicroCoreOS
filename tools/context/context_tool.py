@@ -20,11 +20,18 @@ class ContextTool(BaseTool):
         manifest = "# 📜 SYSTEM MANIFEST FOR AI AGENT\n\n"
         manifest += "> **AVISO:** Este archivo es generado automáticamente por el Kernel. No editar manualmente.\n\n"
         
-        manifest += "## 🏗️ Estándar de Construcción de Plugins (Single-File Clean Architecture)\n"
+        manifest += "## 🏗️ Filosofía y Arquitectura de Ejecución\n"
+        manifest += "MicroOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.\n\n"
+        manifest += "- **Core Resiliente**: El Kernel y Container son el corazón estable. Los fallos en plugins no detienen el sistema.\n"
+        manifest += "- **Modelo de Hilos**: Los plugins arrancan en hilos independientes. El Kernel usa `RLock` para seguridad entre hilos.\n"
+        manifest += "- **Concurrency Control**: El `event_bus` utiliza un `ThreadPoolExecutor` para manejar eventos de forma eficiente.\n"
+        manifest += "- **Inyección de Dependencias**: Los plugins reciben herramientas en el constructor. **Consulta siempre la sección 'Tools' para ver la firma de los métodos.**\n\n"
+
+        manifest += "## 📐 Estándar de Construcción de Plugins (Single-File Clean Architecture)\n"
         manifest += "Al crear un plugin, el método `execute` debe seguir estrictamente este orden:\n\n"
-        manifest += "1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos.\n"
-        manifest += "2. **Lógica de Negocio**: Procesamiento, cálculos y uso de modelos del dominio.\n"
-        manifest += "3. **Persistencia y Acción**: Uso de las tools inyectadas en el constructor (`self.db`, `self.event_bus`, etc.) para guardar cambios o notificar.\n"
+        manifest += "1. **Extracción y Validación**: Limpiar `kwargs` y validar tipos de datos usando el Modelo del dominio.\n"
+        manifest += "2. **Lógica de Negocio**: Procesamiento, cálculos y uso de lógica interna del dominio.\n"
+        manifest += "3. **Persistencia y Acción**: Uso de las tools inyectadas (`self.db`, `self.event_bus`, etc.) para guardar o notificar.\n"
         manifest += "4. **Respuesta**: Retornar un diccionario: `{'success': bool, 'data': ...}` o `{'success': False, 'error': str}`.\n\n"
         
         manifest += "---\n\n"

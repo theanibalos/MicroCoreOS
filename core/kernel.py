@@ -21,8 +21,9 @@ class Kernel:
         for root, _, files in os.walk(directory):
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
-                    path = os.path.join(root, file)
-                    module_name = f"{directory}_{file[:-3]}"
+                    path = os.path.abspath(os.path.join(root, file))
+                    # Generamos un nombre de módulo único basado en la ruta absoluta para evitar colisiones
+                    module_name = path.replace(os.sep, "_").replace(".", "_")
                     
                     try:
                         spec = importlib.util.spec_from_file_location(module_name, path)
