@@ -13,7 +13,6 @@ class Kernel:
     def __init__(self):
         self.container = Container()
         self.plugins = {}
-        self.plugins = {}
 
     def _load_modules_from_dir(self, directory, base_class):
         instances = []
@@ -114,11 +113,9 @@ class Kernel:
                 print(f"[Kernel] ⚠️ Fallo al inicializar plugin {plugin_cls.__name__}: {e}")
                 self.container.registry.update_plugin_status(plugin_cls.__name__, "DEAD", str(e))
 
-        # NO ESPERAMOS a que terminen (Non-blocking Boot)
-        # Esto permite que los plugins tengan loops infinitos en on_boot si lo desean
-        # y que el Supervisor arranque inmediatamente.
-        # for t in plugin_threads:
-        #    t.join()
+        # Diseño: Boot asíncrono/no-bloqueante.
+        # Los plugins se inician en paralelo y no esperamos su término.
+        # Esto permite que tengan loops infinitos o tareas de larga duración.
 
         # 3. Lanzar on_boot_complete
         for tool_name in self.container.list_tools():
