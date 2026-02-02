@@ -1,5 +1,38 @@
 import re
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional, List
 
+# === SCHEMAS PARA API (Swagger/Pydantic) ===
+class UserBase(BaseModel):
+    name: str = Field(..., min_length=3, description="Nombre completo del usuario")
+    email: EmailStr = Field(..., description="Correo electrónico único")
+
+class UserCreate(UserBase):
+    pass
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=3)
+    email: Optional[EmailStr] = None
+
+class UserUpdateWithId(UserUpdate):
+    id: int = Field(..., description="ID del usuario a actualizar")
+
+class UserIdRequest(BaseModel):
+    id: int = Field(..., description="ID único del usuario")
+
+class UserPublic(UserBase):
+    id: int
+
+class UserListResponse(BaseModel):
+    success: bool
+    users: List[UserPublic]
+
+class UserResponse(BaseModel):
+    success: bool
+    user: Optional[UserPublic] = None
+    error: Optional[str] = None
+
+# === OBJETO DE DOMINIO ===
 class UserModel:
     def __init__(self, name=None, email=None, id=None):
         self.id = id

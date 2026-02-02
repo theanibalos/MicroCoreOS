@@ -18,7 +18,7 @@ El Core es la parte más importante y estable de MicroOS. Se compone de:
 MicroOS está diseñado para ser **No Bloqueante** y **Resiliente**:
 - **Arranque en Hilos**: Cada plugin se inicializa en un hilo separado para evitar que un `on_boot()` lento congele el sistema.
 - **EventBus con ThreadPool**: Los eventos se procesan mediante un pool de hilos limitado (Workers) para evitar la explosión de recursos.
-- **Servidor FastAPI**: El motor HTTP es asíncrono y de alto rendimiento.
+- **Servidor FastAPI**: El motor HTTP es asíncrono y de alto rendimiento. Soporta **OpenAPI (Swagger)** automáticamente si pasas modelos de Pydantic al registrar endpoints.
 
 ---
 
@@ -29,6 +29,7 @@ Para usar cualquier herramienta:
 1.  **Consulta `AI_CONTEXT.md`**: Es tu "Manual de Usuario" actualizado en tiempo real por el Kernel.
 2.  **Inyección vía constructor**: Pide la herramienta por su nombre en el `__init__` de tu plugin. El Kernel la inyectará automáticamente.
 3.  **Aislamiento**: Las herramientas (`Tools`) son infraestructura bruta. Los plugins son lógica refinada.
+4.  **Swagger/Schemas**: Al usar `http_server.add_endpoint`, pasa tus modelos de Pydantic como `request_model` para que la documentación API se genere sola en `/docs`.
 
 ---
 
@@ -44,9 +45,10 @@ Para usar cualquier herramienta:
 
 ---
 
-## 📝 Referencias de Desarrollo
+## � Ejecución y Desarrollo
 
+- **Comando de Arranque**: Usa **SIEMPRE** `uv run main.py`. No uses `python main.py` directamente ya que `uv` garantiza que las dependencias estén presentes.
 - **Ubicación de Plugins**: `domains/{domain}/plugins/`
 - **Ubicación de Modelos**: `domains/{domain}/models/`
 - **Ubicación de Tools**: `tools/`
-- **Definición de Contratos**: Revisa siempre las clases base en `core/`.
+- **Contratos**: Revisa las clases base en `core/`.

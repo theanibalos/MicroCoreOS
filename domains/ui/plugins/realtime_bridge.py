@@ -13,6 +13,7 @@ class RealTimeBridgePlugin(BasePlugin):
         self.logger = logger
         self._clients = []  # Lista de websockets activos
         self._lock = asyncio.Lock()
+        self._loop = None   # Loop de FastAPI (se captura al conectar el primer cliente)
 
     def on_boot(self):
         # 1. Registrar endpoint WebSocket
@@ -25,6 +26,10 @@ class RealTimeBridgePlugin(BasePlugin):
 
     async def _handle_ws_connect(self, websocket):
         """Maneja nuevas conexiones WebSocket."""
+        # Capturamos el loop de la primera conexión (que es el loop de FastAPI)
+        if not self._loop:
+            self._loop = asyncio.get_event_loop()
+
         async with self._lock:
             self._clients.append(websocket)
         
@@ -67,17 +72,24 @@ class RealTimeBridgePlugin(BasePlugin):
 
     def _broadcast(self, message: str):
         """Envía un mensaje a todos los clientes WebSocket."""
-        # Usamos asyncio para enviar desde el hilo del ThreadPool del EventBus
-        for client in list(self._clients):
+        if not self._clients or not self._loop:
+            return
+
+        # Función auxiliar para enviar de forma asíncrona
+        async def send_to_client(client, msg):
             try:
-                asyncio.run(client.send_text(message))
+                await client.send_text(msg)
             except Exception:
-                # Cliente desconectado, lo ignoramos (se limpiará en el disconnect)
                 pass
+
+        # Enviamos de forma segura desde el hilo de EventBus al loop de FastAPI
+        for client in list(self._clients):
+            asyncio.run_coroutine_threadsafe(send_to_client(client, message), self._loop)
 
     def execute(self, **kwargs):
         return {
             "success": True, 
             "active_clients": len(self._clients),
+            "loop_active": self._loop is not None,
             "message": "RealTimeBridge is forwarding events to WebSocket clients."
         }

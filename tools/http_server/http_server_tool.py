@@ -26,38 +26,51 @@ class HttpServerTool(BaseTool):
     def get_interface_description(self) -> str:
         return """
         Herramienta HTTP Server (FastAPI):
-        - add_endpoint(path, method, handler, tags=None): Registra una nueva URL con tags opcionales.
+        - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None): 
+          Registra una nueva URL. Soporta Schemas Pydantic para autogenerar Swagger.
         - mount_static(path, directory): Sirve archivos estáticos.
         - add_ws_endpoint(path, handler): Registra un endpoint WebSocket.
         - El 'handler' debe recibir un diccionario 'data'.
         """
 
-    def add_endpoint(self, path, method, handler, tags=None):
+    def add_endpoint(self, path, method, handler, tags=None, request_model=None, response_model=None):
         """
-        Registra un endpoint con un envoltorio que extrae datos de Query y Body.
-        - tags: Lista de strings para agrupar en Swagger (ej: ["Users"])
+        Registra un endpoint con soporte opcional para Schemas (Pydantic).
+        - request_model: Clase Pydantic para validar el body y mostrar schema en Swagger.
+        - response_model: Clase Pydantic para el formato de respuesta.
         """
-        # Generar un nombre único para el wrapper interno para evitar colisiones en Swagger
         handler_name = handler.__name__ if hasattr(handler, "__name__") else str(hash(handler))
         operation_id = f"{handler_name}_{method}_{path.replace('/', '_')}"
 
-        async def fastapi_wrapper(request: Request):
-            data = dict(request.query_params)
-            try:
-                if request.method in ["POST", "PUT", "PATCH", "DELETE"]:
-                    body = await request.json()
-                    if isinstance(body, dict):
-                        data.update(body)
-            except Exception: pass
-            
-            try:
-                result = handler(data) 
-                return result
-            except Exception as e:
-                print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
-                return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        # Creamos el wrapper con la firma adecuada para que FastAPI genere el Schema
+        if request_model:
+            async def fastapi_wrapper(request: Request, body: request_model):
+                data = dict(request.query_params)
+                # Unimos query params con el body validado
+                input_data = body.dict() if hasattr(body, "dict") else body
+                data.update(input_data)
+                
+                try:
+                    return handler(data)
+                except Exception as e:
+                    print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
+                    return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        else:
+            async def fastapi_wrapper(request: Request):
+                data = dict(request.query_params)
+                try:
+                    if request.method in ["POST", "PUT", "PATCH", "DELETE"]:
+                        body = await request.json()
+                        if isinstance(body, dict):
+                            data.update(body)
+                except Exception: pass
+                
+                try:
+                    return handler(data)
+                except Exception as e:
+                    print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
+                    return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
-        # Renombrar la función dinámicamente para que Swagger la vea diferente
         fastapi_wrapper.__name__ = operation_id
 
         self.app.add_api_route(
@@ -65,6 +78,7 @@ class HttpServerTool(BaseTool):
             fastapi_wrapper, 
             methods=[method.upper()],
             tags=tags or ["Default"],
+            response_model=response_model,
             operation_id=operation_id,
             name=operation_id
         )

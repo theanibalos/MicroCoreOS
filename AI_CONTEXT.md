@@ -57,7 +57,8 @@ Permite comunicación entre plugins:
 **Interfaz y Capacidades:**
 ```text
 Herramienta HTTP Server (FastAPI):
-        - add_endpoint(path, method, handler, tags=None): Registra una nueva URL con tags opcionales.
+        - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None): 
+          Registra una nueva URL. Soporta Schemas Pydantic para autogenerar Swagger.
         - mount_static(path, directory): Sirve archivos estáticos.
         - add_ws_endpoint(path, handler): Registra un endpoint WebSocket.
         - El 'handler' debe recibir un diccionario 'data'.
@@ -94,6 +95,6 @@ Herramienta de Estado (state):
 ## 📦 Modelos del Dominio (Data Structures)
 Estructuras de datos registradas. Puedes leer el código directamente en su ruta para detalles.
 
-### 🧩 Dominios `home`
+### 🧩 Dominios `users`
 - Modelo disponible: `user_model.py`
 

@@ -34,9 +34,10 @@ class Kernel:
                         domain_name = None
                         if directory == "domains":
                             # Estructura esperada: domains/nombre_dominio/subcarpeta/archivo.py
-                            parts = path.split(os.sep)
-                            if len(parts) >= 3:
-                                domain_name = parts[1]
+                            rel_path = os.path.relpath(path, os.path.abspath(directory))
+                            parts = rel_path.split(os.sep)
+                            if len(parts) >= 1:
+                                domain_name = parts[0]
 
                         for name, obj in inspect.getmembers(module):
                             if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:

@@ -1,5 +1,5 @@
 from core.base_plugin import BasePlugin
-from domains.users.models.user_model import UserModel
+from domains.users.models.user_model import UserModel, UserListResponse
 
 class ListUsersPlugin(BasePlugin):
     def __init__(self, http_server, db, logger):
@@ -8,8 +8,14 @@ class ListUsersPlugin(BasePlugin):
         self.logger = logger
 
     def on_boot(self):
-        self.http.add_endpoint("/users", "GET", self.execute, tags=["Users"])
-        self.logger.info("ListUsersPlugin: Endpoint /users registrado.")
+        self.http.add_endpoint(
+            path="/users", 
+            method="GET", 
+            handler=self.execute, 
+            tags=["Users"],
+            response_model=UserListResponse
+        )
+        self.logger.info("ListUsersPlugin: Endpoint /users registrado con Schema.")
 
     def execute(self, data: dict):
         rows = self.db.query("SELECT id, name, email FROM users")
