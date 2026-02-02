@@ -13,8 +13,7 @@ class Kernel:
     def __init__(self):
         self.container = Container()
         self.plugins = {}
-        self._threads_map = {} # Monitoring map
-        self.container.registry.register_tool("kernel_supervisor", "OK", "Monitor activo")
+        self.plugins = {}
 
     def _load_modules_from_dir(self, directory, base_class):
         instances = []
@@ -100,8 +99,8 @@ class Kernel:
                         plugin_instance.on_boot()
                         print(f"[Kernel] Plugin listo: {name}")
                         self.container.registry.update_plugin_status(name, "READY")
-                    except Exception as e:
-                        print(f"[Kernel] ⚠️ Fallo en on_boot del plugin {name}: {e}")
+                    except BaseException as e:
+                        print(f"[Kernel] ⚠️ Fallo CRÍTICO en on_boot del plugin {name}: {repr(e)}")
                         self.container.registry.update_plugin_status(name, "DEAD", str(e))
 
                 t = threading.Thread(target=boot_plugin_task, args=(instance, plugin_cls.__name__), daemon=True)
@@ -109,7 +108,6 @@ class Kernel:
                 plugin_threads.append(t)
                 
                 self.plugins[plugin_cls.__name__] = instance
-                self._threads_map[plugin_cls.__name__] = t
                 self.container.registry.update_plugin_status(plugin_cls.__name__, "RUNNING")
                 print(f"[Kernel] Plugin cargado (DI) y arrancando en hilo: {plugin_cls.__name__}")
             except Exception as e:
@@ -121,9 +119,6 @@ class Kernel:
         # y que el Supervisor arranque inmediatamente.
         # for t in plugin_threads:
         #    t.join()
-
-        # START SUPERVISOR
-        threading.Thread(target=self._monitor_loop, daemon=True, name="KernelSupervisor").start()
 
         # 3. Lanzar on_boot_complete
         for tool_name in self.container.list_tools():
@@ -144,18 +139,6 @@ class Kernel:
             print(f"[Kernel] 💥 Crash en ejecución de {plugin_name}: {e}")
             return {"success": False, "error": "Internal Plugin Error", "details": str(e)}
 
-    def _monitor_loop(self):
-        import time
-        print("[Kernel] 👮 Supervisor iniciado. Vigilando hilos...")
-        while True:
-            time.sleep(5)
-            for name, thread in self._threads_map.items():
-                if not thread.is_alive():
-                    # Check if already marked as dead to avoid spam
-                    current_status = self.container.registry.get_system_dump()["plugins"].get(name, {}).get("status")
-                    if current_status != "DEAD" and current_status != "READY":
-                        print(f"[Kernel] 💀 ALERTA: Hilo del plugin '{name}' ha muerto silenciosamente.")
-                        self.container.registry.update_plugin_status(name, "DEAD", "Thread Died Unexpectedly")
 
     def shutdown(self):
         print("\n--- [Kernel] Iniciando apagado de herramientas ---")
