@@ -19,12 +19,12 @@ def main():
 
     app.boot()
 
-    print("\n🚀 [MicroOS] Sistema Online. (Ctrl+C para salir)")
+    print("\n🚀 [MicroCoreOS] Sistema Online. (Ctrl+C para salir)")
     
     stop_event.wait() # Suspensión eficiente del hilo principal
 
     app.shutdown() # Limpieza final
-    print("[MicroOS] Apagado completo. ¡Hasta pronto!")
+    print("[MicroCoreOS] Apagado completo. ¡Hasta pronto!")
 
 if __name__ == "__main__":
     main()

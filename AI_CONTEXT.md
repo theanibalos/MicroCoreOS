@@ -3,7 +3,7 @@
 > **AVISO:** Este archivo es generado automáticamente por el Kernel. No editar manualmente.
 
 ## 🏗️ Filosofía y Arquitectura de Ejecución
-MicroOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.
+MicroCoreOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.
 
 - **Core Resiliente**: El Kernel y Container son el corazón estable. Los fallos en plugins no detienen el sistema.
 - **Registry Nativo**: El inventario del sistema es ahora parte del Core, garantizando observabilidad total.

@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 class HttpServerTool(BaseTool):
     def __init__(self):
-        self.app = FastAPI(title="MicroOS Gateway")
+        self.app = FastAPI(title="MicroCoreOS Gateway")
         self._endpoints = []
 
     @property

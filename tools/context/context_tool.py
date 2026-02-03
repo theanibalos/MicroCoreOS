@@ -24,7 +24,7 @@ class ContextTool(BaseTool):
         manifest += "> **AVISO:** Este archivo es generado automáticamente por el Kernel. No editar manualmente.\n\n"
         
         manifest += "## 🏗️ Filosofía y Arquitectura de Ejecución\n"
-        manifest += "MicroOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.\n\n"
+        manifest += "MicroCoreOS es un sistema modular, asíncrono y resiliente basado en Clean Architecture.\n\n"
         manifest += "- **Core Resiliente**: El Kernel y Container son el corazón estable. Los fallos en plugins no detienen el sistema.\n"
         manifest += "- **Registry Nativo**: El inventario del sistema es ahora parte del Core, garantizando observabilidad total.\n"
         manifest += "- **Modelo de Hilos**: Los plugins arrancan en hilos independientes. El Kernel usa `RLock` para seguridad entre hilos.\n"

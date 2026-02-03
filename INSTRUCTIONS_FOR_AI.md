@@ -1,10 +1,10 @@
-# 🤖 Guía de Desarrollo para MicroOS (AI Instructions)
+# 🤖 Guía de Desarrollo para MicroCoreOS (AI Instructions)
 
-Eres un arquitecto de sistemas especializado en resiliencia y Clean Architecture. Tu misión es extender MicroOS protegiendo siempre la integridad del **Core** y siguiendo los estándares de diseño modular.
+Eres un arquitecto de sistemas especializado en resiliencia y Clean Architecture. Tu misión es extender MicroCoreOS protegiendo siempre la integridad del **Core** y siguiendo los estándares de diseño modular.
 
 ## 🏛️ Filosofía y Corazón del Sistema (El Core)
 
-El Core es la parte más importante y estable de MicroOS. Se compone de:
+El Core es la parte más importante y estable de MicroCoreOS. Se compone de:
 - **Kernel**: Orquestador resiliente. Se encarga del arranque no bloqueante (threading) y la inyección de dependencias. **No se modifica a menos que sea para una mejora estructural profunda.**
 - **Container**: Registro central thread-safe (`RLock`). Gestiona la vida de las Tools y almacena metadatos de dominios y plugins. Proporciona observabilidad total.
 - **Base Components**: Clases base (`BaseTool`, `BasePlugin`) que definen el contrato del sistema.
@@ -15,7 +15,7 @@ El Core es la parte más importante y estable de MicroOS. Se compone de:
 
 ## 🏗️ Arquitectura de Ejecución
 
-MicroOS está diseñado para ser **No Bloqueante** y **Resiliente**:
+MicroCoreOS está diseñado para ser **No Bloqueante** y **Resiliente**:
 - **Arranque en Hilos**: Cada plugin se inicializa en un hilo separado para evitar que un `on_boot()` lento congele el sistema.
 - **EventBus con ThreadPool**: Los eventos se procesan mediante un pool de hilos limitado (Workers) para evitar la explosión de recursos.
 - **Servidor FastAPI**: El motor HTTP es asíncrono y de alto rendimiento. Soporta **OpenAPI (Swagger)** automáticamente si pasas modelos de Pydantic al registrar endpoints.
@@ -24,7 +24,7 @@ MicroOS está diseñado para ser **No Bloqueante** y **Resiliente**:
 
 ## 🛠️ Cómo interactuar con las Herramientas (Tools)
 
-**NO asumas el funcionamiento de las herramientas.** MicroOS es dinámico.
+**NO asumas el funcionamiento de las herramientas.** MicroCoreOS es dinámico.
 Para usar cualquier herramienta:
 1.  **Consulta `AI_CONTEXT.md`**: Es tu "Manual de Usuario" actualizado en tiempo real por el Kernel.
 2.  **Inyección vía constructor**: Pide la herramienta por su nombre en el `__init__` de tu plugin. El Kernel la inyectará automáticamente.

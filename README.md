@@ -1,13 +1,13 @@
-# 🚀 MicroOS: AI-First Micro-Kernel Architecture
+# 🚀 MicroCoreOS: AI-First Micro-Kernel Architecture
 
 > **Un Framework diseñado para ser construido, mantenido y operado por Inteligencia Artificial.**
 
-MicroOS no es otro framework web más. Es una arquitectura de **Micronúcleo (Micro-Kernel)** diseñada desde cero para eliminar la ambigüedad que sufren los LLMs al trabajar con frameworks tradicionales. Prioriza la **explicitud estructural** y el **aislamiento** sobre la "magia" o el *syntactic sugar*.
+MicroCoreOS no es otro framework web más. Es una arquitectura de **Micronúcleo (Micro-Kernel)** diseñada desde cero para eliminar la ambigüedad que sufren los LLMs al trabajar con frameworks tradicionales. Prioriza la **explicitud estructural** y el **aislamiento** sobre la "magia" o el *syntactic sugar*.
 
 ## 🧠 Filosofía: "AI-Native"
 
 En el desarrollo moderno asistido por IA, el cuello de botella no es escribir código, es **mantener el contexto**.
-MicroOS resuelve esto con:
+MicroCoreOS resuelve esto con:
 
 1.  **Arquitectura Fractal**: Todo es un Plugin. Todos los Plugins se ven iguales.
 2.  **Self-Documenting Context**: El sistema genera y mantiene su propio `AI_CONTEXT.md`, que sirve como "manual de instrucciones vivo" para cualquier agente que trabaje en el repo.
@@ -17,7 +17,7 @@ MicroOS resuelve esto con:
 
 ### Axiomas Core (Verdades Inmutables)
 
-Estos son los principios no negociables que definen MicroOS:
+Estos son los principios no negociables que definen MicroCoreOS:
 
 | Axioma | Descripción |
 |--------|-------------|
@@ -135,11 +135,11 @@ Resumen rápido para crear un Plugin:
 
 ## 🛡️ "Not Invented Here" Statement
 
-MicroOS implementa su propio sistema de **Inyección de Dependencias (DI)** y orquestación deliberadamente.
+MicroCoreOS implementa su propio sistema de **Inyección de Dependencias (DI)** y orquestación deliberadamente.
 *   **¿Por qué no FastAPI/Flask?**: Para reducir la superficie de API externa que la IA debe conocer. El "Framework" es el código que ves en `/core`, 100% auditable y modificable.
 *   **¿Por qué no Inyectores externos?**: Para mantener la transparencia. El Kernel es un orquestador que puedes leer en un minuto y entender exactamente cómo se inyectan tus herramientas.
 
-## 🗺️ Roadmap de MicroOS
+## 🗺️ Roadmap de MicroCoreOS
 
 El sistema está en evolución. Próximas capacidades planificadas:
 
