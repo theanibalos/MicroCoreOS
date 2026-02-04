@@ -20,14 +20,6 @@ MicroCoreOS es un sistema modular, asíncrono y resiliente basado en Clean Archi
 ## 🛠️ Herramientas Disponibles (Tools)
 Inyectadas automáticamente por el Kernel. **Debes pedirlas en tu `__init__`** usando el nombre de la tool como parámetro.
 
-### 🔧 Tool: `auth` (Estado: ✅ OK)
-**Interfaz y Capacidades:**
-```text
-Herramienta de Autenticación (auth):
-        - verify_token(token): Verifica si un token es válido (SIMULADO).
-        - get_user_from_token(token): Retorna datos del usuario (SIMULADO).
-```
-
 ### 🔧 Tool: `config` (Estado: ✅ OK)
 **Interfaz y Capacidades:**
 ```text

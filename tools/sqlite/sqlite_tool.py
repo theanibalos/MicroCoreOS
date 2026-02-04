@@ -21,17 +21,15 @@ class SqliteTool(BaseTool):
         return self._local.conn, self._local.cursor
 
     def setup(self):
-        """Inicializa la tabla base si no existe"""
-        conn, cursor = self._get_conn()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL
-            )
-        """)
-        conn.commit()
-        print(f"[System] SqliteTool: Base de datos '{self._db_path}' lista.")
+        """Inicializa la carpeta de migraciones y la base de datos"""
+        print(f"[System] SqliteTool: Preparando base de datos en '{self._db_path}'...")
+        # Aseguramos que el archivo existe
+        if not os.path.exists(self._db_path):
+            with open(self._db_path, "w") as f:
+                pass
+        
+    def on_boot_complete(self, container):
+        """En un futuro, se encargará de las migraciones"""
 
     def get_interface_description(self) -> str:
         return """
