@@ -1,5 +1,5 @@
 from core.base_tool import BaseTool
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
 import uvicorn
 import threading
@@ -25,7 +25,12 @@ class HttpServerTool(BaseTool):
             response = await call_next(request)
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
-            response.headers["Content-Security-Policy"] = "default-src 'self'"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' https://fastapi.tiangolo.com data:;"
+            )
             return response
 
         @self.app.get("/health")
@@ -53,17 +58,30 @@ class HttpServerTool(BaseTool):
 
         # Create wrapper with appropriate signature for FastAPI Schema generation
         if request_model:
-            def fastapi_wrapper(request: Request, body: request_model):
-                data = dict(request.query_params)
-                # Merge query params with validated body
-                input_data = body.dict() if hasattr(body, "dict") else body
-                data.update(input_data)
-                
-                try:
-                    return handler(data)
-                except Exception as e:
-                    print(f"[HttpServer] 💥 Error in route {path}: {e}")
-                    return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
+            if method.upper() == "GET":
+                async def fastapi_wrapper(request: Request, params: request_model = Depends()):
+                    data = dict(request.query_params)
+                    # Merge Pydantic model params
+                    if hasattr(params, "dict"):
+                        data.update(params.dict())
+                    
+                    try:
+                        return await run_in_threadpool(handler, data)
+                    except Exception as e:
+                        print(f"[HttpServer] 💥 Error in route {path}: {e}")
+                        return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
+            else:
+                async def fastapi_wrapper(request: Request, body: request_model):
+                    data = dict(request.query_params)
+                    # Merge query params with validated body
+                    input_data = body.dict() if hasattr(body, "dict") else body
+                    data.update(input_data)
+                    
+                    try:
+                        return await run_in_threadpool(handler, data)
+                    except Exception as e:
+                        print(f"[HttpServer] 💥 Error in route {path}: {e}")
+                        return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
         else:
             async def fastapi_wrapper(request: Request):
                 data = dict(request.query_params)
