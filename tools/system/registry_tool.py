@@ -20,8 +20,15 @@ class RegistryTool(BaseTool):
         """Capture the real registry from the container."""
         self._core_registry = container.registry
 
+    def _ensure_registry(self):
+        if not hasattr(self, "_core_registry") or self._core_registry is None:
+            return False
+        return True
+
     def get_system_dump(self) -> dict:
         """Delegates to the Core registry."""
+        if not self._ensure_registry():
+            return {"tools": {}, "domains": {}, "plugins": {}}
         return self._core_registry.get_system_dump()
 
     def get_domain_metadata(self) -> dict:

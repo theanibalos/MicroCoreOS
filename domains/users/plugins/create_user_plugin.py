@@ -1,8 +1,20 @@
+from typing import TYPE_CHECKING
 from core.base_plugin import BasePlugin
 from domains.users.models.user_model import UserModel, UserCreate, UserResponse
 
+if TYPE_CHECKING:
+    from tools.http_server.http_server_tool import HttpServerTool
+    from tools.sqlite.sqlite_tool import SqliteTool
+    from tools.logger.logger_tool import LoggerTool
+    from tools.event_bus.event_bus_tool import EventBusTool
+
 class CreateUserPlugin(BasePlugin):
-    def __init__(self, http_server, db, logger, event_bus):
+    def __init__(self, 
+        http_server: 'HttpServerTool', 
+        db: 'SqliteTool', 
+        logger: 'LoggerTool', 
+        event_bus: 'EventBusTool'
+    ):
         self.http = http_server
         self.db = db
         self.logger = logger
@@ -30,7 +42,6 @@ class CreateUserPlugin(BasePlugin):
                 "INSERT INTO users (name, email) VALUES (?, ?)", 
                 (name, email)
             )
-            
             user = UserModel(id=user_id, name=name, email=email)
             self.logger.info(f"User {name} created with ID {user_id}.")
             

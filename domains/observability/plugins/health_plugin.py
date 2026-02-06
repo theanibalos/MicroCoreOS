@@ -23,6 +23,7 @@ class HealthPlugin(BasePlugin):
 
     def _health_loop(self):
         """Background loop that periodically audits the system"""
+        time.sleep(2) # Give some time for all tools to complete boot
         while not self._stop_event.is_set():
             try:
                 system_state = self.registry.get_system_dump()
