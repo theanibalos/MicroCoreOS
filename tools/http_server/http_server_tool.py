@@ -19,6 +19,14 @@ class HttpServerTool(BaseTool):
         """Configuración inicial del servidor."""
         print("[HttpServer] Configurando FastAPI...")
         
+        @self.app.middleware("http")
+        async def add_security_headers(request: Request, call_next):
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
+            return response
+
         @self.app.get("/health")
         async def health():
             return {"status": "ok", "tools": "active", "engine": "fastapi"}
@@ -54,7 +62,7 @@ class HttpServerTool(BaseTool):
                     return handler(data)
                 except Exception as e:
                     print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
-                    return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+                    return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
         else:
             async def fastapi_wrapper(request: Request):
                 data = dict(request.query_params)
@@ -69,7 +77,7 @@ class HttpServerTool(BaseTool):
                     return handler(data)
                 except Exception as e:
                     print(f"[HttpServer] 💥 Error en ruta {path}: {e}")
-                    return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+                    return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
 
         fastapi_wrapper.__name__ = operation_id
 
