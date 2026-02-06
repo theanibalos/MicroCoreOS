@@ -5,6 +5,7 @@ import uvicorn
 import threading
 import asyncio
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 class HttpServerTool(BaseTool):
     def __init__(self):
@@ -52,7 +53,7 @@ class HttpServerTool(BaseTool):
 
         # Create wrapper with appropriate signature for FastAPI Schema generation
         if request_model:
-            async def fastapi_wrapper(request: Request, body: request_model):
+            def fastapi_wrapper(request: Request, body: request_model):
                 data = dict(request.query_params)
                 # Merge query params with validated body
                 input_data = body.dict() if hasattr(body, "dict") else body
@@ -74,7 +75,8 @@ class HttpServerTool(BaseTool):
                 except Exception: pass
                 
                 try:
-                    return handler(data)
+
+                    return await run_in_threadpool(handler, data)
                 except Exception as e:
                     print(f"[HttpServer] 💥 Error in route {path}: {e}")
                     return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})

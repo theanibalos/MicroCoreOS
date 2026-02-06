@@ -132,6 +132,97 @@ MicroCoreOS/
 
 ---
 
+## Advanced Design Decisions
+
+### Tool vs Plugin: How to Decide?
+
+```text
+Is it a Tool or a Plugin?
+├── Does it have domain state?              → Plugin
+├── Is it reusable across domains?         → Tool  
+└── Does it implement business rules?      → Plugin
+```
+
+**Example - Authentication:**  
+- Verifying token signature (crypto) → **Tool** (technical, stateless)  
+- Managing users and permissions → **Plugin** (domain state, business rules)
+
+### Events: Sync vs Async
+
+| Method | When to use | Example |
+|--------|-------------|---------|
+| `publish(event, data)` | Fire and forget (no confirmation needed) | Notifications, logs, side-effects |
+| `request(event, data)` | Need a response to continue (RPC) | Cross-domain validations, queries |
+
+> [!WARNING]
+> Abuse of `request()` reintroduces coupling. If a Plugin makes too many requests to another, they probably belong in the same domain.
+
+### Boot Lifecycle
+
+```text
+Boot Sequence:
+1. Tool.setup()            → Internal initialization
+2. Plugin.__init__()       → Dependency injection  
+3. Plugin.on_boot()        → Register endpoints, subscriptions
+4. Tool.on_boot_complete() → Actions requiring the full system
+5. System Online           → Ready for requests
+6. Tool.shutdown()         → Graceful resource cleanup
+```
+
+---
+
+## Anti-Patterns (The "Don'ts")
+
+| ❌ Anti-Pattern | ✅ Solution |
+|----------------|------------|
+| Plugin imports another Plugin | Communicate via EventBus |
+| Plugin accesses Container directly | Declare dependency in `__init__` |
+| Tool containing business logic | Move to a Plugin in the appropriate domain |
+| Shared state without a Tool | Use the `state` Tool with namespaces |
+
+---
+
+## High Performance & Production
+
+If your implementation requires extreme performance (game engines, 4K video processing, or HFT):
+
+### 1. Zero-Copy Architecture
+To handle large data volumes between plugins without overhead:
+* **Ownership Pointers**: In languages like **Rust**, use `Arc` (Atomic Reference Counting). This allows multiple plugins to read the **same physical memory** simultaneously without copying a single byte.
+
+### 2. Static Dispatch
+Dynamic DI has a small "indirection" cost. For instant speed:
+* **Code Generation**: Use tools to generate the dependency wiring at compile-time. This allows the compiler to perform *Inlining*, eliminating call overhead.
+
+### 3. Selection by Latency
+
+| Language | Profile | Ideal for... |
+|----------|---------|---------------|
+| **Python** | Context-Efficient | Rapid Prototyping, APIs, AI Logic |
+| **Go** | Throughput-Optimal | High-traffic Microservices |
+| **Rust** | Latency-Extreme | Engines, Video, Real-time Systems |
+
+---
+
+## Roadmap
+
+MicroCoreOS is designed for an immutable Kernel. Growth comes from expanding Tools and observability:
+
+- 🔍 **Tracer Tool**: Integrated mapping of which plugins react to which events.
+- 🛡️ **Global Middleware**: Intercept plugin execution for auditing or security.
+- 🏗️ **Production Tools**: Reference implementations evolved into production-ready drivers (PostgreSQL, Redis, etc.).
+- 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM.
+
+---
+
+## Why "Not Invented Here"?
+
+MicroCoreOS implements its own DI and orchestration deliberately:
+* **Why not FastAPI/Flask directly?**: To reduce the API surface an AI needs to learn. The "Framework" is the code you see in `/core`—100% auditable.
+* **Why not external Injectors?**: To maintain transparency. The Kernel is an orchestrator you can read in one minute and understand exactly how your tools are wired.
+
+---
+
 ## For Teams
 
 In traditional architectures, a single feature requires coordination:
@@ -154,10 +245,11 @@ Tools don't hold business state—they're pure infrastructure. This means:
 
 | Traditional Benefit | MicroCoreOS Equivalent |
 |--------------------|-----------------------|
-| "Change DB without touching business logic" | Change the Tool, not the Plugin |
+| "Change DB without touching logic" | Change the Tool, not the Plugin |
 | "Test layers in isolation" | Mock Tools in plugin tests |
 | "Clear ownership boundaries" | 1 plugin = 1 owner |
 | "Onboarding new devs" | Read AI_CONTEXT.md in 5 minutes |
+
 
 ---
 

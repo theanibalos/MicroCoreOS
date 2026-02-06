@@ -1,8 +1,82 @@
-# 🚀 MicroCoreOS: Fractal Micro-Kernel Architecture
+# MicroCoreOS
 
-> **Arquitectura modular diseñada para la máxima auditabilidad humana y eficiencia de agentes IA.**
+> Cada vez que le pedía a mi IA que añadiera un endpoint CRUD,  
+> intentaba crear 6-8 archivos. Me cansé de eso.
 
-MicroCoreOS no es un framework por ahora; es una **propuesta de arquitectura de Micronúcleo (Micro-Kernel)**. Su diseño busca eliminar la "caja negra" de los sistemas tradicionales, permitiendo que tanto humanos como IAs puedan razonar, auditar y extender el sistema con eficiencia. Se basa en tres pilares: **Microkernel**, **Fractalidad** y **Modularidad total**.
+**1 archivo = 1 funcionalidad.** Esa es la idea base.
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
+---
+
+## El Problema
+
+Los asistentes de IA como Cursor y Claude necesitan entender tu arquitectura para añadir funcionalidades.
+
+En arquitecturas tradicionales de capas, eso significa explicar:
+- Dónde poner la entidad
+- Cómo cablear el repositorio
+- Qué factoría crea el caso de uso
+- Cómo el controlador mapea a la ruta
+- Qué DTOs crear
+
+**Son 6-8 archivos y más de 200 líneas de código para un solo endpoint.**
+
+## La Solución
+
+```python
+# domains/products/plugins/create_product_plugin.py
+from core.base_plugin import BasePlugin
+
+class CreateProductPlugin(BasePlugin):
+    def __init__(self, http_server, db, logger, event_bus):
+        self.http = http_server
+        self.db = db
+        self.logger = logger
+        self.bus = event_bus
+
+    def on_boot(self):
+        self.http.add_endpoint("/products", "POST", self.execute)
+
+    def execute(self, data: dict):
+        product_id = self.db.execute(
+            "INSERT INTO products (name, price) VALUES (?, ?)",
+            (data["name"], data["price"])
+        )
+        self.bus.publish("product.created", {"id": product_id})
+        return {"success": True, "id": product_id}
+```
+
+**48 líneas. Un archivo. Funcionalidad completa.**
+
+- ✅ Registro de endpoint
+- ✅ Operación de base de datos
+- ✅ Publicación de eventos
+- ✅ Auto-descubierto por el kernel
+- ✅ Dependencias inyectadas automáticamente
+
+---
+
+## Para Desarrollo Dirigido por IA
+
+La arquitectura genera `AI_CONTEXT.md` automáticamente—un manifiesto con todas las herramientas disponibles y sus firmas. Tu asistente de IA siempre sabe qué hay disponible sin tener que explorar todo el código.
+
+**Uso de tokens medido por funcionalidad:**
+
+| Arquitectura | Archivos | Líneas | Tokens Est. |
+|--------------|----------|--------|-------------|
+| **MicroCoreOS** | 1 | ~50 | ~1,000 |
+| Vertical Slice | 2-3 | ~100 | ~1,500 |
+| N-Layer | 4-5 | ~150 | ~2,500 |
+| Hexagonal | 5-7 | ~200 | ~3,500 |
+| Clean Architecture | 6-8 | ~250 | ~4,000 |
+
+---
+
+## 🚀 MicroCoreOS: Arquitectura de Micro-Núcleo Fractal
+
+MicroCoreOS no es solo un framework; es una **propuesta de arquitectura de Micronúcleo (Micro-Kernel)**. Su diseño busca eliminar la "caja negra" de los sistemas tradicionales, permitiendo que tanto humanos como IAs puedan razonar, auditar y extender el sistema con eficiencia. Se basa en tres pilares: **Microkernel**, **Fractalidad** y **Modularidad total**.
 
 ## 🧠 Filosofía: "Human-Auditable, AI-Ready"
 
@@ -132,6 +206,35 @@ Resumen rápido para crear un Plugin:
 3.  Hereda de `BasePlugin`.
 4.  Implementa `execute(self, **kwargs)`.
 5.  ¡Listo! El Kernel lo cargará automáticamente en el próximo reinicio.
+
+## Para Equipos
+
+En arquitecturas tradicionales, una sola funcionalidad requiere coordinación:
+- Alguien es dueño de la capa de dominio
+- Alguien es dueño de la infraestructura
+- Alguien cablea la inyección de dependencias
+- Alguien revisa los cambios entre capas
+
+**En MicroCoreOS: 1 persona, 1 archivo, 1 PR.**
+
+### Por qué las Tools son Stateless
+
+Las Tools no guardan estado de negocio—son pura infraestructura. Esto significa:
+
+- **Cambio de base de datos instantáneo**: Reemplaza la Tool `db` por PostgreSQL, MongoDB o un ORM. Los plugins no cambian.
+- **Sin riesgo de migración**: Las Tools son intercambiables por diseño.
+- **En la era del código barato**: Tu IA escribe el SQL en 2 segundos. ¿Para qué abstraerlo?
+
+### Misma Aislamiento, Menos Ceremonia
+
+| Beneficio Tradicional | Equivalente en MicroCoreOS |
+|----------------------|----------------------------|
+| "Cambiar DB sin tocar lógica" | Cambia la Tool, no el Plugin |
+| "Testear capas en aislamiento" | Mockea las Tools en tests de plugin |
+| "Límites de propiedad claros" | 1 plugin = 1 responsable |
+| "Onboarding de nuevos devs" | Lee AI_CONTEXT.md en 5 minutos |
+
+---
 
 ## 🛡️ "Not Invented Here" Statement
 
