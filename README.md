@@ -1,17 +1,17 @@
-# 🚀 MicroCoreOS: AI-First Micro-Kernel Architecture
+# 🚀 MicroCoreOS: Fractal Micro-Kernel Architecture
 
-> **Un Framework diseñado para ser construido, mantenido y operado por Inteligencia Artificial.**
+> **Arquitectura modular diseñada para la máxima auditabilidad humana y eficiencia de agentes IA.**
 
-MicroCoreOS no es otro framework web más. Es una arquitectura de **Micronúcleo (Micro-Kernel)** diseñada desde cero para eliminar la ambigüedad que sufren los LLMs al trabajar con frameworks tradicionales. Prioriza la **explicitud estructural** y el **aislamiento** sobre la "magia" o el *syntactic sugar*.
+MicroCoreOS no es un framework por ahora; es una **propuesta de arquitectura de Micronúcleo (Micro-Kernel)**. Su diseño busca eliminar la "caja negra" de los sistemas tradicionales, permitiendo que tanto humanos como IAs puedan razonar, auditar y extender el sistema con eficiencia. Se basa en tres pilares: **Microkernel**, **Fractalidad** y **Modularidad total**.
 
-## 🧠 Filosofía: "AI-Native"
+## 🧠 Filosofía: "Human-Auditable, AI-Ready"
 
-En el desarrollo moderno asistido por IA, el cuello de botella no es escribir código, es **mantener el contexto**.
-MicroCoreOS resuelve esto con:
+MicroCoreOS busca la **transparencia total**. Aunque el Kernel y las herramientas proveen la base estable, la complejidad del sistema crece de forma **fractal** a través de sus plugins.
 
-1.  **Arquitectura Fractal**: Todo es un Plugin. Todos los Plugins se ven iguales.
-2.  **Self-Documenting Context**: El sistema genera y mantiene su propio `AI_CONTEXT.md`, que sirve como "manual de instrucciones vivo" para cualquier agente que trabaje en el repo.
-3.  **Real Dependency Injection**: Los Plugins no tienen acceso a todo el contenedor. Solo reciben en su constructor las herramientas que piden explícitamente. Seguridad y claridad por diseño.
+1.  **Arquitectura Fractal (en la Capa de Ejecución)**: Los Plugins son las unidades que escalan. Todos los Plugins siguen el mismo patrón estructural, lo que los hace predecibles. Si entiendes un plugin, entiendes toda la lógica de negocio del sistema.
+2.  **Real Dependency Injection**: Los Plugins no tienen acceso al contenedor global. Solo reciben en su constructor las herramientas que piden explícitamente. Esto garantiza seguridad, evita efectos secundarios y permite una claridad absoluta sobre lo que cada pieza necesita para funcionar.
+3.  **Auditabilidad Extrema**: Al aislar cada funcionalidad en su propio plugin con dependencias explícitas, un humano puede auditar el 100% del impacto de un cambio en segundos.
+4.  **IA como Facilitador**: La IA es un caso de uso potente (ej. para el contexto de agentes), pero el sistema está construido para ser robusto y comprensible para cualquier desarrollador.
 
 ## 📜 Fundamentos Filosóficos
 
@@ -139,13 +139,38 @@ MicroCoreOS implementa su propio sistema de **Inyección de Dependencias (DI)** 
 *   **¿Por qué no FastAPI/Flask?**: Para reducir la superficie de API externa que la IA debe conocer. El "Framework" es el código que ves en `/core`, 100% auditable y modificable.
 *   **¿Por qué no Inyectores externos?**: Para mantener la transparencia. El Kernel es un orquestador que puedes leer en un minuto y entender exactamente cómo se inyectan tus herramientas.
 
-## 🗺️ Roadmap de MicroCoreOS
+## 🗺️ Roadmap y Ecosistema Futuro
 
-El sistema está en evolución. Próximas capacidades planificadas:
+MicroCoreOS está diseñado para que su **Kernel** sea casi inmutable. El crecimiento no vendrá de cambiar el núcleo, sino de construir un framework robusto encima mediante la expansión de Tools y capacidades de observabilidad:
 
-- **Middleware / Hooks**: Capacidad de interceptar ejecuciones de plugins para auditoría, seguridad o métricas globales.
-- **Observability (Telemetría)**: Integración nativa con OpenTelemetry para trazado distribuido de eventos.
-- **Plugins Políglotas**: Soporte para plugins en otros lenguajes vía WASM o gRPC, manteniendo al Kernel como orquestador central.
+- **Observabilidad con Propósito**: El `EventBus` puede evolucionar para incluir un **Tracer** integrado que mapee exactamente qué plugins reaccionan a qué eventos y cuánto tardan.
+- **Framework de Producción**: Las Tools actuales (como SQLite) son **implementaciones de referencia**. Se espera que el implementador desarrolle sus propias Tools (con migraciones, ORM, validaciones avanzadas) según sus necesidades.
+- **Middleware Global**: Capacidad de interceptar ejecuciones de plugins para auditoría o seguridad sin tocar el Kernel.
+- **Plugins Políglotas**: Soporte para otros lenguajes vía WASM o gRPC, manteniendo al Kernel como el orquestador central inmutable.
+
+
+## ⚡ Consideraciones de Alto Rendimiento
+
+Si tu implementación de MicroCoreOS requiere atacar operaciones de rendimiento extremo (motores de juego, procesamiento de video 4K o HFT), considera las siguientes optimizaciones:
+
+### 1. Despacho Estático (Static DI)
+La Inyección de Dependencias dinámica tiene un costo de "indirección" (abrir el cajón para buscar el puntero). Para velocidad **instantánea**:
+*   **Code Generation**: Usa herramientas que generen el cableado de dependencias al compilar. Esto permite al compilador realizar *Inlining*, eliminando el overhead de la llamada por completo.
+
+### 2. El "Grial" del Zero-Copy
+Para manejar grandes volúmenes de datos (ej. Frames de video) entre plugins:
+*   **Punteros de Propiedad**: En lenguajes como **Rust**, utiliza `Arc` (Atomic Reference Counting). Esto permite que múltiples plugins lean la **misma memoria física** simultáneamente sin copiar ni un solo byte, manteniendo la seguridad de hilos.
+
+### 3. La Regla de Oro del EventBus
+*   **Orquestación vs Procesamiento**: El EventBus es para **avisar**, no para **trabajar**. 
+*   Si una operación es crítica y se repite millones de veces por segundo, debe vivir como **lógica interna** del plugin o como una herramienta inyectada directamente. Evita cruzar el bus de eventos para micro-operaciones.
+
+### 4. Selección de Lenguaje según Latencia
+| Lenguaje | Perfil | Ideal para... |
+|----------|--------|---------------|
+| **Python** | Context-Efficient | Prototipado rápido, APIs, Lógica IA |
+| **Go** | Throughput-Optimal | Microservicios de alto tráfico |
+| **Rust** | Latency-Extreme | Motores, Vídeo, Sistemas en Tiempo Real |
 
 ---
 *Construido con <3 y Lógica Pura.*
