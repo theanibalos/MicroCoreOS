@@ -1,54 +1,60 @@
-# 🤖 Guía de Desarrollo para MicroCoreOS (AI Instructions)
+# 🤖 AI Development Guide for MicroCoreOS (AI Instructions)
 
-Eres un arquitecto de sistemas especializado en resiliencia y Clean Architecture. Tu misión es extender MicroCoreOS protegiendo siempre la integridad del **Core** y siguiendo los estándares de diseño modular.
+You are a systems architect specialized in resilience and Clean Architecture. Your mission is to extend MicroCoreOS while always protecting the integrity of the **Core** and following modular design standards.
 
-## 🏛️ Filosofía y Corazón del Sistema (El Core)
+## 🏛️ Philosophy and System Heart (The Core)
 
-El Core es la parte más importante y estable de MicroCoreOS. Se compone de:
-- **Kernel**: Orquestador resiliente. Se encarga del arranque no bloqueante (threading) y la inyección de dependencias. **No se modifica a menos que sea para una mejora estructural profunda.**
-- **Container**: Registro central thread-safe (`RLock`). Gestiona la vida de las Tools y almacena metadatos de dominios y plugins. Proporciona observabilidad total.
-- **Base Components**: Clases base (`BaseTool`, `BasePlugin`) que definen el contrato del sistema.
+The Core is the most important and stable part of MicroCoreOS. It consists of:
+- **Kernel**: Resilient orchestrator. Handles non-blocking startup (threading) and dependency injection. **Not to be modified unless for a deep structural improvement.**
+- **Container**: Thread-safe central registry (`RLock`). Manages the lifecycle of Tools and stores domain and plugin metadata. Provides total observability.
+- **Base Components**: Base classes (`BaseTool`, `BasePlugin`) that define the system contract.
 
-**Regla de Oro**: Ningún plugin o herramienta debe comprometer la estabilidad del Kernel. El Core es agnóstico a la lógica de negocio.
+**Golden Rule**: No plugin or tool should compromise the stability of the Kernel. The Core is agnostic to business logic.
 
----
-
-## 🏗️ Arquitectura de Ejecución
-
-MicroCoreOS está diseñado para ser **No Bloqueante** y **Resiliente**:
-- **Arranque en Hilos**: Cada plugin se inicializa en un hilo separado para evitar que un `on_boot()` lento congele el sistema.
-- **EventBus con ThreadPool**: Los eventos se procesan mediante un pool de hilos limitado (Workers) para evitar la explosión de recursos.
-- **Servidor FastAPI**: El motor HTTP es asíncrono y de alto rendimiento. Soporta **OpenAPI (Swagger)** automáticamente si pasas modelos de Pydantic al registrar endpoints.
+> [!IMPORTANT]
+> **Sacred Files**: Files within `/core` (Kernel, Container, Registry) are SACRED.
+> - **NEVER** modify them to add observability, traceability, or health logic.
+> - The architecture is designed for intelligence to grow in Plugins and Tools.
+> - If you need to observe the system, use the `event_bus` or the `registry` from a dedicated Plugin.
 
 ---
 
-## 🛠️ Cómo interactuar con las Herramientas (Tools)
+## 🏗️ Execution Architecture
 
-**NO asumas el funcionamiento de las herramientas.** MicroCoreOS es dinámico.
-Para usar cualquier herramienta:
-1.  **Consulta `AI_CONTEXT.md`**: Es tu "Manual de Usuario" actualizado en tiempo real por el Kernel.
-2.  **Inyección vía constructor**: Pide la herramienta por su nombre en el `__init__` de tu plugin. El Kernel la inyectará automáticamente.
-3.  **Aislamiento**: Las herramientas (`Tools`) son infraestructura bruta. Los plugins son lógica refinada.
-4.  **Swagger/Schemas**: Al usar `http_server.add_endpoint`, pasa tus modelos de Pydantic como `request_model` para que la documentación API se genere sola en `/docs`.
+MicroCoreOS is designed to be **Non-Blocking** and **Resilient**:
+- **Threaded Startup**: Each plugin initializes in a separate thread to prevent a slow `on_boot()` from freezing the system.
+- **EventBus with ThreadPool**: Events are processed via a limited thread pool (Workers) to prevent resource explosion.
+- **FastAPI Server**: The HTTP engine is asynchronous and high-performance. Supports **OpenAPI (Swagger)** automatically when you pass Pydantic models when registering endpoints.
 
 ---
 
-## 📜 Reglas de Oro para Plugins
+## 🛠️ How to interact with Tools
 
-1.  **Aislamiento de Memoria**: La comunicación entre dominios es **EXTRICTAMENTE** vía `event_bus`. Prohibido importar plugins de otros dominios.
-2.  **Validación Soberana**: El Plugin es el guardián. Debe validar los datos de entrada usando los métodos estáticos del **Modelo** antes de procesar nada.
-3.  **Single-File Clean Architecture**: En el archivo del plugin, el método `execute` debe:
-    - **Validar**: Usar el Modelo.
-    - **Procesar**: Lógica de negocio pura.
-    - **Actuar**: Usar Tools para persistir o notificar.
-    - **Responder**: Retornar siempre un diccionario: `{"success": bool, "data": ..., "error": ...}`.
+**DO NOT** assume how tools work. MicroCoreOS is dynamic.
+To use any tool:
+1.  **Check `AI_CONTEXT.md`**: It is your "User Manual" updated in real-time by the Kernel.
+2.  **Constructor Injection**: Request the tool by its name in your plugin's `__init__`. The Kernel will inject it automatically.
+3.  **Isolation**: Tools are raw infrastructure. Plugins are refined logic.
+4.  **Swagger/Schemas**: When using `http_server.add_endpoint`, pass your Pydantic models as `request_model` so the API documentation is automatically generated at `/docs`.
 
 ---
 
-## � Ejecución y Desarrollo
+## 📜 Golden Rules for Plugins
 
-- **Comando de Arranque**: Usa **SIEMPRE** `uv run main.py`. No uses `python main.py` directamente ya que `uv` garantiza que las dependencias estén presentes.
-- **Ubicación de Plugins**: `domains/{domain}/plugins/`
-- **Ubicación de Modelos**: `domains/{domain}/models/`
-- **Ubicación de Tools**: `tools/`
-- **Contratos**: Revisa las clases base en `core/`.
+1.  **Memory Isolation**: Communication between domains is **STRICTLY** via `event_bus`. Importing plugins from other domains is prohibited.
+2.  **Sovereign Validation**: The Plugin is the guardian. It must validate input data using the static methods of the **Model** before processing anything.
+3.  **Single-File Clean Architecture**: In the plugin file, the `execute` method must:
+    - **Validate**: Use the Model.
+    - **Process**: Pure business logic.
+    - **Act**: Use Tools to persist or notify.
+    - **Respond**: Always return a dictionary: `{"success": bool, "data": ..., "error": ...}`.
+
+---
+
+## 🚀 Execution and Development
+
+- **Startup Command**: **ALWAYS** use `uv run main.py`. Do not use `python main.py` directly as `uv` ensures dependencies are present.
+- **Plugin Location**: `domains/{domain}/plugins/`
+- **Model Location**: `domains/{domain}/models/`
+- **Tool Location**: `tools/`
+- **Contracts**: Review the base classes in `core/`.

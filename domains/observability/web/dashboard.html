@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MicroCoreOS | Live Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #030712;
+            --glass: rgba(17, 24, 39, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-primary: #818cf8;
+            --accent-secondary: #c084fc;
+            --text-main: #f3f4f6;
+            --text-dim: #9ca3af;
+            --success: #34d399;
+            --error: #fb7185;
+            --warning: #fbbf24;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(129, 140, 248, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(192, 132, 252, 0.15) 0px, transparent 50%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Glassmorphism utility */
+        .glass {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-badge {
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+            box-shadow: 0 0 10px var(--error);
+        }
+
+        .dot.online {
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        main {
+            flex: 1;
+            padding: 0 2rem 2rem;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 1.5rem;
+            overflow: hidden;
+        }
+
+        .visualizer {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+
+        /* Custom scrollbar */
+        .visualizer::-webkit-scrollbar { width: 6px; }
+        .visualizer::-webkit-scrollbar-track { background: transparent; }
+        .visualizer::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 10px; }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .card {
+            padding: 1.25rem;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-name { font-weight: 600; font-size: 1rem; }
+        .card-type { font-size: 0.7rem; color: var(--text-dim); }
+
+        .card-status {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 2rem;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .status-ok { color: var(--success); }
+        .status-fail { color: var(--error); }
+
+        .feed-panel {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .feed-container {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            padding: 1rem;
+        }
+
+        .event-node {
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--accent-primary);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .event-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            margin-bottom: 0.25rem;
+            color: var(--text-dim);
+        }
+
+        .event-name { font-weight: 700; color: var(--accent-secondary); }
+
+        .event-payload {
+            font-size: 0.8rem;
+            color: var(--text-main);
+            word-break: break-all;
+            font-family: monospace;
+            opacity: 0.8;
+        }
+
+        .flash {
+            position: absolute;
+            inset: 0;
+            background: white;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .activity-flash {
+            animation: flashAnim 0.6s ease-out;
+        }
+
+        @keyframes flashAnim {
+            0% { opacity: 0.2; }
+            100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <span>💠</span> MicroCoreOS <span>Insights</span>
+        </div>
+        <div class="glass status-badge">
+            <div id="ws-dot" class="dot"></div>
+            <span id="ws-status-text">DISCONNECTED</span>
+        </div>
+    </header>
+
+    <main>
+        <section class="visualizer">
+            <div>
+                <h2 class="section-title"><span>🔌</span> Plugins Activos</h2>
+                <div id="plugin-grid" class="grid-container">
+                    <!-- Plugins will be injected here -->
+                </div>
+            </div>
+
+            <div>
+                <h2 class="section-title"><span>🛠️</span> Infraestructura (Tools)</h2>
+                <div id="tool-grid" class="grid-container">
+                    <!-- Tools will be injected here -->
+                </div>
+            </div>
+        </section>
+
+        <section class="glass feed-panel">
+            <div style="padding: 1.25rem; border-bottom: 1px solid var(--glass-border);">
+                <h2 class="section-title" style="margin: 0;"><span>📡</span> Live Event Stream</h2>
+            </div>
+            <div id="event-feed" class="feed-container">
+                <!-- Live events will be injected here -->
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const pluginGrid = document.getElementById('plugin-grid');
+        const toolGrid = document.getElementById('tool-grid');
+        const eventFeed = document.getElementById('event-feed');
+        const wsDot = document.getElementById('ws-dot');
+        const wsStatusText = document.getElementById('ws-status-text');
+
+        let ws = null;
+
+        async function init() {
+            await fetchSystemInfo();
+            connectWS();
+            // Refresh static info every 10s
+            setInterval(fetchSystemInfo, 10000);
+        }
+
+        async function fetchSystemInfo() {
+            try {
+                const res = await fetch('/obs/system');
+                const data = await res.json();
+                renderPlugins(data.plugins);
+                renderTools(data.tools);
+            } catch (e) {
+                console.error("Failed to fetch system info", e);
+            }
+        }
+
+        function renderPlugins(plugins) {
+            pluginGrid.innerHTML = '';
+            Object.entries(plugins).forEach(([name, info]) => {
+                const card = createCard(name, 'PLUGIN', info.status, info.domain);
+                card.id = `plugin-${name}`;
+                pluginGrid.appendChild(card);
+            });
+        }
+
+        function renderTools(tools) {
+            toolGrid.innerHTML = '';
+            Object.entries(tools).forEach(([name, info]) => {
+                const card = createCard(name, 'TOOL', info.status);
+                card.id = `tool-${name}`;
+                toolGrid.appendChild(card);
+            });
+        }
+
+        function createCard(name, type, status, domain = '') {
+            const div = document.createElement('div');
+            div.className = 'glass card';
+            div.innerHTML = `
+                <div class="flash"></div>
+                <div class="card-header">
+                    <span class="card-name">${name.replace('Plugin', '')}</span>
+                    <span class="card-status ${status === 'OK' || status === 'RUNNING' || status === 'READY' ? 'status-ok' : 'status-fail'}">${status}</span>
+                </div>
+                <div class="card-type">${type}${domain ? ' • ' + domain : ''}</div>
+            `;
+            return div;
+        }
+
+        function connectWS() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws/events`);
+
+            ws.onopen = () => {
+                wsDot.classList.add('online');
+                wsStatusText.textContent = 'SYSTEM ONLINE';
+                wsStatusText.style.color = 'var(--success)';
+            };
+
+            ws.onclose = () => {
+                wsDot.classList.remove('online');
+                wsStatusText.textContent = 'DISCONNECTED';
+                wsStatusText.style.color = 'var(--error)';
+                setTimeout(connectWS, 2000);
+            };
+
+            ws.onmessage = (msg) => {
+                const data = JSON.parse(msg.data);
+                pushEvent(data);
+                triggerUIReaction(data);
+            };
+        }
+
+        function pushEvent(data) {
+            const node = document.createElement('div');
+            node.className = 'event-node';
+            
+            const time = new Date().toLocaleTimeString();
+            const eventName = data.event || 'unknown';
+            const payload = data.data?.payload || data.data || {};
+
+            node.innerHTML = `
+                <div class="event-meta">
+                    <span class="event-name">${eventName}</span>
+                    <span>${time}</span>
+                </div>
+                <div class="event-payload">${JSON.stringify(payload).slice(0, 100)}</div>
+            `;
+
+            eventFeed.prepend(node);
+            if (eventFeed.children.length > 30) eventFeed.lastChild.remove();
+        }
+
+        function triggerUIReaction(data) {
+            const eventName = data.event || '';
+            // Flash cards related to the event
+            const cards = document.querySelectorAll('.card');
+            cards.forEach(card => {
+                const nameText = card.querySelector('.card-name').textContent.toLowerCase();
+                if (eventName.toLowerCase().includes(nameText)) {
+                    const flash = card.querySelector('.flash');
+                    flash.classList.remove('activity-flash');
+                    void flash.offsetWidth; // trigger reflow
+                    flash.classList.add('activity-flash');
+                }
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>
