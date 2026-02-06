@@ -3,9 +3,9 @@ from core.base_tool import BaseTool
 
 class ConfigTool(BaseTool):
     """
-    Herramienta de Configuración:
-    Carga variables de entorno y permite acceso centralizado.
-    Soporta opcionalmente archivos .env si están presentes.
+    Configuration Tool:
+    Loads environment variables and provides centralized access.
+    Optionally supports .env files if present.
     """
     
     def __init__(self):
@@ -16,18 +16,18 @@ class ConfigTool(BaseTool):
         return "config"
 
     def setup(self):
-        """Carga la configuración desde el entorno global"""
-        # Simplemente copiamos lo que haya en el sistema
-        # (main.py ya se encargó de cargar el .env)
+        """Loads configuration from the global environment"""
+        # Simply copy what's in the system environment
+        # (main.py already loaded the .env file)
         for key, value in os.environ.items():
             self._config[key] = value
             
-        print(f"[System] ConfigTool: {len(self._config)} variables expuestas a plugins.")
+        print(f"[System] ConfigTool: {len(self._config)} variables exposed to plugins.")
 
     def get_interface_description(self) -> str:
         return """
-        Herramienta de Configuración (config):
-        - get(key, default=None): Obtiene un valor de configuración.
+        Configuration Tool (config):
+        - get(key, default=None): Gets a configuration value.
         """
 
     def get(self, key: str, default: str = None) -> str:

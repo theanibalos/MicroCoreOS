@@ -7,7 +7,7 @@ class EventBusTool(BaseTool):
     def __init__(self):
         self._subscribers = {}
         self._lock = threading.Lock()
-        # Creamos un pool de hilos para procesar eventos sin saturar el sistema
+        # Create a thread pool to process events without saturating the system
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="BusWorker")
 
     @property
@@ -15,14 +15,14 @@ class EventBusTool(BaseTool):
         return "event_bus"
 
     def setup(self):
-        print("[System] EventBusTool: Listo para orquestar eventos con ThreadPool (max=10).")
+        print("[System] EventBusTool: Ready to orchestrate events with ThreadPool (max=10).")
 
     def get_interface_description(self) -> str:
         return """
-        Permite comunicación entre plugins:
-        - publish(nombre, datos): Dispara y olvida.
-        - subscribe(nombre, callback): Escucha eventos. Usa '*' para escuchar TODOS.
-        - request(nombre, datos, timeout=5): Envía y espera respuesta (RPC).
+        Enables communication between plugins:
+        - publish(name, data): Fire and forget.
+        - subscribe(name, callback): Listen to events. Use '*' to listen to ALL.
+        - request(name, data, timeout=5): Send and wait for response (RPC).
         """
 
     def subscribe(self, event_name, callback):
@@ -33,12 +33,12 @@ class EventBusTool(BaseTool):
 
     def publish(self, event_name, data):
         with self._lock:
-            # Capturamos la lista actual para evitar problemas de concurrencia al iterar
+            # Capture current list to avoid concurrency issues when iterating
             callbacks = list(self._subscribers.get(event_name, []))
-            # Añadimos los suscriptores con wildcard '*'
+            # Add wildcard '*' subscribers
             callbacks += list(self._subscribers.get('*', []))
         
-        # Enriquecemos el payload con metadatos del evento
+        # Enrich the payload with event metadata
         enriched_data = {
             "_event_name": event_name,
             "payload": data
@@ -49,24 +49,24 @@ class EventBusTool(BaseTool):
                 try:
                     cb(payload)
                 except Exception as e:
-                    print(f"[EventBus] Error en suscriptor de {event_name}: {e}")
+                    print(f"[EventBus] Error in subscriber for {event_name}: {e}")
 
-            # Enviamos el trabajo al pool de hilos en lugar de crear un hilo nuevo cada vez
+            # Submit work to thread pool instead of creating a new thread each time
             self._executor.submit(safe_callback_execution, callback, enriched_data)
 
     def shutdown(self):
-        """Cierre ordenado del pool de hilos"""
-        print("[EventBus] Cerrando ThreadPool...")
+        """Orderly shutdown of the thread pool"""
+        print("[EventBus] Closing ThreadPool...")
         self._executor.shutdown(wait=False)
 
     def request(self, event_name, data, timeout=5):
         """
-        Envía un evento y espera una respuesta usando un Correlation ID único.
+        Sends an event and waits for a response using a unique Correlation ID.
         """
         correlation_id = str(uuid.uuid4())
         reply_to = f"reply.{event_name}.{correlation_id[:8]}"
         
-        # Inyectamos metadatos de control
+        # Inject control metadata
         data["_metadata"] = {
             "correlation_id": correlation_id,
             "reply_to": reply_to
@@ -81,20 +81,20 @@ class EventBusTool(BaseTool):
                 response_container["data"] = payload
                 event_ready.set()
 
-        # Nos suscribimos al canal de respuesta temporal
+        # Subscribe to temporary reply channel
         self.subscribe(reply_to, response_handler)
 
         try:
-            # Lanzamos la petición
+            # Launch the request
             self.publish(event_name, data)
 
-            # Esperamos la respuesta
+            # Wait for the response
             if not event_ready.wait(timeout):
-                raise TimeoutError(f"Timeout esperando respuesta de '{event_name}' ({timeout}s)")
+                raise TimeoutError(f"Timeout waiting for response from '{event_name}' ({timeout}s)")
 
             return response_container["data"]
         finally:
-            # Limpieza: eliminamos el suscriptor temporal
+            # Cleanup: remove temporary subscriber
             with self._lock:
                 if reply_to in self._subscribers:
                     self._subscribers[reply_to].remove(response_handler)

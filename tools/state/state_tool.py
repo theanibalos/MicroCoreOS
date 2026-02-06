@@ -3,9 +3,9 @@ from core.base_tool import BaseTool
 
 class StateTool(BaseTool):
     """
-    Herramienta de Estado en Memoria (StateTool):
-    Permite compartir datos globales volátiles entre hilos de forma segura.
-    Ideal para: contadores, cachés temporales y semáforos de negocio.
+    In-Memory State Tool (StateTool):
+    Allows sharing volatile global data between threads safely.
+    Ideal for: counters, temporary caches, and business semaphores.
     """
     
     def __init__(self):
@@ -17,15 +17,15 @@ class StateTool(BaseTool):
         return "state"
 
     def setup(self):
-        print("[System] StateTool: Almacén en RAM listo y seguro.")
+        print("[System] StateTool: In-memory store ready and thread-safe.")
 
     def get_interface_description(self) -> str:
         return """
-        Herramienta de Estado (state):
-        - set(key, value, namespace='default'): Guarda un valor.
-        - get(key, default=None, namespace='default'): Recupera un valor.
-        - increment(key, amount=1, namespace='default'): Incremento atómico.
-        - delete(key, namespace='default'): Elimina una clave.
+        State Tool (state):
+        - set(key, value, namespace='default'): Store a value.
+        - get(key, default=None, namespace='default'): Retrieve a value.
+        - increment(key, amount=1, namespace='default'): Atomic increment.
+        - delete(key, namespace='default'): Delete a key.
         """
 
     def _get_ns(self, namespace):
@@ -48,7 +48,7 @@ class StateTool(BaseTool):
             ns = self._get_ns(namespace)
             current = ns.get(key, 0)
             if not isinstance(current, (int, float)):
-                raise ValueError(f"La clave '{key}' no es numérica.")
+                raise ValueError(f"Key '{key}' is not numeric.")
             ns[key] = current + amount
             return ns[key]
 

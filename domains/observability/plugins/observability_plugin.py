@@ -7,19 +7,19 @@ class ObservabilityPlugin(BasePlugin):
         self.logger = logger
 
     def on_boot(self):
-        """Registro del endpoint de observabilidad"""
+        """Registers the observability endpoint"""
         self.http.add_endpoint(
             path="/obs/system", 
             method="GET", 
             handler=self.get_system_status,
             tags=["System"]
         )
-        self.logger.info("Plugin de Observabilidad activo en /obs/system")
+        self.logger.info("Observability Plugin active at /obs/system")
 
     def execute(self, **kwargs):
-        """Retorna el estado del sistema directamente desde el registry"""
+        """Returns system status directly from the registry"""
         return self.registry.get_system_dump()
 
     def get_system_status(self, data):
-        """Handler para el endpoint HTTP"""
+        """Handler for the HTTP endpoint"""
         return self.execute()

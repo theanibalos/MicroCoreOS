@@ -10,29 +10,29 @@ class LoggerTool(BaseTool):
         return "logger"
 
     def setup(self):
-        """Inicialización del logger (en este caso, simple consola)"""
-        print("[System] LoggerTool inicializado correctamente.")
+        """Logger initialization (simple console output)"""
+        print("[System] LoggerTool initialized successfully.")
 
     def on_boot_complete(self, container):
-        """Obtenemos el event_bus para publicar logs como eventos observables."""
+        """Get the event_bus to publish logs as observable events."""
         if container.has_tool("event_bus"):
             self._event_bus = container.get("event_bus")
-            print("[Logger] Conectado al EventBus para observabilidad.")
+            print("[Logger] Connected to EventBus for observability.")
 
     def get_interface_description(self) -> str:
         """
-        Este es el manual para la IA.
+        This is the manual for the AI.
         """
         return """
-        Herramienta de Logs:
-        - info(message): Registra información general.
-        - error(message): Registra errores críticos.
-        - warning(message): Registra advertencias.
-        Todos los logs se publican también al event_bus como 'system.log'.
+        Logging Tool:
+        - info(message): Logs general information.
+        - error(message): Logs critical errors.
+        - warning(message): Logs warnings.
+        All logs are also published to event_bus as 'system.log'.
         """
 
     def _publish_log(self, level: str, message: str):
-        """Publica el log al event_bus si está disponible."""
+        """Publishes the log to event_bus if available."""
         if self._event_bus:
             self._event_bus.publish("system.log", {
                 "level": level,
@@ -40,7 +40,7 @@ class LoggerTool(BaseTool):
                 "timestamp": datetime.datetime.now().isoformat()
             })
 
-    # Métodos funcionales que usará el plugin
+    # Functional methods that plugins will use
     def info(self, message: str):
         print(f"[{datetime.datetime.now()}] [INFO] {message}")
         self._publish_log("INFO", message)

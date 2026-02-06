@@ -17,24 +17,24 @@ class DeleteUserPlugin(BasePlugin):
             request_model=UserIdRequest,
             response_model=UserResponse
         )
-        self.logger.info("DeleteUserPlugin: Endpoint /users/delete registrado con Schema.")
+        self.logger.info("DeleteUserPlugin: Endpoint /users/delete registered with Schema.")
 
     def execute(self, data: dict):
         user_id = data.get("id")
 
         try:
-            # Verificar existencia antes de borrar para dar mejor feedback
+            # Check existence before deleting for better feedback
             row = self.db.query("SELECT id FROM users WHERE id = ?", (user_id,))
             if not row:
-                return {"success": False, "error": "Usuario no encontrado"}
+                return {"success": False, "error": "User not found"}
 
             self.db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-            self.logger.warning(f"Usuario {user_id} eliminado.")
+            self.logger.warning(f"User {user_id} deleted.")
             
-            # Notificar al sistema
+            # Notify the system
             self.bus.publish("users.deleted", {"id": user_id})
             
             return {"success": True}
         except Exception as e:
-            self.logger.error(f"Error en eliminación: {e}")
+            self.logger.error(f"Error during deletion: {e}")
             return {"success": False, "error": str(e)}

@@ -8,23 +8,23 @@ class SystemDashboardPlugin(BasePlugin):
         self.registry = registry
 
     def on_boot(self):
-        # 1. Definir la ruta de los archivos estáticos relativa al archivo actual
+        # 1. Define the static files path relative to the current file
         web_dir = os.path.join(os.path.dirname(__file__), "..", "web")
         
-        # Crear el directorio si no existe (por seguridad)
+        # Create the directory if it doesn't exist (for safety)
         if not os.path.exists(web_dir):
             os.makedirs(web_dir)
 
-        # 2. Montar el dashboard en /dashboard/
+        # 2. Mount the dashboard at /dashboard/
         self.http.mount_static("/dashboard", web_dir)
         
-        # 3. Registrar un endpoint para obtener los datos del sistema
+        # 3. Register an endpoint to get system data
         self.http.add_endpoint("/api/system/info", "GET", self.get_system_status)
         
-        self.logger.info("SystemDashboardPlugin: Dashboard disponible en http://localhost:5000/dashboard/index.html")
+        self.logger.info("SystemDashboardPlugin: Dashboard available at http://localhost:5000/dashboard/index.html")
 
     def get_system_status(self, data: dict):
-        """Retorna el dump completo del registry para el dashboard."""
+        """Returns the complete registry dump for the dashboard."""
         return {
             "success": True,
             "data": self.registry.get_system_dump()

@@ -3,10 +3,10 @@ from domains.users.models.user_model import UserModel, UserUpdateWithId, UserRes
 
 class UpdateUserPlugin(BasePlugin):
     """
-    Plugin para actualizar usuarios existentes.
-    - Guarda cambios en base de datos
-    - Publica evento users.updated
-    - Registra logs de operación
+    Plugin for updating existing users.
+    - Saves changes to database
+    - Publishes users.updated event
+    - Logs operations
     """
     
     def __init__(self, http_server, db, logger, event_bus):
@@ -24,42 +24,42 @@ class UpdateUserPlugin(BasePlugin):
             request_model=UserUpdateWithId,
             response_model=UserResponse
         )
-        self.logger.info("UpdateUserPlugin: Endpoint /users/update registrado con Schema.")
+        self.logger.info("UpdateUserPlugin: Endpoint /users/update registered with Schema.")
 
     def execute(self, data: dict):
         user_id = data.get("id")
         name = data.get("name")
         email = data.get("email")
 
-        # 1. Validar: Verificar que el usuario existe
+        # 1. Validate: Check that user exists
         try:
             existing = self.db.query(
                 "SELECT id, name, email FROM users WHERE id = ?", 
                 (user_id,)
             )
             if not existing:
-                self.logger.warning(f"UpdateUserPlugin: Usuario con ID {user_id} no encontrado.")
-                return {"success": False, "error": f"Usuario con ID {user_id} no existe."}
+                self.logger.warning(f"UpdateUserPlugin: User with ID {user_id} not found.")
+                return {"success": False, "error": f"User with ID {user_id} does not exist."}
             
             current_user = UserModel.from_row(existing[0])
         except Exception as e:
-            self.logger.error(f"UpdateUserPlugin: Error consultando usuario: {e}")
+            self.logger.error(f"UpdateUserPlugin: Error querying user: {e}")
             return {"success": False, "error": str(e)}
 
-        # 2. Validar campos si fueron proporcionados
+        # 2. Validate fields if provided
         if name is not None:
             valid, error = UserModel.validate_name(name)
             if not valid:
-                self.logger.warning(f"UpdateUserPlugin: Validación de nombre fallida: {error}")
-                return {"success": False, "error": f"Nombre inválido: {error}"}
+                self.logger.warning(f"UpdateUserPlugin: Name validation failed: {error}")
+                return {"success": False, "error": f"Invalid name: {error}"}
         
         if email is not None:
             valid, error = UserModel.validate_email(email)
             if not valid:
-                self.logger.warning(f"UpdateUserPlugin: Validación de email fallida: {error}")
-                return {"success": False, "error": f"Email inválido: {error}"}
+                self.logger.warning(f"UpdateUserPlugin: Email validation failed: {error}")
+                return {"success": False, "error": f"Invalid email: {error}"}
 
-        # 3. Procesar: Construir query dinámico solo con campos proporcionados
+        # 3. Process: Build dynamic query only with provided fields
         updates = []
         params = []
         
@@ -72,28 +72,28 @@ class UpdateUserPlugin(BasePlugin):
             params.append(email)
         
         if not updates:
-            self.logger.warning("UpdateUserPlugin: No se proporcionaron campos para actualizar.")
-            return {"success": False, "error": "No se proporcionaron campos para actualizar."}
+            self.logger.warning("UpdateUserPlugin: No fields provided for update.")
+            return {"success": False, "error": "No fields provided for update."}
         
         params.append(user_id)
         
-        # 4. Actuar: Ejecutar actualización en base de datos
+        # 4. Act: Execute update on database
         try:
             self.db.execute(
                 f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
                 tuple(params)
             )
             
-            # Obtener usuario actualizado
+            # Get updated user
             updated_row = self.db.query(
                 "SELECT id, name, email FROM users WHERE id = ?", 
                 (user_id,)
             )
             updated_user = UserModel.from_row(updated_row[0])
             
-            self.logger.info(f"UpdateUserPlugin: Usuario {user_id} actualizado correctamente.")
+            self.logger.info(f"UpdateUserPlugin: User {user_id} updated successfully.")
             
-            # Publicar evento al sistema
+            # Publish event to the system
             self.bus.publish("users.updated", {
                 "user_id": user_id,
                 "changes": {
@@ -103,13 +103,13 @@ class UpdateUserPlugin(BasePlugin):
                 "previous": current_user.to_dict()
             })
             
-            # 5. Responder
+            # 5. Respond
             return {"success": True, "user": updated_user.to_dict()}
             
         except Exception as e:
             error_msg = str(e)
             if "UNIQUE constraint failed" in error_msg:
-                error_msg = "El correo electrónico ya está en uso por otro usuario."
+                error_msg = "Email is already in use by another user."
             
-            self.logger.error(f"UpdateUserPlugin: Error actualizando usuario: {error_msg}")
+            self.logger.error(f"UpdateUserPlugin: Error updating user: {error_msg}")
             return {"success": False, "error": error_msg}

@@ -6,7 +6,7 @@ from core.base_tool import BaseTool
 class SqliteTool(BaseTool):
     def __init__(self):
         self._local = threading.local()
-        # Leemos directamente del entorno global (main.py ya lo cargó)
+        # Read directly from global environment (main.py already loaded it)
         self._db_path = os.getenv("DB_PATH", "database.db")
 
     @property
@@ -14,28 +14,28 @@ class SqliteTool(BaseTool):
         return "db"
 
     def _get_conn(self):
-        """Obtiene la conexión única para el hilo actual"""
+        """Gets the unique connection for the current thread"""
         if not hasattr(self._local, "conn"):
             self._local.conn = sqlite3.connect(self._db_path, check_same_thread=False)
             self._local.cursor = self._local.conn.cursor()
         return self._local.conn, self._local.cursor
 
     def setup(self):
-        """Inicializa la carpeta de migraciones y la base de datos"""
-        print(f"[System] SqliteTool: Preparando base de datos en '{self._db_path}'...")
-        # Aseguramos que el archivo existe
+        """Initializes the migrations folder and database"""
+        print(f"[System] SqliteTool: Preparing database at '{self._db_path}'...")
+        # Ensure the file exists
         if not os.path.exists(self._db_path):
             with open(self._db_path, "w") as f:
                 pass
         
     def on_boot_complete(self, container):
-        """En un futuro, se encargará de las migraciones"""
+        """In the future, this will handle migrations"""
 
     def get_interface_description(self) -> str:
         return """
-        Herramienta SQLite (db):
-        - query(sql, params): Consulta de lectura (SELECT).
-        - execute(sql, params): Escritura (INSERT, UPDATE, DELETE).
+        SQLite Tool (db):
+        - query(sql, params): Read query (SELECT).
+        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
         """
 
     def query(self, sql, params=()):
@@ -50,5 +50,5 @@ class SqliteTool(BaseTool):
         return cursor.lastrowid
 
     def shutdown(self):
-        # Al ser hilos daemon, el SO limpiará. 
+        # Being daemon threads, the OS will clean up.
         pass

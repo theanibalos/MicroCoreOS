@@ -2,28 +2,28 @@ from core.base_tool import BaseTool
 
 class RegistryTool(BaseTool):
     """
-    Proxy Tool que expone el Registro del Core a los Plugins.
-    Actúa como un puente para mantener el desacoplamiento.
+    Proxy Tool that exposes the Core Registry to Plugins.
+    Acts as a bridge to maintain decoupling.
     """
     @property
     def name(self) -> str:
         return "registry"
 
     def setup(self):
-        """No requiere estado propio, usa el del contenedor."""
+        """Does not require its own state, uses the container's."""
         pass
 
     def get_interface_description(self) -> str:
-        return "Acceso al Inventario Arquitectónico del Core (Herramientas, Dominios y Plugins)."
+        return "Access to the Core's Architectural Inventory (Tools, Domains, and Plugins)."
 
     def on_boot_complete(self, container):
-        """Capturamos el registro real del contenedor."""
+        """Capture the real registry from the container."""
         self._core_registry = container.registry
 
     def get_system_dump(self) -> dict:
-        """Delega en el registro del Core."""
+        """Delegates to the Core registry."""
         return self._core_registry.get_system_dump()
 
     def get_domain_metadata(self) -> dict:
-        """Delega en el registro del Core."""
+        """Delegates to the Core registry."""
         return self._core_registry.get_domain_metadata()

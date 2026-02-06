@@ -9,7 +9,7 @@ class CreateUserPlugin(BasePlugin):
         self.bus = event_bus
 
     def on_boot(self):
-        # Registramos con soporte para Schemas
+        # Register with Schema support
         self.http.add_endpoint(
             path="/users/create", 
             method="POST", 
@@ -18,30 +18,30 @@ class CreateUserPlugin(BasePlugin):
             request_model=UserCreate,
             response_model=UserResponse
         )
-        self.logger.info("CreateUserPlugin: Endpoint /users/create registrado con Schema.")
+        self.logger.info("CreateUserPlugin: Endpoint /users/create registered with Schema.")
 
     def execute(self, data: dict):
         name = data.get("name")
         email = data.get("email")
 
         try:
-            # Insertar en base de datos
+            # Insert into database
             user_id = self.db.execute(
                 "INSERT INTO users (name, email) VALUES (?, ?)", 
                 (name, email)
             )
             
             user = UserModel(id=user_id, name=name, email=email)
-            self.logger.info(f"Usuario {name} creado con ID {user_id}.")
+            self.logger.info(f"User {name} created with ID {user_id}.")
             
-            # Notificar al sistema
+            # Notify the system
             self.bus.publish("users.created", user.to_dict())
             
             return {"success": True, "user": user.to_dict()}
         except Exception as e:
             error_msg = str(e)
             if "UNIQUE constraint failed" in error_msg:
-                error_msg = "El correo electrónico ya está registrado."
+                error_msg = "Email is already registered."
                 
-            self.logger.error(f"Error en creación de usuario: {error_msg}")
+            self.logger.error(f"Error creating user: {error_msg}")
             return {"success": False, "error": error_msg}

@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 from core.kernel import Kernel
 
 def main():
-    # 0. Carga Estándar del Entorno (Dotenv)
-    # En local lee el .env, en Prod usa las variables del sistema (K8s/Docker)
+    # 0. Standard Environment Loading (Dotenv)
+    # In local reads .env, in Prod uses system variables (K8s/Docker)
     load_dotenv()
     
     stop_event = threading.Event()
@@ -19,12 +19,12 @@ def main():
 
     app.boot()
 
-    print("\n🚀 [MicroCoreOS] Sistema Online. (Ctrl+C para salir)")
+    print("\n🚀 [MicroCoreOS] System Online. (Ctrl+C to exit)")
     
-    stop_event.wait() # Suspensión eficiente del hilo principal
+    stop_event.wait() # Efficient main thread suspension
 
-    app.shutdown() # Limpieza final
-    print("[MicroCoreOS] Apagado completo. ¡Hasta pronto!")
+    app.shutdown() # Final cleanup
+    print("[MicroCoreOS] Shutdown complete. See you soon!")
 
 if __name__ == "__main__":
     main()

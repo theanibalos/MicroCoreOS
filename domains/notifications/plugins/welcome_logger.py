@@ -6,15 +6,15 @@ class WelcomeLogger(BasePlugin):
         self.logger = logger
 
     def on_boot(self):
-        # Suscribirse al evento nada más arrancar el sistema
+        # Subscribe to the event as soon as the system starts
         self.bus.subscribe("user_created", self.on_user_created)
-        print("[Notifications] Suscrito a eventos de usuario.")
+        print("[Notifications] Subscribed to user events.")
 
     def on_user_created(self, data):
-        # Esta función se ejecutará automáticamente cuando el otro plugin publique
-        self.logger.info(f"--- EVENTO RECIBIDO ---")
-        self.logger.info(f"Enviando correo de bienvenida a {data['name']} ({data['email']})")
+        # This function is executed automatically when another plugin publishes
+        self.logger.info(f"--- EVENT RECEIVED ---")
+        self.logger.info(f"Sending welcome email to {data['name']} ({data['email']})")
 
     def execute(self, **kwargs):
-        # Este plugin no se llama manualmente, vive de los eventos
+        # This plugin is not called manually, it lives off events
         pass

@@ -15,9 +15,9 @@ class BaseTool(ABC):
         pass
 
     def on_boot_complete(self, container):
-        """Hook opcional: se ejecuta cuando TODO está cargado."""
+        """Optional hook: executed when everything is loaded."""
         pass
     
     def shutdown(self):
-        """Opcional: Limpieza de recursos (cerrar DB, apagar servidor)"""
+        """Optional: Resource cleanup (close DB, stop server)"""
         pass

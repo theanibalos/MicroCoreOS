@@ -15,7 +15,7 @@ class ListUsersPlugin(BasePlugin):
             tags=["Users"],
             response_model=UserListResponse
         )
-        self.logger.info("ListUsersPlugin: Endpoint /users registrado con Schema.")
+        self.logger.info("ListUsersPlugin: Endpoint /users registered with Schema.")
 
     def execute(self, data: dict):
         rows = self.db.query("SELECT id, name, email FROM users")

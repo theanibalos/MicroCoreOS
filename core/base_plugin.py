@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 class BasePlugin(ABC):
     def on_boot(self):
         """
-        Opcional: Se ejecuta al cargar el plugin. 
-        Ideal para suscribirse a eventos.
+        Optional: Executed when the plugin is loaded.
+        Ideal for subscribing to events.
         """
         pass
 

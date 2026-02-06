@@ -16,14 +16,14 @@ class GetUserPlugin(BasePlugin):
             request_model=UserIdRequest,
             response_model=UserResponse
         )
-        self.logger.info("GetUserPlugin: Endpoint /users/get registrado con Schema.")
+        self.logger.info("GetUserPlugin: Endpoint /users/get registered with Schema.")
 
     def execute(self, data: dict):
         user_id = data.get("id")
         
         row = self.db.query("SELECT id, name, email FROM users WHERE id = ?", (user_id,))
         if not row: 
-            return {"success": False, "error": "Usuario no encontrado"}
+            return {"success": False, "error": "User not found"}
         
         user = UserModel.from_row(row[0])
         return {"success": True, "user": user.to_dict()}

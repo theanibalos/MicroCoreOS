@@ -2,10 +2,10 @@ import re
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 
-# === SCHEMAS PARA API (Swagger/Pydantic) ===
+# === API SCHEMAS (Swagger/Pydantic) ===
 class UserBase(BaseModel):
-    name: str = Field(..., min_length=3, description="Nombre completo del usuario")
-    email: EmailStr = Field(..., description="Correo electrónico único")
+    name: str = Field(..., min_length=3, description="User's full name")
+    email: EmailStr = Field(..., description="Unique email address")
 
 class UserCreate(UserBase):
     pass
@@ -15,10 +15,10 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
 
 class UserUpdateWithId(UserUpdate):
-    id: int = Field(..., description="ID del usuario a actualizar")
+    id: int = Field(..., description="ID of user to update")
 
 class UserIdRequest(BaseModel):
-    id: int = Field(..., description="ID único del usuario")
+    id: int = Field(..., description="Unique user ID")
 
 class UserPublic(UserBase):
     id: int
@@ -32,7 +32,7 @@ class UserResponse(BaseModel):
     user: Optional[UserPublic] = None
     error: Optional[str] = None
 
-# === OBJETO DE DOMINIO ===
+# === DOMAIN OBJECT ===
 class UserModel:
     def __init__(self, name=None, email=None, id=None):
         self.id = id
@@ -42,14 +42,14 @@ class UserModel:
     @staticmethod
     def validate_name(name):
         if not name or not isinstance(name, str) or len(name) < 3:
-            return False, "Debe tener al menos 3 caracteres."
+            return False, "Must have at least 3 characters."
         return True, None
 
     @staticmethod
     def validate_email(email):
         regex = r'^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w+$'
         if not email or not re.match(regex, email):
-            return False, "Formato no válido."
+            return False, "Invalid format."
         return True, None
 
     def to_dict(self):
@@ -57,6 +57,6 @@ class UserModel:
 
     @staticmethod
     def from_row(row):
-        """Convierte una fila de la base de datos (id, name, email) en un objeto UserModel."""
+        """Converts a database row (id, name, email) to a UserModel object."""
         if not row: return None
         return UserModel(id=row[0], name=row[1], email=row[2])

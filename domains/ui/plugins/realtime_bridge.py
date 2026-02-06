@@ -4,39 +4,39 @@ from core.base_plugin import BasePlugin
 
 class RealTimeBridgePlugin(BasePlugin):
     """
-    Puente entre el EventBus interno y los clientes WebSocket.
-    Escucha TODOS los eventos (*) y los retransmite a las conexiones activas.
+    Bridge between the internal EventBus and WebSocket clients.
+    Listens to ALL events (*) and relays them to active connections.
     """
     def __init__(self, http_server, event_bus, logger):
         self.http = http_server
         self.bus = event_bus
         self.logger = logger
-        self._clients = []  # Lista de websockets activos
+        self._clients = []  # List of active websockets
         self._lock = asyncio.Lock()
-        self._loop = None   # Loop de FastAPI (se captura al conectar el primer cliente)
+        self._loop = None   # FastAPI's loop (captured when first client connects)
 
     def on_boot(self):
-        # 1. Registrar endpoint WebSocket
+        # 1. Register WebSocket endpoint
         self.http.add_ws_endpoint("/ws/events", self._handle_ws_connect)
         
-        # 2. Suscribirse a TODOS los eventos del sistema
+        # 2. Subscribe to ALL system events
         self.bus.subscribe("*", self._on_system_event)
         
-        self.logger.info("RealTimeBridgePlugin: WebSocket activo en /ws/events. Escuchando todos los eventos.")
+        self.logger.info("RealTimeBridgePlugin: WebSocket active at /ws/events. Listening to all events.")
 
     async def _handle_ws_connect(self, websocket):
-        """Maneja nuevas conexiones WebSocket."""
-        # Capturamos el loop de la primera conexión (que es el loop de FastAPI)
+        """Handles new WebSocket connections."""
+        # Capture the loop from the first connection (which is FastAPI's loop)
         if not self._loop:
             self._loop = asyncio.get_event_loop()
 
         async with self._lock:
             self._clients.append(websocket)
         
-        self.logger.info(f"[WS] Cliente conectado. Total: {len(self._clients)}")
+        self.logger.info(f"[WS] Client connected. Total: {len(self._clients)}")
         
         try:
-            # Mantenemos la conexión abierta recibiendo mensajes (ping/pong)
+            # Keep the connection open receiving messages (ping/pong)
             while True:
                 await websocket.receive_text()
         except Exception:
@@ -45,25 +45,25 @@ class RealTimeBridgePlugin(BasePlugin):
             async with self._lock:
                 if websocket in self._clients:
                     self._clients.remove(websocket)
-            self.logger.info(f"[WS] Cliente desconectado. Total: {len(self._clients)}")
+            self.logger.info(f"[WS] Client disconnected. Total: {len(self._clients)}")
 
     def _on_system_event(self, enriched_data):
-        """Callback cuando cualquier evento ocurre en el sistema."""
+        """Callback when any event occurs in the system."""
         event_name = enriched_data.get("_event_name", "unknown")
         payload = enriched_data.get("payload", {})
         
-        # Preparamos el mensaje JSON para el frontend
+        # Prepare JSON message for the frontend
         message = json.dumps({
             "type": "event",
             "event": event_name,
             "data": self._serialize_payload(payload)
         })
         
-        # Enviamos a todos los clientes conectados
+        # Send to all connected clients
         self._broadcast(message)
 
     def _serialize_payload(self, payload):
-        """Intenta serializar el payload, maneja objetos no JSON."""
+        """Tries to serialize the payload, handles non-JSON objects."""
         try:
             json.dumps(payload)
             return payload
@@ -71,18 +71,18 @@ class RealTimeBridgePlugin(BasePlugin):
             return str(payload)
 
     def _broadcast(self, message: str):
-        """Envía un mensaje a todos los clientes WebSocket."""
+        """Sends a message to all WebSocket clients."""
         if not self._clients or not self._loop:
             return
 
-        # Función auxiliar para enviar de forma asíncrona
+        # Helper function for async sending
         async def send_to_client(client, msg):
             try:
                 await client.send_text(msg)
             except Exception:
                 pass
 
-        # Enviamos de forma segura desde el hilo de EventBus al loop de FastAPI
+        # Send safely from EventBus thread to FastAPI's loop
         for client in list(self._clients):
             asyncio.run_coroutine_threadsafe(send_to_client(client, message), self._loop)
 
