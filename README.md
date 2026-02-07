@@ -1,4 +1,4 @@
-# MicroCoreOS
+# MicroCoreOS: Atomic Microkernel Architecture optimized for AI-Driven Development
 
 > Every time I asked my AI to add a CRUD endpoint,  
 > it tried to create 6-8 files. I got tired of it.
@@ -23,7 +23,7 @@ In traditional layered architectures, that means explaining:
 
 **That's 6-8 files and 200+ lines of code for one endpoint.**
 
-## The Solution
+## The Solution: Atomic Microkernel
 
 ```python
 # domains/products/plugins/create_product_plugin.py

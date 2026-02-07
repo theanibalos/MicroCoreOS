@@ -1,4 +1,5 @@
 import os
+from fastapi.responses import RedirectResponse
 from core.base_plugin import BasePlugin
 
 class DashboardPlugin(BasePlugin):
@@ -18,7 +19,15 @@ class DashboardPlugin(BasePlugin):
             # Mount the directory to serve the dashboard.html
             self.http.mount_static("/dashboard/gui", self.static_dir)
             
-            self.logger.info(f"DashboardPlugin: UI available at http://localhost:5000/dashboard/gui/dashboard.html")
+            # Simple redirect for ease of use
+            self.http.add_endpoint(
+                path="/dashboard",
+                method="GET",
+                handler=lambda data: RedirectResponse(url="/dashboard/gui/dashboard.html"),
+                tags=["System"]
+            )
+            
+            self.logger.info(f"DashboardPlugin: UI available at http://localhost:5000/dashboard")
         else:
             self.logger.error(f"DashboardPlugin: Static directory not found at {self.static_dir}")
 

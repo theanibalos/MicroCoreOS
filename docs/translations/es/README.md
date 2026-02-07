@@ -74,7 +74,7 @@ La arquitectura genera `AI_CONTEXT.md` automáticamente—un manifiesto con toda
 
 ---
 
-## 🚀 MicroCoreOS: Arquitectura de Micro-Núcleo Fractal
+## 🚀 MicroCoreOS: Arquitectura Atomic Microkernel
 
 MicroCoreOS no es solo un framework; es una **propuesta de arquitectura de Micronúcleo (Micro-Kernel)**. Su diseño busca eliminar la "caja negra" de los sistemas tradicionales, permitiendo que tanto humanos como IAs puedan razonar, auditar y extender el sistema con eficiencia. Se basa en tres pilares: **Microkernel**, **Fractalidad** y **Modularidad total**.
 
