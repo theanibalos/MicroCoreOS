@@ -20,6 +20,12 @@ MicroCoreOS is a modular, asynchronous, and resilient system based on Clean Arch
 ## 🛠️ Available Tools
 Automatically injected by the Kernel. **You must request them in your `__init__`** using the tool name as a parameter.
 
+### 🔧 Tool: `context_manager` (Status: ✅ OK)
+**Interface and Capabilities:**
+```text
+Automatically generates the AI_CONTEXT.md manifest that serves as a technical manual for AI.
+```
+
 ### 🔧 Tool: `config` (Status: ✅ OK)
 **Interface and Capabilities:**
 ```text
@@ -27,19 +33,12 @@ Configuration Tool (config):
         - get(key, default=None): Gets a configuration value.
 ```
 
-### 🔧 Tool: `context_manager` (Status: ✅ OK)
+### 🔧 Tool: `db` (Status: ✅ OK)
 **Interface and Capabilities:**
 ```text
-Automatically generates the AI_CONTEXT.md manifest that serves as a technical manual for AI.
-```
-
-### 🔧 Tool: `event_bus` (Status: ✅ OK)
-**Interface and Capabilities:**
-```text
-Enables communication between plugins:
-        - publish(name, data): Fire and forget.
-        - subscribe(name, callback): Listen to events. Use '*' to listen to ALL.
-        - request(name, data, timeout=5): Send and wait for response (RPC).
+SQLite Tool (db):
+        - query(sql, params): Read query (SELECT).
+        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
 ```
 
 ### 🔧 Tool: `http_server` (Status: ✅ OK)
@@ -51,24 +50,6 @@ HTTP Server Tool (FastAPI):
         - mount_static(path, directory): Serves static files.
         - add_ws_endpoint(path, handler): Registers a WebSocket endpoint.
         - The 'handler' must receive a 'data' dictionary.
-```
-
-### 🔧 Tool: `logger` (Status: ✅ OK)
-**Interface and Capabilities:**
-```text
-Logging Tool:
-        - info(message): Logs general information.
-        - error(message): Logs critical errors.
-        - warning(message): Logs warnings.
-        All logs are also published to event_bus as 'system.log'.
-```
-
-### 🔧 Tool: `db` (Status: ✅ OK)
-**Interface and Capabilities:**
-```text
-SQLite Tool (db):
-        - query(sql, params): Read query (SELECT).
-        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
 ```
 
 ### 🔧 Tool: `state` (Status: ✅ OK)
@@ -85,6 +66,25 @@ State Tool (state):
 **Interface and Capabilities:**
 ```text
 Access to the Core's Architectural Inventory (Tools, Domains, and Plugins).
+```
+
+### 🔧 Tool: `logger` (Status: ✅ OK)
+**Interface and Capabilities:**
+```text
+Logging Tool:
+        - info(message): Logs general information.
+        - error(message): Logs critical errors.
+        - warning(message): Logs warnings.
+        All logs are also published to event_bus as 'system.log'.
+```
+
+### 🔧 Tool: `event_bus` (Status: ✅ OK)
+**Interface and Capabilities:**
+```text
+Enables communication between plugins:
+        - publish(name, data): Fire and forget.
+        - subscribe(name, callback): Listen to events. Use '*' to listen to ALL.
+        - request(name, data, timeout=5): Send and wait for response (RPC).
 ```
 
 ## 📦 Domain Models (Data Structures)
