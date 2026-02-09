@@ -44,7 +44,7 @@ class UpdateUserPlugin(BasePlugin):
             current_user = UserModel.from_row(existing[0])
         except Exception as e:
             self.logger.error(f"UpdateUserPlugin: Error querying user: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "An internal error occurred."}
 
         # 2. Validate fields if provided
         if name is not None:
@@ -108,8 +108,12 @@ class UpdateUserPlugin(BasePlugin):
             
         except Exception as e:
             error_msg = str(e)
+            user_msg = "An internal error occurred."
+
             if "UNIQUE constraint failed" in error_msg:
-                error_msg = "Email is already in use by another user."
-            
-            self.logger.error(f"UpdateUserPlugin: Error updating user: {error_msg}")
-            return {"success": False, "error": error_msg}
+                user_msg = "Email is already in use by another user."
+                self.logger.warning(f"UpdateUserPlugin: Attempt to use duplicate email: {email}")
+            else:
+                self.logger.error(f"UpdateUserPlugin: Error updating user: {error_msg}")
+
+            return {"success": False, "error": user_msg}
