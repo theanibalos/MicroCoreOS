@@ -7,17 +7,17 @@ description: Ensures adherence to MicroCoreOS "Atomic Microkernel" architecture.
 
 This skill enforces the modular, asynchronous, and resilient design principles of MicroCoreOS.
 
-## 🏛️ Philosophy: The Sacred Core
-The Core (`/core`) is the immutable heart of the system.
-- **Kernel**: Orchestrator for non-blocking startup and DI.
-- **Container**: Thread-safe registry (`RLock`) for observability.
-- **Registry**: Structural inventory of tools, domains, and plugins.
-- **Base Components**: System contracts (`BaseTool`, `BasePlugin`).
+## 🏛️ The Three Golden Rules (SACRED)
+These rules are inviolable. Any deviation is a violation of the "Atomic Microkernel" architecture.
 
-**Golden Rule**: Files in `/core` are **SACRED**.
-- NEVER modify them for business logic, tracing, or health checks.
-- Intelligence grows in Plugins and Tools.
-- For observability, use the `event_bus` or `registry` from a dedicated Plugin.
+1.  **Rule 1: The Core is Sacred**: Files in `/core` MUST NOT be modified for business logic or observability.
+2.  **Rule 2: Absolute Tool Isolation**: Tools are independent atoms. A Tool **MUST NEVER** import, request, or depend on another Tool. They are 100% agnostic of each other.
+3.  **Rule 3: Plugin-as-Glue (The Bridge)**: Plugins are the ONLY place where Tools collaborate. If two Tools need to work together (e.g., HTTP needs Identity), the Plugin MUST orchestrate the bridge.
+
+> [!IMPORTANT]
+> **Tool vs Plugin Philosophy**: 
+> - **Tools** provide technical *Capabilities* (e.g., "I know how to send HTTP packets"). 
+> - **Plugins** provide business *Intent* (e.g., "I want to create a user using HTTP and SQL").
 
 ## 🏗️ Development Rules
 

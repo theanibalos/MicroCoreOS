@@ -264,13 +264,13 @@ Tools don't hold business state—they're pure infrastructure. This means:
 
 [AGPL-3.0](LICENSE) - Free to use, modifications must be open-sourced if deployed as a service.
 
-For commercial licensing: contact@theanibalos.dev
+For commercial licensing: theanibalos@gmail.com
 
 ---
 
 ## Author
 
-**Antonio Ibalos** ([@theanibalos](https://github.com/theanibalos))
+**AnibalOS** ([@theanibalos](https://github.com/theanibalos))
 
 Built because I was tired of explaining my architecture to Claude.
 
