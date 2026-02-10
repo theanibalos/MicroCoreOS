@@ -367,13 +367,26 @@
                 const isOk = info.status === 'OK';
                 const card = document.createElement('div');
                 card.className = 'tool-card';
-                card.innerHTML = `
-                    <div class="tool-header">
-                        <span class="tool-name">${name}</span>
-                        <span class="status-dot ${isOk ? '' : 'fail'}"></span>
-                    </div>
-                    <div class="tool-desc">${info.message || 'Herramienta operativa.'}</div>
-                `;
+
+                const header = document.createElement('div');
+                header.className = 'tool-header';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'tool-name';
+                nameSpan.textContent = name;
+
+                const dot = document.createElement('span');
+                dot.className = `status-dot ${isOk ? '' : 'fail'}`;
+
+                header.appendChild(nameSpan);
+                header.appendChild(dot);
+
+                const desc = document.createElement('div');
+                desc.className = 'tool-desc';
+                desc.textContent = info.message || 'Herramienta operativa.';
+
+                card.appendChild(header);
+                card.appendChild(desc);
                 grid.appendChild(card);
             });
         }
@@ -395,33 +408,66 @@
                 const card = document.createElement('div');
                 card.className = 'domain-card';
 
-                const pluginsHTML = pluginList.map(p => {
-                    const depsHTML = p.dependencies.map(d =>
-                        `<span class="dep-tag">${d}</span>`
-                    ).join('');
+                const header = document.createElement('div');
+                header.className = 'domain-header';
+                header.onclick = function() { this.parentElement.classList.toggle('open'); };
 
-                    return `
-                        <div class="plugin-item">
-                            <div class="plugin-name">${p.name}</div>
-                            <div class="plugin-deps">
-                                <span class="dep-arrow">⟵ uses:</span>
-                                ${depsHTML || '<span style="color: var(--text-dim); font-size: 0.75rem;">ninguna</span>'}
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'domain-name';
+                nameSpan.textContent = domain;
 
-                card.innerHTML = `
-                    <div class="domain-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span class="domain-name">${domain}</span>
-                        <span class="domain-toggle">▼</span>
-                    </div>
-                    <div class="domain-content">
-                        <div class="plugins-list">
-                            ${pluginsHTML}
-                        </div>
-                    </div>
-                `;
+                const toggle = document.createElement('span');
+                toggle.className = 'domain-toggle';
+                toggle.textContent = '▼';
+
+                header.appendChild(nameSpan);
+                header.appendChild(toggle);
+
+                const content = document.createElement('div');
+                content.className = 'domain-content';
+
+                const list = document.createElement('div');
+                list.className = 'plugins-list';
+
+                pluginList.forEach(p => {
+                    const item = document.createElement('div');
+                    item.className = 'plugin-item';
+
+                    const pName = document.createElement('div');
+                    pName.className = 'plugin-name';
+                    pName.textContent = p.name;
+
+                    const deps = document.createElement('div');
+                    deps.className = 'plugin-deps';
+
+                    const arrow = document.createElement('span');
+                    arrow.className = 'dep-arrow';
+                    arrow.textContent = '⟵ uses:';
+                    deps.appendChild(arrow);
+
+                    if (p.dependencies && p.dependencies.length > 0) {
+                        p.dependencies.forEach(d => {
+                            const tag = document.createElement('span');
+                            tag.className = 'dep-tag';
+                            tag.textContent = d;
+                            deps.appendChild(tag);
+                        });
+                    } else {
+                        const none = document.createElement('span');
+                        none.style.color = 'var(--text-dim)';
+                        none.style.fontSize = '0.75rem';
+                        none.textContent = 'ninguna';
+                        deps.appendChild(none);
+                    }
+
+                    item.appendChild(pName);
+                    item.appendChild(deps);
+                    list.appendChild(item);
+                });
+
+                content.appendChild(list);
+                card.appendChild(header);
+                card.appendChild(content);
 
                 container.appendChild(card);
             });
