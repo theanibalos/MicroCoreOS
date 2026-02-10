@@ -37,4 +37,4 @@ class DeleteUserPlugin(BasePlugin):
             return {"success": True}
         except Exception as e:
             self.logger.error(f"Error during deletion: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "An internal error occurred."}

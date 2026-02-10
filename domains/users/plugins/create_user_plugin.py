@@ -61,8 +61,12 @@ class CreateUserPlugin(BasePlugin):
             
         except Exception as e:
             error_msg = str(e)
+            user_msg = "An internal error occurred."
+
             if "UNIQUE constraint failed" in error_msg:
-                error_msg = "Email is already registered."
-                
-            self.logger.error(f"Error creating user: {error_msg}")
-            return {"success": False, "error": error_msg}
+                user_msg = "Email is already registered."
+                self.logger.warning(f"CreateUserPlugin: Attempt to register duplicate email: {email}")
+            else:
+                self.logger.error(f"CreateUserPlugin: Internal error: {error_msg}")
+
+            return {"success": False, "error": user_msg}
