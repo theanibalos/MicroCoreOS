@@ -2,8 +2,8 @@ from core.base_plugin import BasePlugin
 from domains.users.models.user_model import UserIdRequest, UserResponse
 
 class DeleteUserPlugin(BasePlugin):
-    def __init__(self, http_server, db, logger, event_bus):
-        self.http = http_server
+    def __init__(self, http, db, logger, event_bus):
+        self.http = http
         self.db = db
         self.logger = logger
         self.bus = event_bus

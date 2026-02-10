@@ -7,8 +7,8 @@ class DashboardPlugin(BasePlugin):
     Plugin that serves a visual dashboard for real-time system observability.
     Uses the http_server tool to mount static files and provide a UI.
     """
-    def __init__(self, http_server, logger):
-        self.http = http_server
+    def __init__(self, http, logger):
+        self.http = http
         self.logger = logger
         # Path to the static files directory
         self.static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))

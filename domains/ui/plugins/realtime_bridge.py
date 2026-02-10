@@ -7,8 +7,8 @@ class RealTimeBridgePlugin(BasePlugin):
     Bridge between the internal EventBus and WebSocket clients.
     Listens to ALL events (*) and relays them to active connections.
     """
-    def __init__(self, http_server, event_bus, logger):
-        self.http = http_server
+    def __init__(self, http, event_bus, logger):
+        self.http = http
         self.bus = event_bus
         self.logger = logger
         self._clients = []  # List of active websockets

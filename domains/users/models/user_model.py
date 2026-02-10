@@ -8,7 +8,16 @@ class UserBase(BaseModel):
     email: EmailStr = Field(..., description="Unique email address")
 
 class UserCreate(UserBase):
-    pass
+    password: str = Field(..., min_length=8, description="User's plain text password")
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    success: bool
+    token: Optional[str] = None
+    error: Optional[str] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=3)
@@ -34,10 +43,11 @@ class UserResponse(BaseModel):
 
 # === DOMAIN OBJECT ===
 class UserModel:
-    def __init__(self, name=None, email=None, id=None):
+    def __init__(self, name=None, email=None, password_hash=None, id=None):
         self.id = id
         self.name = name
         self.email = email
+        self.password_hash = password_hash
 
     @staticmethod
     def validate_name(name):
@@ -53,10 +63,15 @@ class UserModel:
         return True, None
 
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "email": self.email}
+        return {
+            "id": self.id, 
+            "name": self.name, 
+            "email": self.email,
+            "password_hash": self.password_hash
+        }
 
     @staticmethod
     def from_row(row):
-        """Converts a database row (id, name, email) to a UserModel object."""
+        """Converts a database row (id, name, email, password_hash) to a UserModel object."""
         if not row: return None
-        return UserModel(id=row[0], name=row[1], email=row[2])
+        return UserModel(id=row[0], name=row[1], email=row[2], password_hash=row[3])

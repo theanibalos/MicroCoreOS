@@ -26,7 +26,7 @@ class TestCreateUserPlugin(unittest.TestCase):
         
         # 2. Instanciamos el plugin REAL
         self.plugin = CreateUserPlugin(
-            http_server=self.mock_http,
+            http=self.mock_http,
             db=self.mock_db,
             logger=self.mock_logger,
             event_bus=self.mock_bus

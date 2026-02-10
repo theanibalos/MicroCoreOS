@@ -2,8 +2,8 @@ import os
 from core.base_plugin import BasePlugin
 
 class SystemDashboardPlugin(BasePlugin):
-    def __init__(self, http_server, logger, registry):
-        self.http = http_server
+    def __init__(self, http, logger, registry):
+        self.http = http
         self.logger = logger
         self.registry = registry
 

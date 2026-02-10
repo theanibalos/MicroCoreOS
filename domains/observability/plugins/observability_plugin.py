@@ -1,8 +1,8 @@
 from core.base_plugin import BasePlugin
 
 class ObservabilityPlugin(BasePlugin):
-    def __init__(self, http_server, registry, event_bus, logger):
-        self.http = http_server
+    def __init__(self, http, registry, event_bus, logger):
+        self.http = http
         self.registry = registry
         self.bus = event_bus
         self.logger = logger

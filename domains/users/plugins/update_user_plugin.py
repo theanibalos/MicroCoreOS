@@ -9,8 +9,8 @@ class UpdateUserPlugin(BasePlugin):
     - Logs operations
     """
     
-    def __init__(self, http_server, db, logger, event_bus):
-        self.http = http_server
+    def __init__(self, http, db, logger, event_bus):
+        self.http = http
         self.db = db
         self.logger = logger
         self.bus = event_bus
@@ -34,7 +34,7 @@ class UpdateUserPlugin(BasePlugin):
         # 1. Validate: Check that user exists
         try:
             existing = self.db.query(
-                "SELECT id, name, email FROM users WHERE id = ?", 
+                "SELECT id, name, email, password_hash FROM users WHERE id = ?", 
                 (user_id,)
             )
             if not existing:
@@ -86,7 +86,7 @@ class UpdateUserPlugin(BasePlugin):
             
             # Get updated user
             updated_row = self.db.query(
-                "SELECT id, name, email FROM users WHERE id = ?", 
+                "SELECT id, name, email, password_hash FROM users WHERE id = ?", 
                 (user_id,)
             )
             updated_user = UserModel.from_row(updated_row[0])

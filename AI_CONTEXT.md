@@ -42,15 +42,14 @@ Enables communication between plugins:
         - request(name, data, timeout=5): Send and wait for response (RPC).
 ```
 
-### 🔧 Tool: `http_server` (Status: ✅ OK)
+### 🔧 Tool: `http` (Status: ✅ OK)
 **Interface and Capabilities:**
 ```text
-HTTP Server Tool (FastAPI):
-        - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None): 
-          Registers a new URL. Supports Pydantic Schemas for auto-generated Swagger.
+HTTP Server Tool (http):
+        - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, security_guard=None): 
+          Registers a new URL. Supports Pydantic Schemas and generic Safety Guards.
         - mount_static(path, directory): Serves static files.
         - add_ws_endpoint(path, handler): Registers a WebSocket endpoint.
-        - The 'handler' must receive a 'data' dictionary.
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅ OK)
@@ -85,6 +84,16 @@ State Tool (state):
 **Interface and Capabilities:**
 ```text
 Access to the Core's Architectural Inventory (Tools, Domains, and Plugins).
+```
+
+### 🔧 Tool: `identity` (Status: ✅ OK)
+**Interface and Capabilities:**
+```text
+Identity Tool (identity) - Pure Crypto:
+        - hash_password(password: str) -> str
+        - verify_password(password: str, hashed: str) -> bool
+        - generate_token(data: dict, expires_delta: timedelta = None) -> str
+        - decode_token(token: str) -> dict
 ```
 
 ## 📦 Domain Models (Data Structures)

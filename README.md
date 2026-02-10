@@ -206,12 +206,13 @@ Dynamic DI has a small "indirection" cost. For instant speed:
 
 ## Roadmap
 
-MicroCoreOS is designed for an immutable Kernel. Growth comes from expanding Tools and observability:
+MicroCoreOS is moving towards a fully decentralized, marketplace-driven ecosystem:
 
-- 🔍 **Tracer Tool**: Integrated mapping of which plugins react to which events.
-- 🛡️ **Global Middleware**: Intercept plugin execution for auditing or security.
-- 🏗️ **Production Tools**: Reference implementations evolved into production-ready drivers (PostgreSQL, Redis, etc.).
-- 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM.
+- 🏗️ **Atomic Tool Marketplace**: A drop-in ecosystem where tools (Redis, PostgreSQL, LLMs) are self-contained folders with their own manifests, default configs, and AI instructions.
+- 🔍 **Tracer Tool**: Integrated mapping of which plugins react to which events for full observability.
+- 🛡️ **Global Middleware**: Intercept plugin execution for auditing, security, or performance gating.
+- 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM for language-agnostic development.
+- 📦 **One-Click Distribution**: Install new capabilities via `uv` or simply by copying a folder into `/tools`.
 
 ---
 
