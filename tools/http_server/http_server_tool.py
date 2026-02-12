@@ -66,10 +66,6 @@ class HttpServerTool(BaseTool):
         # Combine processing logic
         async def process_request(request: Request, body_data: Any):
             data = dict(request.query_params)
-            
-            # Simple check in the Request State
-            if hasattr(request.state, "_auth"):
-                data["_auth"] = request.state._auth
 
             if body_data:
                 input_body = body_data.dict() if hasattr(body_data, "dict") else body_data
@@ -82,11 +78,17 @@ class HttpServerTool(BaseTool):
                         data.update(body)
                 except Exception: pass
 
+            # Simple check in the Request State
+            # Moved AFTER body processing to prevent overwriting (Security Fix)
+            if hasattr(request.state, "_auth"):
+                data["_auth"] = request.state._auth
+
             try:
                 return await run_in_threadpool(handler, data)
             except Exception as e:
                 print(f"[HttpServer] 💥 Error in route {path}: {e}")
-                return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+                # Return generic error to prevent information leakage
+                return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
 
         # Dynamically build the wrapper based on request_model
         # Much simpler now because identity is handled via 'dependencies' in add_api_route
