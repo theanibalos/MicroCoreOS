@@ -86,7 +86,8 @@ class HttpServerTool(BaseTool):
                 return await run_in_threadpool(handler, data)
             except Exception as e:
                 print(f"[HttpServer] 💥 Error in route {path}: {e}")
-                return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+                # Security: Hide internal error details from client to prevent information leakage
+                return JSONResponse(status_code=500, content={"success": False, "error": "Internal Server Error"})
 
         # Dynamically build the wrapper based on request_model
         # Much simpler now because identity is handled via 'dependencies' in add_api_route
