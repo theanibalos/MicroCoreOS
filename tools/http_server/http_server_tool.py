@@ -66,10 +66,6 @@ class HttpServerTool(BaseTool):
         # Combine processing logic
         async def process_request(request: Request, body_data: Any):
             data = dict(request.query_params)
-            
-            # Simple check in the Request State
-            if hasattr(request.state, "_auth"):
-                data["_auth"] = request.state._auth
 
             if body_data:
                 input_body = body_data.dict() if hasattr(body_data, "dict") else body_data
@@ -81,6 +77,11 @@ class HttpServerTool(BaseTool):
                     if isinstance(body, dict):
                         data.update(body)
                 except Exception: pass
+
+            # Simple check in the Request State
+            # MOVED: Ensure auth overrides any body parameters (prevent pollution)
+            if hasattr(request.state, "_auth"):
+                data["_auth"] = request.state._auth
 
             try:
                 return await run_in_threadpool(handler, data)
