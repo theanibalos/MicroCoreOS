@@ -4,7 +4,7 @@ description: Ensures adherence to MicroCoreOS "Atomic Microkernel" architecture.
 ---
 
 # MicroCoreOS Architecture Skill
-
+    
 This skill enforces the modular, asynchronous, and resilient design principles of MicroCoreOS.
 
 ## 🏛️ The Three Golden Rules (SACRED)

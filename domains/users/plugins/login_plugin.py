@@ -55,7 +55,19 @@ class LoginPlugin(BasePlugin):
             token = self.identity.generate_token({"user_id": user.id})
             
             self.logger.info(f"User {email} logged in successfully.")
-            return {"success": True, "token": token}
+            return {
+                "success": True, 
+                "token": token,
+                "_cookies": [
+                    {
+                        "key": "access_token", 
+                        "value": token, 
+                        "httponly": True, 
+                        "max_age": 3600, 
+                        "samesite": "lax"
+                    }
+                ]
+            }
             
         except Exception as e:
             self.logger.error(f"Error during login: {e}")

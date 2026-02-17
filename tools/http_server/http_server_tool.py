@@ -3,7 +3,7 @@ import uvicorn
 import threading
 from typing import Optional, Dict, Any
 from core.base_tool import BaseTool
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +64,7 @@ class HttpServerTool(BaseTool):
         operation_id = f"{handler_name}_{method}_{path.replace('/', '_')}"
 
         # Combine processing logic
-        async def process_request(request: Request, body_data: Any):
+        async def process_request(request: Request, response: Response, body_data: Any):
             data = dict(request.query_params)
             
             # Simple check in the Request State
@@ -83,7 +83,24 @@ class HttpServerTool(BaseTool):
                 except Exception: pass
 
             try:
-                return await run_in_threadpool(handler, data)
+                result = await run_in_threadpool(handler, data)
+                
+                # Handle cookie instructions from plugin
+                if isinstance(result, dict) and "_cookies" in result:
+                    cookies = result.pop("_cookies")
+                    for cookie in cookies:
+                        response.set_cookie(
+                            key=cookie.get("key"),
+                            value=cookie.get("value"),
+                            max_age=cookie.get("max_age"),
+                            expires=cookie.get("expires"),
+                            path=cookie.get("path", "/"),
+                            domain=cookie.get("domain"),
+                            secure=cookie.get("secure", False),
+                            httponly=cookie.get("httponly", False),
+                            samesite=cookie.get("samesite", "lax"),
+                        )
+                return result
             except Exception as e:
                 print(f"[HttpServer] 💥 Error in route {path}: {e}")
                 return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
@@ -92,14 +109,14 @@ class HttpServerTool(BaseTool):
         # Much simpler now because identity is handled via 'dependencies' in add_api_route
         if request_model:
             if method.upper() == "GET":
-                async def wrapper(request: Request, params: request_model = Depends()):
-                    return await process_request(request, params)
+                async def wrapper(request: Request, response: Response, params: request_model = Depends()):
+                    return await process_request(request, response, params)
             else:
-                async def wrapper(request: Request, body: request_model = None):
-                    return await process_request(request, body)
+                async def wrapper(request: Request, response: Response, body: request_model = None):
+                    return await process_request(request, response, body)
         else:
-            async def wrapper(request: Request):
-                return await process_request(request, None)
+            async def wrapper(request: Request, response: Response):
+                return await process_request(request, response, None)
 
         wrapper.__name__ = operation_id
         
@@ -131,10 +148,19 @@ class HttpServerTool(BaseTool):
         It uses the provided decoder_callable to transform a token into an identity.
         """
         async def verify_identity(request: Request, authorization: Optional[str] = Header(None)):
-            if not authorization or not authorization.startswith("Bearer "):
-                raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+            token = None
             
-            token = authorization.split(" ")[1]
+            # 1. Try Authorization Header
+            if authorization and authorization.startswith("Bearer "):
+                token = authorization.split(" ")[1]
+            
+            # 2. Try Cookie if no header
+            if not token:
+                token = request.cookies.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Missing Authentication Token (Header or Cookie)")
+            
             try:
                 # Core logic: Delegate decoding to the provided callable
                 payload = decoder_callable(token)
