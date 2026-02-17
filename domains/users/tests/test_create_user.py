@@ -18,15 +18,16 @@ class TestCreateUserPlugin(unittest.TestCase):
     
     def setUp(self):
         # 1. Creamos Mocks de las herramientas que pide el constructor
-        # self.http, self.db, self.logger, self.event_bus
         self.mock_http = MagicMock()
         self.mock_db = MagicMock()
         self.mock_logger = MagicMock()
         self.mock_bus = MagicMock()
+        self.mock_identity = MagicMock()
         
         # 2. Instanciamos el plugin REAL
         self.plugin = CreateUserPlugin(
             http=self.mock_http,
+            identity=self.mock_identity,
             db=self.mock_db,
             logger=self.mock_logger,
             event_bus=self.mock_bus
@@ -36,7 +37,7 @@ class TestCreateUserPlugin(unittest.TestCase):
         # 🏁 Escenario: La base de datos devuelve un ID 42
         self.mock_db.execute.return_value = 42
         
-        test_data = {"name": "Test Real", "email": "real@test.com"}
+        test_data = {"name": "Test Real", "email": "real@test.com", "password": "secret_password"}
         
         # 🚀 Ejecución
         result = self.plugin.execute(test_data)
