@@ -9,11 +9,12 @@ class UpdateUserPlugin(BasePlugin):
     - Logs operations
     """
     
-    def __init__(self, http, db, logger, event_bus):
+    def __init__(self, http, db, logger, event_bus, identity):
         self.http = http
         self.db = db
         self.logger = logger
         self.bus = event_bus
+        self.identity = identity
 
     def on_boot(self):
         self.http.add_endpoint(
@@ -22,12 +23,26 @@ class UpdateUserPlugin(BasePlugin):
             handler=self.execute, 
             tags=["Users"],
             request_model=UserUpdateWithId,
-            response_model=UserResponse
+            response_model=UserResponse,
+            security_guard=self.http.get_bearer_guard(self.identity.decode_token)
         )
         self.logger.info("UpdateUserPlugin: Endpoint /users/update registered with Schema.")
 
     def execute(self, data: dict):
-        user_id = data.get("id")
+        # 0. Security: Verify Authentication and Authorization
+        auth_payload = data.get("_auth", {})
+        auth_user_id = auth_payload.get("user_id")
+
+        if not auth_user_id:
+             return {"success": False, "error": "Unauthorized: Missing identity."}
+
+        target_user_id = data.get("id")
+
+        if auth_user_id != target_user_id:
+             self.logger.warning(f"UpdateUserPlugin: Unauthorized update attempt by User {auth_user_id} on User {target_user_id}")
+             return {"success": False, "error": "Forbidden: You can only update your own profile."}
+
+        user_id = target_user_id
         name = data.get("name")
         email = data.get("email")
 
