@@ -17,7 +17,7 @@ class ListUsersPlugin(BasePlugin):
         )
         self.logger.info("ListUsersPlugin: Endpoint /users registered with Schema.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         rows = self.db.query("SELECT id, name, email, password_hash FROM users")
         users = [UserModel.from_row(row).to_dict() for row in rows]
         return {"success": True, "users": users}

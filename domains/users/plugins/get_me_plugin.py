@@ -28,7 +28,7 @@ class GetMePlugin(BasePlugin):
         )
         self.logger.info("GetMePlugin: Protected endpoint /users/me registered.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         # Injected by the HttpServerTool Guard as '_auth' (infrastructure key)
         auth_payload = data.get("_auth", {})
         user_id = auth_payload.get("user_id") # Domain-specific key extracted here

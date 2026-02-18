@@ -9,5 +9,5 @@ class BasePlugin(ABC):
         pass
 
     @abstractmethod
-    def execute(self, **kwargs):
+    def execute(self, data: dict, context=None):
         pass

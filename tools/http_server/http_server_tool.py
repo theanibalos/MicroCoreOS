@@ -1,7 +1,7 @@
 import os
 import uvicorn
 import threading
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from core.base_tool import BaseTool
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
@@ -12,10 +12,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+class HttpContext:
+    """Explicit context for plugins to interact with HTTP infrastructure."""
+    def __init__(self, response: Response):
+        self._response = response
+
+    def set_cookie(self, key, value, max_age=3600, httponly=True, samesite="lax", secure=False, path="/"):
+        self._response.set_cookie(
+            key=key, 
+            value=value, 
+            max_age=max_age, 
+            httponly=httponly, 
+            samesite=samesite, 
+            secure=secure,
+            path=path
+        )
+
 class HttpServerTool(BaseTool):
     def __init__(self):
         self.app = FastAPI(title="MicroCoreOS Gateway")
-        self._endpoints = []
         # Port from .env or default to 5000
         self._port = int(os.getenv("HTTP_PORT", 5000))
 
@@ -50,7 +65,10 @@ class HttpServerTool(BaseTool):
         return """
         HTTP Server Tool (http):
         - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, security_guard=None): 
-          Registers a new URL. Supports Pydantic Schemas and generic Safety Guards.
+          Registers a path. The handler MUST accept (data: dict, context: HttpContext).
+        - HttpContext.set_cookie(key, value, max_age=3600, httponly=True, samesite="lax", secure=False, path="/"): 
+          Accessible via the 'context' parameter in the handler.
+        - get_bearer_guard(decoder, cookie_name="access_token"): Returns a hybrid guard (supports Header or Cookie).
         - mount_static(path, directory): Serves static files.
         - add_ws_endpoint(path, handler): Registers a WebSocket endpoint.
         """
@@ -62,7 +80,7 @@ class HttpServerTool(BaseTool):
         """
         handler_name = handler.__name__ if hasattr(handler, "__name__") else str(hash(handler))
         operation_id = f"{handler_name}_{method}_{path.replace('/', '_')}"
-
+        
         # Combine processing logic
         async def process_request(request: Request, response: Response, body_data: Any):
             data = dict(request.query_params)
@@ -83,30 +101,16 @@ class HttpServerTool(BaseTool):
                 except Exception: pass
 
             try:
-                result = await run_in_threadpool(handler, data)
+                # 100% Explicit: Provide a tiny context for the plugin to interact with the world
+                context = HttpContext(response)
                 
-                # Handle cookie instructions from plugin
-                if isinstance(result, dict) and "_cookies" in result:
-                    cookies = result.pop("_cookies")
-                    for cookie in cookies:
-                        response.set_cookie(
-                            key=cookie.get("key"),
-                            value=cookie.get("value"),
-                            max_age=cookie.get("max_age"),
-                            expires=cookie.get("expires"),
-                            path=cookie.get("path", "/"),
-                            domain=cookie.get("domain"),
-                            secure=cookie.get("secure", False),
-                            httponly=cookie.get("httponly", False),
-                            samesite=cookie.get("samesite", "lax"),
-                        )
-                return result
+                # We call the handler with data AND the explicit context
+                return await run_in_threadpool(handler, data, context)
             except Exception as e:
                 print(f"[HttpServer] 💥 Error in route {path}: {e}")
                 return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
         # Dynamically build the wrapper based on request_model
-        # Much simpler now because identity is handled via 'dependencies' in add_api_route
         if request_model:
             if method.upper() == "GET":
                 async def wrapper(request: Request, response: Response, params: request_model = Depends()):
@@ -142,10 +146,11 @@ class HttpServerTool(BaseTool):
         else:
             print(f"[HttpServer] ⚠️ Static directory not found: {directory_path}")
 
-    def get_bearer_guard(self, decoder_callable):
+    def get_bearer_guard(self, decoder_callable, cookie_name="access_token"):
         """
         Infrastructure utility to create a FastAPI bearer guard.
         It uses the provided decoder_callable to transform a token into an identity.
+        The cookie_name can be customized (defaults to 'access_token').
         """
         async def verify_identity(request: Request, authorization: Optional[str] = Header(None)):
             token = None
@@ -156,7 +161,7 @@ class HttpServerTool(BaseTool):
             
             # 2. Try Cookie if no header
             if not token:
-                token = request.cookies.get("access_token")
+                token = request.cookies.get(cookie_name)
             
             if not token:
                 raise HTTPException(status_code=401, detail="Missing Authentication Token (Header or Cookie)")

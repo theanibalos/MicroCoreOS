@@ -34,7 +34,7 @@ class CreateUserPlugin(BasePlugin):
         )
         self.logger.info("CreateUserPlugin: Endpoint /users/create registered.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         name = data.get("name")
         email = data.get("email")
         password = data.get("password")

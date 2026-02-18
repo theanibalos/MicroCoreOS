@@ -19,7 +19,7 @@ class DeleteUserPlugin(BasePlugin):
         )
         self.logger.info("DeleteUserPlugin: Endpoint /users/delete registered with Schema.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         user_id = data.get("id")
 
         try:

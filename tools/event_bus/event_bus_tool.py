@@ -20,8 +20,8 @@ class EventBusTool(BaseTool):
     def get_interface_description(self) -> str:
         return """
         Enables communication between plugins:
-        - publish(name, data): Fire and forget.
-        - subscribe(name, callback): Listen to events. Use '*' to listen to ALL.
+        - publish(name, data): Fire and forget. 
+        - subscribe(name, callback): Callback receives {_event_name: str, payload: dict}. Use '*' for all.
         - request(name, data, timeout=5): Send and wait for response (RPC).
         """
 

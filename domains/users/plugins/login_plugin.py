@@ -30,7 +30,7 @@ class LoginPlugin(BasePlugin):
         )
         self.logger.info("LoginPlugin: Endpoint /users/login registered.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context: 'HttpContext'):
         email = data.get("email")
         password = data.get("password")
 
@@ -55,18 +55,11 @@ class LoginPlugin(BasePlugin):
             token = self.identity.generate_token({"user_id": user.id})
             
             self.logger.info(f"User {email} logged in successfully.")
+            context.set_cookie("access_token", token)
+            
             return {
                 "success": True, 
-                "token": token,
-                "_cookies": [
-                    {
-                        "key": "access_token", 
-                        "value": token, 
-                        "httponly": True, 
-                        "max_age": 3600, 
-                        "samesite": "lax"
-                    }
-                ]
+                "token": token
             }
             
         except Exception as e:

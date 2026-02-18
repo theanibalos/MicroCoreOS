@@ -13,8 +13,8 @@ class WelcomeLogger(BasePlugin):
     def on_user_created(self, data):
         # This function is executed automatically when another plugin publishes
         self.logger.info(f"--- EVENT RECEIVED ---")
-        self.logger.info(f"Sending welcome email to {data['name']} ({data['email']})")
+        self.logger.info(f"Sending welcome email to {data['payload']['name']} ({data['payload']['email']})")
 
-    def execute(self, **kwargs):
-        # This plugin is not called manually, it lives off events
+    def execute(self, data: dict, context=None):
+        # Este plugin no se llama manualmente, vive de eventos.
         pass

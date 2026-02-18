@@ -18,7 +18,7 @@ class GetUserPlugin(BasePlugin):
         )
         self.logger.info("GetUserPlugin: Endpoint /users/get registered with Schema.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         user_id = data.get("id")
         
         row = self.db.query("SELECT id, name, email, password_hash FROM users WHERE id = ?", (user_id,))

@@ -26,7 +26,7 @@ class UpdateUserPlugin(BasePlugin):
         )
         self.logger.info("UpdateUserPlugin: Endpoint /users/update registered with Schema.")
 
-    def execute(self, data: dict):
+    def execute(self, data: dict, context=None):
         user_id = data.get("id")
         name = data.get("name")
         email = data.get("email")
