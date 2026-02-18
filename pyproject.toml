@@ -1,7 +1,8 @@
 [project]
 name = "microos"
 version = "0.1.0"
-description = "Add your description here"
+description = "Atomic Microkernel Architecture optimized for AI-Driven Development"
+license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

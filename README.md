@@ -5,7 +5,7 @@
 
 **1 file = 1 feature.** That's the entire idea.
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -262,9 +262,9 @@ Tools don't hold business state—they're pure infrastructure. This means:
 
 ## License
 
-[AGPL-3.0](LICENSE) - Free to use, modifications must be open-sourced if deployed as a service.
+[MIT](LICENSE) - Simple and permissive.
 
-For commercial licensing: theanibalos@gmail.com
+For commercial consulting or support: theanibalos@gmail.com
 
 ---
 
