@@ -23,7 +23,7 @@ class SystemDashboardPlugin(BasePlugin):
         
         self.logger.info("SystemDashboardPlugin: Dashboard available at http://localhost:5000/dashboard/index.html")
 
-    def get_system_status(self, data: dict):
+    def get_system_status(self, data: dict, context):
         """Returns the complete registry dump for the dashboard."""
         return {
             "success": True,

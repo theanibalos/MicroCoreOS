@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MicroCoreOS | System Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #05060a;
+            --card-bg: rgba(15, 17, 26, 0.6);
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.5);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --plugin-color: #8b5cf6;
+            --tool-color: #0ea5e9;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-primary);
+            overflow: hidden;
+            background-image:
+                radial-gradient(circle at 10% 10%, rgba(99, 102, 241, 0.1) 0%, transparent 40%),
+                radial-gradient(circle at 90% 90%, rgba(139, 92, 246, 0.1) 0%, transparent 40%);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            overflow: hidden;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--glass-border);
+            backdrop-filter: blur(10px);
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        /* --- Main Layout --- */
+        .system-graph {
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+
+        .section-header {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            margin-top: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .section-header:first-child {
+            margin-top: 0;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .node-card {
+            background: var(--card-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 1rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .node-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+        }
+
+        .node-card.plugin::before {
+            background: var(--plugin-color);
+        }
+
+        .node-card.tool::before {
+            background: var(--tool-color);
+        }
+
+        .node-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(30, 35, 50, 0.8);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+
+        .node-card.highlighted {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px var(--accent-glow);
+            background: rgba(99, 102, 241, 0.15);
+        }
+
+        .node-card.dimmed {
+            opacity: 0.3;
+            filter: grayscale(0.8);
+        }
+
+        .node-name {
+            font-weight: 600;
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+            display: block;
+        }
+
+        .node-type {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .node-status {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .status-ready {
+            color: var(--success);
+        }
+
+        .status-running {
+            color: var(--accent);
+        }
+
+        .status-dead {
+            color: var(--danger);
+        }
+
+        /* --- Event Log --- */
+        .sidebar {
+            background: rgba(10, 11, 16, 0.8);
+            border-left: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            backdrop-filter: blur(20px);
+        }
+
+        .sidebar-header {
+            padding: 1.25rem;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .event-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .event-item {
+            padding: 0.75rem;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            margin-bottom: 0.75rem;
+            border: 1px solid transparent;
+            animation: slideIn 0.3s ease-out;
+            transition: all 0.2s;
+        }
+
+        .event-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--glass-border);
+        }
+
+        .event-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .event-time {
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .event-tag {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .event-msg {
+            font-size: 0.85rem;
+            line-height: 1.4;
+            word-break: break-all;
+        }
+
+        .event-payload-btn {
+            background: none;
+            border: none;
+            color: var(--accent);
+            font-size: 0.7rem;
+            cursor: pointer;
+            padding: 0;
+            margin-top: 5px;
+            text-decoration: underline;
+        }
+
+        /* --- Animations --- */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.6;
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+            }
+
+            70% {
+                opacity: 1;
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+
+            100% {
+                opacity: 0.6;
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
+        }
+
+        #ws-badge.disconnected {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+
+        #ws-badge.disconnected .status-dot {
+            background: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+            animation: none;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="logo-area">
+            <div class="logo-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                </svg>
+            </div>
+            <div>
+                <h1>MicroCoreOS</h1>
+                <p style="font-size: 0.7rem; color: var(--text-secondary); font-family: 'JetBrains Mono';">Atomic
+                    Microkernel Dashboard</p>
+            </div>
+        </div>
+        <div id="ws-badge" class="status-badge disconnected">
+            <div class="status-dot"></div>
+            <span id="ws-status">DISCONNECTED</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <main class="system-graph">
+            <div class="section-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+                    </path>
+                </svg>
+                Core Plugins
+            </div>
+            <div id="plugin-grid" class="card-grid">
+                <!-- Plugins injected here -->
+            </div>
+
+            <div class="section-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                        d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z">
+                    </path>
+                </svg>
+                System Tools
+            </div>
+            <div id="tool-grid" class="card-grid">
+                <!-- Tools injected here -->
+            </div>
+        </main>
+
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15.19A1 1 0 0 1 20 16H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10.19z">
+                        </path>
+                        <path d="M12 16v4"></path>
+                        <path d="M8 20h8"></path>
+                    </svg>
+                    Event Stream
+                </span>
+                <button id="clear-events"
+                    style="background:none; border:none; color:var(--text-secondary); cursor:pointer; font-size:0.7rem;">Clear</button>
+            </div>
+            <div id="event-log" class="event-list">
+                <!-- Events injected here -->
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const pluginGrid = document.getElementById('plugin-grid');
+        const toolGrid = document.getElementById('tool-grid');
+        const eventLog = document.getElementById('event-log');
+        const wsBadge = document.getElementById('ws-badge');
+        const wsStatus = document.getElementById('ws-status');
+
+        let systemData = { plugins: {}, tools: {} };
+
+        async function refreshData() {
+            try {
+                const res = await fetch('/api/system/info');
+                const result = await res.json();
+                if (result.success) {
+                    systemData = result.data;
+                    renderSystem(result.data);
+                }
+            } catch (e) { console.error("Refresh failed", e); }
+        }
+
+        function renderSystem(data) {
+            // Render Tools
+            toolGrid.innerHTML = '';
+            Object.entries(data.tools || {}).forEach(([name, info]) => {
+                const card = document.createElement('div');
+                card.className = 'node-card tool';
+                card.id = `tool-${name}`;
+                card.innerHTML = `
+                    <span class="node-name">${name}</span>
+                    <span class="node-type">Infrastructure Tool</span>
+                    <span class="node-status status-${info.status?.toLowerCase()}">${info.status}</span>
+                `;
+                toolGrid.appendChild(card);
+            });
+
+            // Render Plugins
+            pluginGrid.innerHTML = '';
+            Object.entries(data.plugins || {}).forEach(([name, info]) => {
+                const card = document.createElement('div');
+                card.className = 'node-card plugin';
+                card.id = `plugin-${name}`;
+                card.innerHTML = `
+                    <span class="node-name">${name}</span>
+                    <span class="node-type">Domain: ${info.domain || 'core'}</span>
+                    <span class="node-status status-${info.status?.toLowerCase()}">${info.status}</span>
+                `;
+
+                // --- HOVER LOGIC ---
+                card.onmouseenter = () => highlightDependencies(info.dependencies || []);
+                card.onmouseleave = resetHighlight;
+
+                pluginGrid.appendChild(card);
+            });
+        }
+
+        function highlightDependencies(deps) {
+            const allCards = document.querySelectorAll('.node-card');
+            allCards.forEach(c => {
+                const isDep = deps.some(d => c.id === `tool-${d}` || c.id === `plugin-${d}`);
+                if (isDep) {
+                    c.classList.add('highlighted');
+                } else {
+                    c.classList.add('dimmed');
+                }
+            });
+        }
+
+        function resetHighlight() {
+            const allCards = document.querySelectorAll('.node-card');
+            allCards.forEach(c => {
+                c.classList.remove('highlighted', 'dimmed');
+            });
+        }
+
+        function addEvent(name, data) {
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            const now = new Date();
+            const time = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            item.innerHTML = `
+                <div class="event-meta">
+                    <span class="event-tag">${name}</span>
+                    <span class="event-time">${time}</span>
+                </div>
+                <div class="event-msg">System internal activity detected.</div>
+                <button class="event-payload-btn" onclick="alert(JSON.stringify(${JSON.stringify(data).replace(/"/g, '&quot;')}, null, 2))">View Payload</button>
+            `;
+            eventLog.insertBefore(item, eventLog.firstChild);
+            if (eventLog.children.length > 30) eventLog.removeChild(eventLog.lastChild);
+        }
+
+        function connectWS() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const socket = new WebSocket(`${protocol}//${location.host}/ws/events`);
+
+            socket.onopen = () => {
+                wsBadge.classList.remove('disconnected');
+                wsStatus.textContent = "LIVE FEED";
+            };
+
+            socket.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'event') {
+                    addEvent(msg.event, msg.data);
+                    // Smart refresh: only refresh if registry changed (placeholder check)
+                    refreshData();
+                }
+            };
+
+            socket.onclose = () => {
+                wsBadge.classList.add('disconnected');
+                wsStatus.textContent = "DISCONNECTED";
+                setTimeout(connectWS, 3000);
+            };
+        }
+
+        document.getElementById('clear-events').onclick = () => eventLog.innerHTML = '';
+
+        // Init
+        refreshData();
+        connectWS();
+    </script>
+</body>
+
+</html>

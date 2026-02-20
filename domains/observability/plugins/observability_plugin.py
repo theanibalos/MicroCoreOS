@@ -41,6 +41,6 @@ class ObservabilityPlugin(BasePlugin):
         dump["events"] = self._history
         return dump
 
-    def get_system_status(self, data):
+    def get_system_status(self, data: dict, context):
         """Handler for the HTTP endpoint"""
         return self.execute()

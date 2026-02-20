@@ -37,8 +37,8 @@ Automatically generates the AI_CONTEXT.md manifest that serves as a technical ma
 **Interface and Capabilities:**
 ```text
 Enables communication between plugins:
-        - publish(name, data): Fire and forget.
-        - subscribe(name, callback): Listen to events. Use '*' to listen to ALL.
+        - publish(name, data): Fire and forget. 
+        - subscribe(name, callback): Callback receives {_event_name: str, payload: dict}. Use '*' for all.
         - request(name, data, timeout=5): Send and wait for response (RPC).
 ```
 
@@ -47,7 +47,10 @@ Enables communication between plugins:
 ```text
 HTTP Server Tool (http):
         - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, security_guard=None): 
-          Registers a new URL. Supports Pydantic Schemas and generic Safety Guards.
+          Registers a path. The handler MUST accept (data: dict, context: HttpContext).
+        - HttpContext.set_cookie(key, value, max_age=3600, httponly=True, samesite="lax", secure=False, path="/"): 
+          Accessible via the 'context' parameter in the handler.
+        - get_bearer_guard(decoder, cookie_name="access_token"): Returns a hybrid guard (supports Header or Cookie).
         - mount_static(path, directory): Serves static files.
         - add_ws_endpoint(path, handler): Registers a WebSocket endpoint.
 ```
@@ -90,10 +93,10 @@ Access to the Core's Architectural Inventory (Tools, Domains, and Plugins).
 **Interface and Capabilities:**
 ```text
 Identity Tool (identity) - Pure Crypto:
-        - hash_password(password: str) -> str
-        - verify_password(password: str, hashed: str) -> bool
-        - generate_token(data: dict, expires_delta: timedelta = None) -> str
-        - decode_token(token: str) -> dict
+        - hash_password(password): Hashes a plain string using bcrypt_sha256.
+        - verify_password(password, hashed): Verifies a password against a hash.
+        - generate_token(data, expires_delta=None): Generates a JWT token.
+        - decode_token(token): Decodes a JWT token. Raises JWTErrors if invalid.
 ```
 
 ## 📦 Domain Models (Data Structures)
