@@ -29,7 +29,6 @@ These rules are inviolable. Any deviation is a violation of the "Atomic Microker
 3.  **Single-File Clean Architecture**: Each plugin MUST be contained within a single file. Logic, validation, and execution flow should NOT be split.
 4.  **Sovereign Validation**: Use Pydantic models for API schemas and static methods in the `UserModel` for business validation.
 5.  **Return Format**: Always return `{"success": bool, "data": ..., "error": ...}`.
-6.  **Tool Type Hinting (QoL)**: Use `if TYPE_CHECKING:` and string type hints (e.g., `'HttpServerTool'`) in `__init__` EXCLUSIVELY to provide the agent and IDE with autocomplete for Tools. Since there are no cross-domain imports, circular dependencies are impossible by design.
 
 ### Communication & Events
 **The Golden Guard**: Communication between domains is **STRICTLY EVENT-DRIVEN**.

@@ -19,12 +19,13 @@ MicroCoreOS is a modular, asynchronous, and resilient system based on Clean Arch
 To extend the system, follow this pattern:
 
 1. **Create Directory**: `domains/[domain_name]/plugins/`
-2. **Plugin Template**:
+2. **Plugin Template (The Core Pattern)**:
 ```python
 from core.base_plugin import BasePlugin
 
 class MyNewPlugin(BasePlugin):
-    def __init__(self, logger, event_bus, http, db): # Request Tools here
+    def __init__(self, logger, event_bus, http, db):
+        # Tools are injected by name automatically
         self.logger = logger
         self.bus = event_bus
         self.http = http
@@ -32,14 +33,15 @@ class MyNewPlugin(BasePlugin):
 
     def on_boot(self):
         # 1. Routes & Subscriptions ONLY
-        self.http.add_endpoint('/my/path', 'GET', self.my_handler)
+        self.http.add_endpoint('/my/path', 'GET', self.handler)
         self.bus.subscribe('some.event', self.execute)
 
-    def execute(self, data=None): # Core Logic
+    def execute(self, data=None): 
+        # Pattern: Validate -> Process -> Act -> Respond
         self.logger.info('Executing logic...')
-        return {'success': True}
+        return {'success': True, 'data': {}}
 
-    def my_handler(self, data, context):
+    def handler(self, data, context):
         return self.execute(data)
 ```
 
