@@ -21,6 +21,10 @@ These rules are inviolable. Any deviation is a violation of the "Atomic Microker
 
 ## 🏗️ Development Rules
 
+### Environment & Execution
+1.  **Mandatory Runner**: ALWAYS use `uv run main.py`. Do not invoke `python` directly.
+2.  **Manifest Generation**: The system regenerates `AI_CONTEXT.md` on every boot. Ensure the system runs at least once after architectural changes.
+
 ### Plugins & Models
 1.  **Isolation**: Communication between domains MUST be via `event_bus`. No cross-domain imports.
 2.  **Location**: 
@@ -56,7 +60,7 @@ Before interacting with any infrastructure:
 1.  **Identify Domain**: Determine the target domain.
 2.  **Consult Context**: Read `AI_CONTEXT.md` for tool availability.
 3.  **Create Model**: Define Pydantic schemas in `domains/{domain}/models/`.
-4.  **Implement Plugin**: Create the class in a single file, using `TYPE_CHECKING` guards for DI.
+4.  **Implement Plugin**: Create the class in a single file following the architecture rules.
 5.  **Register & Execute**: In `on_boot`, register endpoints with schemas. In `execute`, follow Validate -> Process -> Act -> Respond.
 
 ## 📂 Supplementary Information
