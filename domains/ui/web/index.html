@@ -1070,9 +1070,17 @@
                 let edges = [];
                 let addedPlugins = new Set();
 
+                // Separate RPC reply events from normal events
+                const replyEvents = new Set();
                 family.forEach(evt => {
+                    if (evt.event_name.startsWith('reply.')) replyEvents.add(evt.id);
+                });
+
+                family.forEach(evt => {
+                    // Skip RPC reply events — they'll be rendered as return edges
+                    if (replyEvents.has(evt.id)) return;
+
                     // Filter logic: if the emitter is hidden, skip drawing it 
-                    // (Note: its subscribers might still belong to other events if complex, but usually we just hide the whole chain)
                     if (hideRt && evt.emitter === 'RealTimeBridgePlugin') return;
                     if (hideObs && evt.emitter === 'ObservabilityPlugin') return;
 
@@ -1120,19 +1128,23 @@
                         margin: 14
                     });
 
-                    // Edge: Emitter -> Event
+                    // Edge: Emitter -> Event (animated)
                     edges.push({
                         from: evt.emitter,
                         to: eventNodeId,
                         arrows: { to: { enabled: true, scaleFactor: 0.6 } },
                         smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
                         color: { color: '#52525b', highlight: '#fbbf24' },
-                        width: 2
+                        width: 2,
+                        animate: true
                     });
 
-                    // Subscribers
+                    // Subscribers (skip self-referencing: emitter == subscriber)
                     if (visibleSubscribers.length > 0) {
                         visibleSubscribers.forEach(sub => {
+                            // Skip self-subscriber to prevent visual loops (e.g. ObservabilityPlugin subscribes to *)
+                            if (sub === evt.emitter) return;
+
                             if (!addedPlugins.has(sub)) {
                                 nodes.push({
                                     id: sub,
@@ -1148,7 +1160,7 @@
                                 addedPlugins.add(sub);
                             }
 
-                            // Edge: Event -> Subscriber (Using dashes to simulate flow animation)
+                            // Edge: Event -> Subscriber (animated, dashed)
                             edges.push({
                                 from: eventNodeId,
                                 to: sub,
@@ -1156,13 +1168,98 @@
                                 smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
                                 color: { color: '#52525b', highlight: '#fbbf24' },
                                 width: 2,
-                                dashes: [4, 4]
+                                dashes: [4, 4],
+                                animate: true
                             });
                         });
                     }
 
-                    // Parent causality link
-                    if (evt.parent_id) {
+                    // RPC Reply: render as linear flow [B] → [⚡reply] → [A'] (duplicate A at the end)
+                    const replyChildren = [...family].filter(child =>
+                        child.parent_id === evt.id && child.event_name.startsWith('reply.')
+                    );
+                    replyChildren.forEach(reply => {
+                        const responder = reply.emitter;
+                        const requesters = (reply.subscribers || []).filter(s => {
+                            if (hideRt && s === 'RealTimeBridgePlugin') return false;
+                            if (hideObs && s === 'ObservabilityPlugin') return false;
+                            return true;
+                        });
+
+                        // Ensure responder node exists
+                        if (!addedPlugins.has(responder)) {
+                            nodes.push({
+                                id: responder,
+                                label: responder,
+                                shape: 'box',
+                                color: { background: '#18181b', border: '#10b981' },
+                                font: { color: '#e4e4e7', face: 'Inter, sans-serif', size: 14, bold: true },
+                                borderWidth: 2,
+                                shadow: { enabled: true, color: 'rgba(16, 185, 129, 0.15)', size: 15, x: 0, y: 5 },
+                                shapeProperties: { borderRadius: 8 },
+                                margin: 16
+                            });
+                            addedPlugins.add(responder);
+                        }
+
+                        // Reply event pill node (like a normal event but green-tinted)
+                        const replyD = new Date(reply.timestamp * 1000);
+                        const replyTm = replyD.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + replyD.getMilliseconds();
+                        const replyNodeId = `evt_reply_${reply.id}`;
+                        nodes.push({
+                            id: replyNodeId,
+                            label: `↩ reply\n${replyTm}`,
+                            shape: 'box',
+                            color: { background: '#064e3b', border: '#10b981' },
+                            font: { color: '#6ee7b7', face: 'JetBrains Mono', size: 12 },
+                            borderWidth: 2,
+                            shadow: { enabled: true, color: 'rgba(16, 185, 129, 0.3)', size: 15, x: 0, y: 0 },
+                            shapeProperties: { borderRadius: 24 },
+                            margin: 12
+                        });
+
+                        // Edge: B (responder) → reply event pill (animated)
+                        edges.push({
+                            from: responder,
+                            to: replyNodeId,
+                            arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                            smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
+                            color: { color: '#10b981', highlight: '#34d399' },
+                            width: 2,
+                            animate: true
+                        });
+
+                        // For each requester, create a DUPLICATE node of A at the end
+                        requesters.forEach(req => {
+                            const duplicateId = `${req}_reply_${reply.id}`;
+                            nodes.push({
+                                id: duplicateId,
+                                label: `${req}\n(received)`,
+                                shape: 'box',
+                                color: { background: '#18181b', border: '#8b5cf6' },
+                                font: { color: '#c4b5fd', face: 'Inter, sans-serif', size: 13 },
+                                borderWidth: 2,
+                                shadow: { enabled: true, color: 'rgba(139, 92, 246, 0.15)', size: 15, x: 0, y: 5 },
+                                shapeProperties: { borderRadius: 8 },
+                                margin: 14
+                            });
+
+                            // Edge: reply pill → A' duplicate (animated, dashed)
+                            edges.push({
+                                from: replyNodeId,
+                                to: duplicateId,
+                                arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                                smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
+                                color: { color: '#10b981', highlight: '#34d399' },
+                                width: 2,
+                                dashes: [4, 4],
+                                animate: true
+                            });
+                        });
+                    });
+
+                    // Parent causality link (NOT animated — no particles)
+                    if (evt.parent_id && !replyEvents.has(evt.parent_id)) {
                         const parentEventNodeId = `evt_${evt.parent_id}`;
                         edges.push({
                             from: parentEventNodeId,
@@ -1173,7 +1270,8 @@
                             width: 1,
                             dashes: true,
                             label: 'causes',
-                            font: { color: '#71717a', size: 10, align: 'horizontal' }
+                            font: { color: '#71717a', size: 10, align: 'horizontal' },
+                            animate: false
                         });
                     }
                 });
@@ -1190,18 +1288,30 @@
                 }
                 network = new vis.Network(container, data, options);
 
-                // Flow animation trick using canvas beforeDrawing
-                let particleOffset = 0;
+                // Flow animation: multiple staggered particles flowing one-way only
+                const PARTICLE_COUNT = 3;       // Number of particles per edge
+                const PARTICLE_SPEED = 0.004;   // Speed per frame
+                const FADE_ZONE = 0.15;         // Fade in/out zone at edges
+
+                // Initialize staggered offsets so particles are evenly spaced
+                let particleOffsets = [];
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    particleOffsets.push(i / PARTICLE_COUNT);
+                }
 
                 network.on("afterDrawing", function (ctx) {
-                    particleOffset += 0.005; // Particle speed (slower)
-                    if (particleOffset > 1) particleOffset -= 1;
+                    // Advance each particle forward, wrap around when > 1
+                    for (let i = 0; i < particleOffsets.length; i++) {
+                        particleOffsets[i] += PARTICLE_SPEED;
+                        if (particleOffsets[i] > 1) particleOffsets[i] -= 1;
+                    }
 
-                    // Draw particles along edges
-                    const edgePositions = network.getPositions();
                     const edgesData = network.body.data.edges.get();
 
                     edgesData.forEach(edge => {
+                        // Only animate edges explicitly tagged for animation
+                        if (!edge.animate) return;
+
                         const fromNode = network.body.nodes[edge.from];
                         const toNode = network.body.nodes[edge.to];
 
@@ -1225,7 +1335,6 @@
                             } else {
                                 ctx.rect(bbox.left, bbox.top, bbox.right - bbox.left, bbox.bottom - bbox.top);
                             }
-                            // Much more subtle glow
                             ctx.strokeStyle = `rgba(${rgb}, ${intensity * 0.4})`;
                             ctx.lineWidth = 2;
                             ctx.shadowColor = `rgb(${rgb})`;
@@ -1236,47 +1345,53 @@
                             ctx.closePath();
                         }
 
-                        // 1. Illuminate Emitter on particle launch (0.0 to 0.2)
-                        if (particleOffset < 0.2) {
-                            drawNodeGlow(fromNode, 1 - (particleOffset / 0.2));
-                        }
-
-                        // 2. Illuminate Subscriber on particle arrival (0.8 to 1.0)
-                        if (particleOffset > 0.8) {
-                            drawNodeGlow(toNode, (particleOffset - 0.8) / 0.2);
-                        }
-
-                        // Calculate bezier curve points internally based on vis.js physics
-                        // Vis.js edges have a custom 'edgeType' property that manages the curves
                         const edgeView = network.body.edges[edge.id];
-                        if (edgeView && edgeView.edgeType && edgeView.edgeType.getPoint) {
-                            // Get exactly the point on the curve at the current offset (0.0 to 1.0)
-                            const point = edgeView.edgeType.getPoint(particleOffset);
+                        if (!edgeView || !edgeView.edgeType || !edgeView.edgeType.getPoint) return;
 
-                            if (point) {
-                                ctx.beginPath();
-                                ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
-                                ctx.fillStyle = '#fbbf24'; // Warning yellow glow
-                                ctx.shadowColor = '#f59e0b';
-                                ctx.shadowBlur = 15;
-                                ctx.shadowOffsetX = 0;
-                                ctx.shadowOffsetY = 0;
-                                ctx.fill();
-                                ctx.closePath();
-
-                                // Draw a smaller bright core
-                                ctx.beginPath();
-                                ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
-                                ctx.fillStyle = '#ffffff';
-                                ctx.shadowBlur = 0;
-                                ctx.fill();
-                                ctx.closePath();
+                        // Draw each staggered particle
+                        particleOffsets.forEach(offset => {
+                            // Calculate opacity: fade in at start, full in middle, fade out at end
+                            let alpha = 1.0;
+                            if (offset < FADE_ZONE) {
+                                alpha = offset / FADE_ZONE;
+                            } else if (offset > (1 - FADE_ZONE)) {
+                                alpha = (1 - offset) / FADE_ZONE;
                             }
-                        }
+
+                            // Node glow on nearest particle arrival/departure
+                            if (offset < FADE_ZONE) {
+                                drawNodeGlow(fromNode, 1 - (offset / FADE_ZONE));
+                            }
+                            if (offset > (1 - FADE_ZONE)) {
+                                drawNodeGlow(toNode, (offset - (1 - FADE_ZONE)) / FADE_ZONE);
+                            }
+
+                            const point = edgeView.edgeType.getPoint(offset);
+                            if (!point) return;
+
+                            // Outer glow
+                            ctx.beginPath();
+                            ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                            ctx.fillStyle = `rgba(251, 191, 36, ${alpha})`;
+                            ctx.shadowColor = `rgba(245, 158, 11, ${alpha})`;
+                            ctx.shadowBlur = 15 * alpha;
+                            ctx.shadowOffsetX = 0;
+                            ctx.shadowOffsetY = 0;
+                            ctx.fill();
+                            ctx.closePath();
+
+                            // Bright core
+                            ctx.beginPath();
+                            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                            ctx.shadowBlur = 0;
+                            ctx.fill();
+                            ctx.closePath();
+                        });
                     });
                 });
 
-                // Force continuous redraw for the dashes and particle animation
+                // Force continuous redraw for the particle animation
                 function animateFlow() {
                     if (document.getElementById('vis-container')) {
                         network.redraw();

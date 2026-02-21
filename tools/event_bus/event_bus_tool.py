@@ -1,164 +1,225 @@
 import collections
+import sys
 import time
-import inspect
 import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from core.base_tool import BaseTool
 
+
 class EventBusTool(BaseTool):
+    """
+    Core Event Bus — Pub/Sub & Sync RPC.
+    
+    Clean, zero-boilerplate communication backbone for MicroCoreOS.
+    Emitter is auto-detected from the caller's class (single frame lookup).
+    
+    Contract:
+        publish(event_name, data)
+        subscribe(event_name, callback)      # callback(data, event_name)
+        unsubscribe(event_name, callback)
+        request(event_name, data, timeout=5) -> response
+        get_trace_history() -> list[dict]
+    """
+
     def __init__(self):
         self._subscribers = {}
         self._lock = threading.Lock()
-        # Create a thread pool to process events without saturating the system
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="BusWorker")
-        # Internal tracer for debugging and visualization
-        self._tracer_log = collections.deque(maxlen=500) # Increased to keep more history including logs
-        self._local = threading.local()
+        self._trace_log = collections.deque(maxlen=500)
+        self._local = threading.local()  # Thread-local for parent_id causality tracking
 
     @property
     def name(self) -> str:
         return "event_bus"
 
-    def get_trace_history(self):
-        """Returns the chronological history of the last 100 events."""
-        with self._lock:
-            return list(self._tracer_log)
-
     def setup(self):
-        print("[System] EventBusTool: Ready to orchestrate events with ThreadPool (max=10).")
+        print("[System] EventBusTool: Online.")
 
     def get_interface_description(self) -> str:
         return """
         Event Bus Tool (event_bus):
-        - PURPOSE: Orchestrate asynchronous communication between isolated domains.
-        - IDEAL FOR: Side effects (notifications, logs) and cross-domain RPC requests.
+        - PURPOSE: Centralized pub/sub & RPC communication between plugins.
         - CAPABILITIES:
-            - publish(name, data): Fire and forget event. 
-            - subscribe(name, callback): Listens for events. Callback receives {_event_name, payload}.
-            - request(name, data, timeout=5): Synchronous Request-Response (RPC) over events.
+            - publish(event_name, data): Fire an asynchronous event. Emitter auto-detected.
+            - subscribe(event_name, callback): Listen to events. Use '*' for all. Callback: callback(data, event_name).
+            - unsubscribe(event_name, callback): Stop listening.
+            - request(event_name, data, timeout=5): Synchronous RPC call. Returns the handler's return value.
+            - get_trace_history(): Returns list of traced events for observability.
         """
 
+    # ─── Public API ───────────────────────────────────────────
+
     def subscribe(self, event_name, callback):
+        """Register a callback for an event. Use '*' to listen to all events."""
         with self._lock:
-            if event_name not in self._subscribers:
-                self._subscribers[event_name] = []
-            self._subscribers[event_name].append(callback)
+            self._subscribers.setdefault(event_name, []).append(callback)
+
+    def unsubscribe(self, event_name, callback):
+        """Remove a specific callback from an event."""
+        with self._lock:
+            if event_name in self._subscribers:
+                self._subscribers[event_name] = [
+                    cb for cb in self._subscribers[event_name] if cb is not callback
+                ]
+                if not self._subscribers[event_name]:
+                    del self._subscribers[event_name]
 
     def publish(self, event_name, data):
-        with self._lock:
-            # Capture current list to avoid concurrency issues when iterating
-            callbacks = list(self._subscribers.get(event_name, []))
-            # Add wildcard '*' subscribers
-            callbacks += list(self._subscribers.get('*', []))
-            
-        # Enrich the payload with event metadata
-        enriched_data = {
-            "_event_name": event_name,
-            "payload": data
-        }
+        """
+        Fire-and-forget event dispatch.
+        Emitter is auto-detected from the caller. No boilerplate needed.
+        """
+        emitter = self._detect_caller()
 
-        # Track correlation
+        callbacks, wildcard_callbacks = self._collect_callbacks(event_name)
+
         event_id = str(uuid.uuid4())
         parent_id = getattr(self._local, 'current_event_id', None)
 
-        # Record trace (ignore internal reply events to avoid noise)
-        if not event_name.startswith("reply."):
-            # 1. Detect Emitter magically using inspect stack
-            emitter = "Unknown"
-            try:
-                # stack[0] is publish, stack[1] is the caller
-                caller_frame = inspect.stack()[1][0]
-                if 'self' in caller_frame.f_locals:
-                    emitter = caller_frame.f_locals['self'].__class__.__name__
-                else:
-                    mod = inspect.getmodule(caller_frame)
-                    if mod:
-                        emitter = mod.__name__
-            except Exception:
-                pass
+        all_callbacks = callbacks + wildcard_callbacks
+        self._record_trace(event_id, parent_id, event_name, emitter, data, all_callbacks)
 
-            # 2. Detect Subscribers
-            subscriber_names = []
+        # Dispatch — no RPC reply routing for regular publish
+        for cb in all_callbacks:
+            self._executor.submit(self._dispatch, cb, data, event_name, event_id)
+
+    def request(self, event_name, data, timeout=5):
+        """
+        Synchronous RPC over the EventBus.
+        Publishes the event, waits for the first handler to return a value,
+        and routes it back to the caller.
+        """
+        emitter = self._detect_caller()
+        reply_event = f"reply.{event_name}.{uuid.uuid4().hex[:8]}"
+
+        container = {"result": None}
+        ready = threading.Event()
+
+        def _reply_handler(reply_data, _event_name):
+            container["result"] = reply_data
+            ready.set()
+
+        # Tag for trace subscriber name resolution
+        _reply_handler._subscriber_name = emitter
+
+        self.subscribe(reply_event, _reply_handler)
+        try:
+            callbacks, wildcard_callbacks = self._collect_callbacks(event_name)
+
+            event_id = str(uuid.uuid4())
+            parent_id = getattr(self._local, 'current_event_id', None)
+
+            all_callbacks = callbacks + wildcard_callbacks
+            self._record_trace(event_id, parent_id, event_name, emitter, data, all_callbacks)
+
+            # Only direct subscribers can produce RPC replies (not wildcard listeners)
             for cb in callbacks:
-                sub_name = "UnknownPlugin"
-                if hasattr(cb, '__self__'):
-                    sub_name = cb.__self__.__class__.__name__
-                elif hasattr(cb, '__qualname__'):
-                    sub_name = cb.__qualname__.split('.')[0]
-                elif hasattr(cb, '__name__'):
-                    sub_name = cb.__name__
-                if sub_name not in subscriber_names:
-                    subscriber_names.append(sub_name)
+                self._executor.submit(
+                    self._dispatch, cb, data, event_name, event_id,
+                    reply_event=reply_event
+                )
+            for cb in wildcard_callbacks:
+                self._executor.submit(self._dispatch, cb, data, event_name, event_id)
 
-            self._tracer_log.append({
+            if not ready.wait(timeout):
+                raise TimeoutError(f"RPC Timeout: '{event_name}'")
+            return container["result"]
+        finally:
+            self.unsubscribe(reply_event, _reply_handler)
+
+    def get_trace_history(self):
+        """Return a copy of the event trace log for dashboard/observability."""
+        with self._lock:
+            return list(self._trace_log)
+
+    # ─── Internal ─────────────────────────────────────────────
+
+    @staticmethod
+    def _detect_caller():
+        """
+        Auto-detect who called publish/request.
+        Uses sys._getframe(2) — single frame lookup, NOT a stack walk.
+        Frame 0 = _detect_caller, Frame 1 = publish/request, Frame 2 = the actual caller.
+        """
+        try:
+            frame = sys._getframe(2)
+            caller_self = frame.f_locals.get('self')
+            if caller_self is not None:
+                return caller_self.__class__.__name__
+        except (ValueError, AttributeError):
+            pass
+        return "Unknown"
+
+    def _collect_callbacks(self, event_name):
+        """Safely collect direct + wildcard callbacks under lock."""
+        with self._lock:
+            direct = list(self._subscribers.get(event_name, []))
+            wildcard = list(self._subscribers.get('*', []))
+        return direct, wildcard
+
+    def _dispatch(self, callback, data, event_name, event_id, reply_event=None):
+        """Execute a single callback in a worker thread."""
+        self._local.current_event_id = event_id
+        try:
+            result = callback(data, event_name)
+
+            # RPC auto-reply: if a reply_event is set and callback returned a value
+            if reply_event is not None and result is not None:
+                cb_name = self._get_subscriber_name(callback)
+                # Publish reply — emitter detected as the callback's owner
+                self._publish_reply(reply_event, result, cb_name)
+
+        except Exception as e:
+            cb_name = getattr(callback, "__name__", "callback")
+            print(f"[EventBus] Error in {cb_name} for '{event_name}': {e}")
+        finally:
+            self._local.current_event_id = None
+
+    def _publish_reply(self, event_name, data, emitter):
+        """Internal publish for RPC replies — emitter is already known, no frame detection."""
+        callbacks, wildcard_callbacks = self._collect_callbacks(event_name)
+
+        event_id = str(uuid.uuid4())
+        parent_id = getattr(self._local, 'current_event_id', None)
+
+        all_callbacks = callbacks + wildcard_callbacks
+        self._record_trace(event_id, parent_id, event_name, emitter, data, all_callbacks)
+
+        for cb in all_callbacks:
+            self._executor.submit(self._dispatch, cb, data, event_name, event_id)
+
+    def _record_trace(self, event_id, parent_id, event_name, emitter, data, callbacks):
+        """Record an event trace entry for observability."""
+        subscribers = []
+        for cb in callbacks:
+            name = self._get_subscriber_name(cb)
+            if name not in subscribers:
+                subscribers.append(name)
+
+        payload_keys = list(data.keys()) if isinstance(data, dict) else []
+
+        with self._lock:
+            self._trace_log.append({
                 "id": event_id,
                 "parent_id": parent_id,
                 "timestamp": time.time(),
                 "event_name": event_name,
                 "emitter": emitter,
-                "subscribers": subscriber_names,
-                "payload_keys": list(data.keys()) if isinstance(data, dict) else []
+                "subscribers": subscribers,
+                "payload_keys": payload_keys,
             })
 
-        for callback in callbacks:
-            def safe_callback_execution(cb, payload, eid):
-                # Restore correlation context in the worker thread
-                prev_eid = getattr(self._local, 'current_event_id', None)
-                self._local.current_event_id = eid
-                try:
-                    cb(payload)
-                except Exception as e:
-                    print(f"[EventBus] Error in subscriber for {event_name}: {e}")
-                finally:
-                    self._local.current_event_id = prev_eid
-
-            # Submit work to thread pool
-            self._executor.submit(safe_callback_execution, callback, enriched_data, event_id)
+    @staticmethod
+    def _get_subscriber_name(callback):
+        """Resolve the human-readable name of a callback. No stack inspection."""
+        if hasattr(callback, '_subscriber_name'):
+            return callback._subscriber_name
+        if hasattr(callback, '__self__'):
+            return callback.__self__.__class__.__name__
+        if hasattr(callback, '__qualname__'):
+            return callback.__qualname__.split('.')[0]
+        return "func"
 
     def shutdown(self):
-        """Orderly shutdown of the thread pool"""
-        print("[EventBus] Closing ThreadPool...")
         self._executor.shutdown(wait=False)
-
-    def request(self, event_name, data, timeout=5):
-        """
-        Sends an event and waits for a response using a unique Correlation ID.
-        """
-        correlation_id = str(uuid.uuid4())
-        reply_to = f"reply.{event_name}.{correlation_id[:8]}"
-        
-        # Inject control metadata
-        data["_metadata"] = {
-            "correlation_id": correlation_id,
-            "reply_to": reply_to
-        }
-
-        response_container = {"data": None}
-        event_ready = threading.Event()
-
-        def response_handler(payload):
-            meta = payload.get("_metadata", {})
-            if meta.get("correlation_id") == correlation_id:
-                response_container["data"] = payload
-                event_ready.set()
-
-        # Subscribe to temporary reply channel
-        self.subscribe(reply_to, response_handler)
-
-        try:
-            # Launch the request
-            self.publish(event_name, data)
-
-            # Wait for the response
-            if not event_ready.wait(timeout):
-                raise TimeoutError(f"Timeout waiting for response from '{event_name}' ({timeout}s)")
-
-            return response_container["data"]
-        finally:
-            # Cleanup: remove temporary subscriber
-            with self._lock:
-                if reply_to in self._subscribers:
-                    self._subscribers[reply_to].remove(response_handler)
-                    if not self._subscribers[reply_to]:
-                        del self._subscribers[reply_to]

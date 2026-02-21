@@ -1,23 +1,31 @@
 from core.base_tool import BaseTool
 import datetime
+from typing import List, Callable
 
 class LoggerTool(BaseTool):
+    """
+    Autonomous Logging Tool.
+    Pure and isolated: No dependencies on other tools (like EventBus).
+    Uses a Sink Pattern for external tools/plugins to observe logs.
+    """
     def __init__(self):
-        self._event_bus = None
+        self._sinks: List[Callable[[str, str, str], None]] = []
 
     @property
     def name(self) -> str:
         return "logger"
 
     def setup(self):
-        """Logger initialization (simple console output)"""
-        print("[System] LoggerTool initialized successfully.")
+        """Logger initialization."""
+        print("[System] LoggerTool initialized successfully (Sink Pattern active).")
 
-    def on_boot_complete(self, container):
-        """Get the event_bus to publish logs as observable events."""
-        if container.has_tool("event_bus"):
-            self._event_bus = container.get("event_bus")
-            print("[Logger] Connected to EventBus for observability.")
+    def add_sink(self, callback: Callable[[str, str, str], None]):
+        """
+        Registers an external callback to receive all system logs.
+        Allows plugins to bridge logs to EventBus or external APIs.
+        """
+        if callback not in self._sinks:
+            self._sinks.append(callback)
 
     def get_interface_description(self) -> str:
         return """
@@ -27,27 +35,27 @@ class LoggerTool(BaseTool):
             - info(message): General information.
             - error(message): Critical failures.
             - warning(message): Non-critical alerts.
-        - NOTE: All logs are automatically mirrored to the Event Bus ('system.log').
+            - add_sink(callback): Connect external observability (e.g. to EventBus).
         """
 
-    def _publish_log(self, level: str, message: str):
-        """Publishes the log to event_bus if available."""
-        if self._event_bus:
-            self._event_bus.publish("system.log", {
-                "level": level,
-                "message": message,
-                "timestamp": datetime.datetime.now().isoformat()
-            })
+    def _broadcast_to_sinks(self, level: str, message: str):
+        """Sends the log to all registered observers."""
+        timestamp = datetime.datetime.now().isoformat()
+        for sink in self._sinks:
+            try:
+                sink(level, message, timestamp)
+            except Exception as e:
+                # We use print here to avoid recursion if a sink fails
+                print(f"[Logger] Sink Failure: {e}")
 
-    # Functional methods that plugins will use
     def info(self, message: str):
         print(f"[{datetime.datetime.now()}] [INFO] {message}")
-        self._publish_log("INFO", message)
+        self._broadcast_to_sinks("INFO", message)
 
     def error(self, message: str):
         print(f"[{datetime.datetime.now()}] [ERROR] {message}")
-        self._publish_log("ERROR", message)
+        self._broadcast_to_sinks("ERROR", message)
 
     def warning(self, message: str):
         print(f"[{datetime.datetime.now()}] [WARN] {message}")
-        self._publish_log("WARN", message)
+        self._broadcast_to_sinks("WARN", message)

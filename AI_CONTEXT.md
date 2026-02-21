@@ -19,18 +19,23 @@ Configuration Tool (config):
 
 ### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
-Automatically generates the AI_CONTEXT.md manifest that serves as a technical manual for AI.
+Context Manager Tool (context_manager):
+        - PURPOSE: Automatically manages and generates live AI contextual documentation.
+        - CAPABILITIES:
+            - Reads the system registry.
+            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
 ```
 
 ### 🔧 Tool: `event_bus` (Status: ✅)
 ```text
 Event Bus Tool (event_bus):
-        - PURPOSE: Orchestrate asynchronous communication between isolated domains.
-        - IDEAL FOR: Side effects (notifications, logs) and cross-domain RPC requests.
+        - PURPOSE: Centralized pub/sub & RPC communication between plugins.
         - CAPABILITIES:
-            - publish(name, data): Fire and forget event. 
-            - subscribe(name, callback): Listens for events. Callback receives {_event_name, payload}.
-            - request(name, data, timeout=5): Synchronous Request-Response (RPC) over events.
+            - publish(event_name, data): Fire an asynchronous event. Emitter auto-detected.
+            - subscribe(event_name, callback): Listen to events. Use '*' for all. Callback: callback(data, event_name).
+            - unsubscribe(event_name, callback): Stop listening.
+            - request(event_name, data, timeout=5): Synchronous RPC call. Returns the handler's return value.
+            - get_trace_history(): Returns list of traced events for observability.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
@@ -52,7 +57,7 @@ Logging Tool (logger):
             - info(message): General information.
             - error(message): Critical failures.
             - warning(message): Non-critical alerts.
-        - NOTE: All logs are automatically mirrored to the Event Bus ('system.log').
+            - add_sink(callback): Connect external observability (e.g. to EventBus).
 ```
 
 ### 🔧 Tool: `state` (Status: ✅)
@@ -99,6 +104,9 @@ SQLite Persistence Tool (db):
 
 ## 📦 Domain Models
 Active data structures. Use these in `request_model`/`response_model`.
+
+### 🧩 Domain `orders`
+- Model: `order_model.py`
 
 ### 🧩 Domain `products`
 - Model: `products_model.py`

@@ -21,15 +21,26 @@ class ObservabilityPlugin(BasePlugin):
         # Subscribe to ALL events for the Tracer
         self.bus.subscribe("*", self._trace_event)
         
+        # Bridge logger to EventBus for full visibility
+        self.logger.add_sink(self._bridge_log_to_bus)
+        
         self.logger.info("Observability Plugin active at /obs/system. Event tracer enabled.")
 
-    def _trace_event(self, enriched_data):
+    def _bridge_log_to_bus(self, level, message, timestamp):
+        """Callback from LoggerTool. Forwards log events into the EventBus"""
+        self.bus.publish("system.log", {
+            "level": level,
+            "message": message,
+            "timestamp": timestamp
+        })
+
+    def _trace_event(self, data, event_name):
         """Captures events for the internal history buffer"""
         from datetime import datetime
         event_entry = {
             "timestamp": datetime.now().isoformat(),
-            "event": enriched_data.get("_event_name"),
-            "payload": str(enriched_data.get("payload"))[:200] # Truncate for safety
+            "event": event_name,
+            "payload": str(data)[:200]  # Truncate for safety
         }
         self._history.append(event_entry)
         if len(self._history) > self.MAX_HISTORY:

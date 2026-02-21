@@ -1,14 +1,18 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 
 class BasePlugin(ABC):
 
     def on_boot(self):
         """
-        Optional: Executed when the plugin is loaded.
-        Ideal for subscribing to events.
+        Lifecycle hook: executed when the plugin is loaded.
+        Register endpoints, event subscriptions, etc.
         """
         pass
 
-    @abstractmethod
-    def execute(self, data: dict, context=None):
-        pass
+    def execute(self, data: dict = None, context=None):
+        """
+        Optional entry point. Override only if the plugin has a
+        single primary action (e.g., an HTTP handler).
+        Event-driven plugins can skip this entirely.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement execute()")

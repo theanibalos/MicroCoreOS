@@ -20,12 +20,10 @@ class WelcomeEmailPlugin(BasePlugin):
         self.bus.subscribe("users.created", self.execute)
         self.logger.info("WelcomeEmailPlugin: Default event 'users.created' subscribed.")
 
-    def execute(self, payload: dict):
-        # 1. Core Logic (Simulating Email Sending)
-        # Payload comes from EventBusTool enriched data {"_event_name": "...", "payload": {...}}
-        user_data = payload.get("payload", {})
-        user_name = user_data.get("name", "Unknown User")
-        user_email = user_data.get("email", "unknown@example.com")
+    def execute(self, data: dict, event_name: str):
+        # data arrives CLEAN — directly what was published
+        user_name = data.get("name", "Unknown User")
+        user_email = data.get("email", "unknown@example.com")
         
         self.logger.info(f"WelcomeEmailPlugin: Preparing to send welcome email to {user_name} ({user_email})...")
         time.sleep(1.5) # Simulate SMTP delay

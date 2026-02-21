@@ -84,11 +84,11 @@ class Kernel:
                 t_name = instance.name
                 instance.setup()
                 self.container.register(instance)
-                self.container.set_health(t_name, Container.STATUS_OK)
+                self.container.registry.register_tool(t_name, "OK")
             except Exception as e:
                 # Capture name without full instantiation if possible
                 t_name = getattr(tool_cls, 'name', tool_cls.__name__)
-                self.container.set_health(t_name, Container.STATUS_FAIL, str(e))
+                self.container.registry.register_tool(t_name, "FAIL", str(e))
                 print(f"[Kernel] 🚨 Tool '{t_name}' failed: {e}")
 
         # 2. Boot Plugins

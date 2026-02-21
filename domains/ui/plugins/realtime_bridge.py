@@ -12,7 +12,7 @@ class RealTimeBridgePlugin(BasePlugin):
         self.bus = event_bus
         self.logger = logger
         self._clients = []  # List of active websockets
-        self._lock = asyncio.Lock()
+        self._lock = None   # Initialized inside the event loop
         self._loop = None   # FastAPI's loop (captured when first client connects)
 
     def on_boot(self):
@@ -29,6 +29,9 @@ class RealTimeBridgePlugin(BasePlugin):
         # Capture the loop from the first connection (which is FastAPI's loop)
         if not self._loop:
             self._loop = asyncio.get_event_loop()
+            
+        if self._lock is None:
+            self._lock = asyncio.Lock()
 
         async with self._lock:
             self._clients.append(websocket)
@@ -47,16 +50,13 @@ class RealTimeBridgePlugin(BasePlugin):
                     self._clients.remove(websocket)
             self.logger.info(f"[WS] Client disconnected. Total: {len(self._clients)}")
 
-    def _on_system_event(self, enriched_data):
+    def _on_system_event(self, data, event_name):
         """Callback when any event occurs in the system."""
-        event_name = enriched_data.get("_event_name", "unknown")
-        payload = enriched_data.get("payload", {})
-        
         # Prepare JSON message for the frontend
         message = json.dumps({
             "type": "event",
             "event": event_name,
-            "data": self._serialize_payload(payload)
+            "data": self._serialize_payload(data)
         })
         
         # Send to all connected clients
