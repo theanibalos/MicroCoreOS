@@ -63,19 +63,17 @@ These rules are inviolable. Any deviation is a violation of the "Atomic Microker
     - `setup()`: Internal tool initialization.
     - `on_boot_complete(container)`: Actions that require the full system to be online.
 
-### Lifecycle Protocol
-1.  **Allocation Phase (`setup`)**: Tools MUST initialize resources here.
-2.  **DI Phase (`__init__`)**: Plugins MUST only save tool references here. No logic.
-3.  **Registration Phase (`on_boot`)**: Plugins MUST register routes and event listeners here.
-4.  **Action Phase (`execute`)**: Standard entry point for business logic.
-5.  **Orchestration Phase (`on_boot_complete`)**: Tools may interact with the full container here.
+### Lifecycle Protocol (Enforcement)
+1.  **Strict Phase Separation**: Never execute business logic in `__init__` or `setup`.
+2.  **No Logic in Init**: `__init__` is for DI only.
+3.  **No Logic in Setup**: `setup` is for infrastructure resources only.
+4.  **Action Entry**: All plugin activity MUST start in `execute()` or from an `on_boot()` registration.
 
 ### Step-by-Step for Creating a Plugin
-1.  **Identify Domain**: Determine the target domain.
-2.  **Consult Context**: Read `AI_CONTEXT.md` for tool availability.
-3.  **Create Model**: Define Pydantic schemas in `domains/{domain}/models/`.
-4.  **Implement Plugin**: Create the class in a single file following the architecture rules.
-5.  **Register & Execute**: In `on_boot`, register endpoints with schemas. In `execute`, follow Validate -> Process -> Act -> Respond.
+1.  **Consult Inventory**: Read `AI_CONTEXT.md` for live tools/models.
+2.  **Refer to Manual**: Read `INSTRUCTIONS_FOR_AI.md` for the template.
+3.  **Implementation**: Create the single file in `domains/{domain}/plugins/`.
+4.  **Verification**: Run `uv run main.py` to test and regenerate manifest.
 
 ## 📂 Supplementary Information
 For detailed agent persona and behavioral refinement, refer to [agent.md](./agent.md).

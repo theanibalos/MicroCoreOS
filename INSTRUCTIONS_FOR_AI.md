@@ -11,14 +11,12 @@ This guide is an "Interface Router" for AI agents. Do not read the whole documen
 
 ---
 
-## 🧩 New Domain (Functional Area)
-When creating a new domain (e.g., `billing`, `inventory`):
-1. **Root**: `domains/{name}/`
-2. **Markers**: Create `__init__.py` in the root.
-3. **Hierarchy**:
-   - `domains/{name}/models/`: Pydantic schemas and domain models.
-   - `domains/{name}/plugins/`: Interaction logic and features.
-4. **Encapsulation**: Domains **MUST NOT** import from each other. Use `event_bus`.
+## 🧩 New Domain Hierarchy
+Ensure compliance with the folder structure:
+- `domains/{name}/__init__.py`
+- `domains/{name}/models/`: Pydantic schemas.
+- `domains/{name}/plugins/`: Business logic.
+*Domains MUST NOT import from each other.*
 
 ---
 
@@ -58,10 +56,40 @@ class MyPlugin(BasePlugin):
 ---
 
 ## 🔧 New Tool (Infrastructure)
-**Goal**: Add technical capabilities.
+**Goal**: Add new technical capabilities to the system.
 1. **Location**: `tools/{name}/`
-2. **Simple Tool**: Single file `{name}_tool.py` inside the folder.
-3. **Complex Tool**: Use subfolders for migrations/configs if needed.
+2. **Structure**: Entry point MUST be `{name}_tool.py` at the root of the folder.
+3. **Template**:
+
+```python
+from core.base_tool import BaseTool
+
+class MyServiceTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "my_service"
+
+    def setup(self):
+        # 1. Allocation Phase: Connect to external systems, load configs.
+        print("[MyService] Initializing...")
+
+    def get_interface_description(self) -> str:
+        # 2. Manual for the AI: Describe PURPOSE and CAPABILITIES.
+        return """
+        My Service Tool (my_service):
+        - PURPOSE: Briefly describe what it does.
+        - CAPABILITIES:
+            - some_method(arg1): Description of the method.
+        """
+
+    def on_boot_complete(self, container):
+        # 3. Optional: Access other tools if orchestration is needed.
+        pass
+
+    def shutdown(self):
+        # 4. Cleanup Phase: Close connections, stop threads.
+        pass
+```
 
 ---
 
@@ -90,6 +118,7 @@ If you are unsure how to implement a complex feature, study these high-quality p
 - **Static File Serving**: [system_dashboard.py](domains/ui/plugins/system_dashboard.py)
 - **System Observability & Registry**: [observability_plugin.py](domains/observability/plugins/observability_plugin.py)
 - **Identity & JWT Protection**: [get_me_plugin.py](domains/users/plugins/get_me_plugin.py)
+- **Infrastructure (SQLite + Threading)**: [sqlite_tool.py](tools/sqlite/sqlite_tool.py)
 
 ---
 *Refer to `AI_CONTEXT.md` for live tool signatures and domain status.*
