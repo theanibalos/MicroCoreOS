@@ -30,11 +30,13 @@ class IdentityTool(BaseTool):
 
     def get_interface_description(self) -> str:
         return """
-        Identity Tool (identity) - Pure Crypto:
-        - hash_password(password): Hashes a plain string using bcrypt_sha256.
-        - verify_password(password, hashed): Verifies a password against a hash.
-        - generate_token(data, expires_delta=None): Generates a JWT token.
-        - decode_token(token): Decodes a JWT token. Raises JWTErrors if invalid.
+        Identity & Security Tool (identity):
+        - PURPOSE: Cryptographic services for Authentication and Authorization.
+        - CAPABILITIES:
+            - hash_password(password): Secure password hashing (Bcrypt).
+            - verify_password(password, hashed): Fast password verification.
+            - generate_token(data, expires_delta=None): JWT creation.
+            - decode_token(token): JWT validation and decoding.
         """
 
     # --- Hashing Capabilities ---

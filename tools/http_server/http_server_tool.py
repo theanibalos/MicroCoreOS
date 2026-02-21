@@ -64,13 +64,12 @@ class HttpServerTool(BaseTool):
     def get_interface_description(self) -> str:
         return """
         HTTP Server Tool (http):
-        - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, security_guard=None): 
-          Registers a path. The handler MUST accept (data: dict, context: HttpContext).
-        - HttpContext.set_cookie(key, value, max_age=3600, httponly=True, samesite="lax", secure=False, path="/"): 
-          Accessible via the 'context' parameter in the handler.
-        - get_bearer_guard(decoder, cookie_name="access_token"): Returns a hybrid guard (supports Header or Cookie).
-        - mount_static(path, directory): Serves static files.
-        - add_ws_endpoint(path, handler): Registers a WebSocket endpoint.
+        - PURPOSE: Expose business logic as a RESTful API and serve Web content.
+        - CAPABILITIES:
+            - add_endpoint(path, method, handler, ...): Registers a new route.
+            - mount_static(path, directory): Serves frontend files (SPA, dashboards).
+            - add_ws_endpoint(path, handler): Enables real-time WebSocket communication.
+            - HttpContext.set_cookie(...): Advanced cookie management.
         """
 
     # --- Router Capability ---

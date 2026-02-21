@@ -30,10 +30,13 @@ class EventBusTool(BaseTool):
 
     def get_interface_description(self) -> str:
         return """
-        Enables communication between plugins:
-        - publish(name, data): Fire and forget. 
-        - subscribe(name, callback): Callback receives {_event_name: str, payload: dict}. Use '*' for all.
-        - request(name, data, timeout=5): Send and wait for response (RPC).
+        Event Bus Tool (event_bus):
+        - PURPOSE: Orchestrate asynchronous communication between isolated domains.
+        - IDEAL FOR: Side effects (notifications, logs) and cross-domain RPC requests.
+        - CAPABILITIES:
+            - publish(name, data): Fire and forget event. 
+            - subscribe(name, callback): Listens for events. Callback receives {_event_name, payload}.
+            - request(name, data, timeout=5): Synchronous Request-Response (RPC) over events.
         """
 
     def subscribe(self, event_name, callback):

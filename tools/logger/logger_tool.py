@@ -20,15 +20,14 @@ class LoggerTool(BaseTool):
             print("[Logger] Connected to EventBus for observability.")
 
     def get_interface_description(self) -> str:
-        """
-        This is the manual for the AI.
-        """
         return """
-        Logging Tool:
-        - info(message): Logs general information.
-        - error(message): Logs critical errors.
-        - warning(message): Logs warnings.
-        All logs are also published to event_bus as 'system.log'.
+        Logging Tool (logger):
+        - PURPOSE: Record system events and business activity for audit and debugging.
+        - CAPABILITIES:
+            - info(message): General information.
+            - error(message): Critical failures.
+            - warning(message): Non-critical alerts.
+        - NOTE: All logs are automatically mirrored to the Event Bus ('system.log').
         """
 
     def _publish_log(self, level: str, message: str):

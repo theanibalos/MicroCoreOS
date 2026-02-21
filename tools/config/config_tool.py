@@ -27,7 +27,9 @@ class ConfigTool(BaseTool):
     def get_interface_description(self) -> str:
         return """
         Configuration Tool (config):
-        - get(key, default=None): Gets a configuration value.
+        - PURPOSE: Centralized access to environment variables and system settings.
+        - CAPABILITIES:
+            - get(key, default=None): Gets a configuration value.
         """
 
     def get(self, key: str, default: str = None) -> str:

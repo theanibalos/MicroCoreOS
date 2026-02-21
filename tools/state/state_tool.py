@@ -21,11 +21,14 @@ class StateTool(BaseTool):
 
     def get_interface_description(self) -> str:
         return """
-        State Tool (state):
-        - set(key, value, namespace='default'): Store a value.
-        - get(key, default=None, namespace='default'): Retrieve a value.
-        - increment(key, amount=1, namespace='default'): Atomic increment.
-        - delete(key, namespace='default'): Delete a key.
+        In-Memory State Tool (state):
+        - PURPOSE: Share volatile global data between plugins safely.
+        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
+        - CAPABILITIES:
+            - set(key, value, namespace='default'): Store a value.
+            - get(key, default=None, namespace='default'): Retrieve a value.
+            - increment(key, amount=1, namespace='default'): Atomic increment.
+            - delete(key, namespace='default'): Delete a key.
         """
 
     def _get_ns(self, namespace):

@@ -33,9 +33,12 @@ class SqliteTool(BaseTool):
 
     def get_interface_description(self) -> str:
         return """
-        SQLite Tool (db):
-        - query(sql, params): Read query (SELECT).
-        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
+        SQLite Persistence Tool (db):
+        - PURPOSE: Persistent relational data storage using SQL.
+        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
+        - CAPABILITIES:
+            - query(sql, params): Read data (SELECT). Returns list of tuples.
+            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
         """
 
     def query(self, sql, params=()):

@@ -14,7 +14,13 @@ class RegistryTool(BaseTool):
         pass
 
     def get_interface_description(self) -> str:
-        return "Access to the Core's Architectural Inventory (Tools, Domains, and Plugins)."
+        return """
+        Systems Registry Tool (registry):
+        - PURPOSE: Introspection and discovery of the system's architecture at runtime.
+        - CAPABILITIES:
+            - get_system_dump(): Full inventory of active Tools, Domains and Plugins.
+            - get_domain_metadata(): Detailed analysis of models and schemas.
+        """
 
     def on_boot_complete(self, container):
         """Capture the real registry from the container."""
