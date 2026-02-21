@@ -14,17 +14,13 @@ class GetMePlugin(BasePlugin):
         self.logger = logger
 
     def on_boot(self):
-        # PROTECTED ROUTE:
-        # 1. We ask the HttpTool to build a 'Bearer Guard'.
-        # 2. we provide the pure IdentityTool decoding logic as a callback.
-        # This keeps tools isolated and decoupled.
         self.http.add_endpoint(
             path="/users/me", 
             method="GET", 
             handler=self.execute, 
             tags=["Users"],
             response_model=UserResponse,
-            security_guard=self.http.get_bearer_guard(self.identity.decode_token)
+            auth_validator=self.identity.decode_token
         )
         self.logger.info("GetMePlugin: Protected endpoint /users/me registered.")
 

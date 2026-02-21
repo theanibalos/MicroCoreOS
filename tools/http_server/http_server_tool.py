@@ -74,9 +74,11 @@ class HttpServerTool(BaseTool):
         """
 
     # --- Router Capability ---
-    def add_endpoint(self, path, method, handler, tags=None, request_model=None, response_model=None, security_guard=None):
+    def add_endpoint(self, path, method, handler, tags=None, request_model=None, response_model=None, auth_validator=None):
         """
-        Registers an endpoint with optional Schema support and a generic Security Guard.
+        Registers an endpoint.
+        If auth_validator is provided, it will intercept the request, extract the token from headers/cookies,
+        validate it, and pass the payload to the handler via data['_auth'].
         """
         handler_name = handler.__name__ if hasattr(handler, "__name__") else str(hash(handler))
         operation_id = f"{handler_name}_{method}_{path.replace('/', '_')}"
@@ -84,10 +86,6 @@ class HttpServerTool(BaseTool):
         # Combine processing logic
         async def process_request(request: Request, response: Response, body_data: Any):
             data = dict(request.query_params)
-            
-            # Simple check in the Request State
-            if hasattr(request.state, "_auth"):
-                data["_auth"] = request.state._auth
 
             if body_data:
                 input_body = body_data.dict() if hasattr(body_data, "dict") else body_data
@@ -104,8 +102,29 @@ class HttpServerTool(BaseTool):
                 # 100% Explicit: Provide a tiny context for the plugin to interact with the world
                 context = HttpContext(response)
                 
+                # Execute Auth Validator if defined
+                if auth_validator:
+                    token = None
+                    auth_header = request.headers.get("Authorization")
+                    if auth_header and auth_header.startswith("Bearer "):
+                        token = auth_header.split(" ")[1]
+                    else:
+                        token = request.cookies.get("access_token")
+                        
+                    if not token:
+                        raise HTTPException(status_code=401, detail="Unauthorized: Missing token")
+                        
+                    # Delega la validación real al la función inyectada (IdentityTool)
+                    payload = auth_validator(token)
+                    if not payload:
+                        raise HTTPException(status_code=401, detail="Unauthorized: Invalid token")
+                        
+                    data["_auth"] = payload
+
                 # We call the handler with data AND the explicit context
                 return await run_in_threadpool(handler, data, context)
+            except HTTPException as he:
+                raise he
             except Exception as e:
                 print(f"[HttpServer] 💥 Error in route {path}: {e}")
                 return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
@@ -123,9 +142,6 @@ class HttpServerTool(BaseTool):
                 return await process_request(request, response, None)
 
         wrapper.__name__ = operation_id
-        
-        # We pass the guard in the dependencies list
-        dependencies = [security_guard] if security_guard else []
 
         self.app.add_api_route(
             path, 
@@ -134,8 +150,7 @@ class HttpServerTool(BaseTool):
             tags=tags or ["Default"],
             response_model=response_model,
             operation_id=operation_id,
-            name=operation_id,
-            dependencies=dependencies
+            name=operation_id
         )
 
     def mount_static(self, path, directory_path):
@@ -145,37 +160,6 @@ class HttpServerTool(BaseTool):
             print(f"[HttpServer] Mounting static files: {path} -> {directory_path}")
         else:
             print(f"[HttpServer] ⚠️ Static directory not found: {directory_path}")
-
-    def get_bearer_guard(self, decoder_callable, cookie_name="access_token"):
-        """
-        Infrastructure utility to create a FastAPI bearer guard.
-        It uses the provided decoder_callable to transform a token into an identity.
-        The cookie_name can be customized (defaults to 'access_token').
-        """
-        async def verify_identity(request: Request, authorization: Optional[str] = Header(None)):
-            token = None
-            
-            # 1. Try Authorization Header
-            if authorization and authorization.startswith("Bearer "):
-                token = authorization.split(" ")[1]
-            
-            # 2. Try Cookie if no header
-            if not token:
-                token = request.cookies.get(cookie_name)
-            
-            if not token:
-                raise HTTPException(status_code=401, detail="Missing Authentication Token (Header or Cookie)")
-            
-            try:
-                # Core logic: Delegate decoding to the provided callable
-                payload = decoder_callable(token)
-                request.state._auth = payload 
-                return payload
-            except Exception as e:
-                # Infrastructure handles the translation of crypto errors to HTTP 401
-                raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
-            
-        return Depends(verify_identity)
 
     def add_ws_endpoint(self, path, on_connect, on_disconnect=None):
         """

@@ -86,6 +86,7 @@
             letter-spacing: -0.5px;
             background: linear-gradient(to right, #fff, #94a3b8);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -166,6 +167,10 @@
 
         .node-card.tool::before {
             background: var(--tool-color);
+        }
+
+        .node-card.model::before {
+            background: var(--warning);
         }
 
         .node-card:hover {
@@ -344,6 +349,95 @@
             box-shadow: 0 0 8px var(--danger);
             animation: none;
         }
+
+        /* --- Modal --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-content {
+            background: var(--bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            width: 80%;
+            max-width: 900px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            transform: translateY(20px);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: translateY(0);
+        }
+
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 16px 16px 0 0;
+        }
+
+        .modal-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.5rem;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .close-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            background: #1e1e1e;
+            /* Dark IDE background */
+            border-radius: 0 0 16px 16px;
+        }
+
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: #d4d4d4;
+            white-space: pre;
+            tab-size: 4;
+            margin: 0;
+        }
     </style>
 </head>
 
@@ -384,6 +478,29 @@
 
             <div class="section-header">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+                Domain Models
+            </div>
+            <div id="model-grid" class="card-grid">
+                <!-- Models injected here -->
+            </div>
+
+            <div class="section-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                </svg>
+                Database Schema
+            </div>
+            <div id="db-grid" class="card-grid">
+                <!-- Database tables injected here -->
+            </div>
+
+            <div class="section-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path
                         d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z">
                     </path>
@@ -415,14 +532,34 @@
         </aside>
     </div>
 
+    <!-- Code Viewer Modal -->
+    <div id="code-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span id="modal-title" class="modal-title">Model Viewer</span>
+                <button id="close-modal" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre class="code-block" id="modal-code"></pre>
+            </div>
+        </div>
+    </div>
+
     <script>
         const pluginGrid = document.getElementById('plugin-grid');
         const toolGrid = document.getElementById('tool-grid');
+        const modelGrid = document.getElementById('model-grid');
+        const dbGrid = document.getElementById('db-grid');
         const eventLog = document.getElementById('event-log');
         const wsBadge = document.getElementById('ws-badge');
         const wsStatus = document.getElementById('ws-status');
 
-        let systemData = { plugins: {}, tools: {} };
+        const codeModal = document.getElementById('code-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalCode = document.getElementById('modal-code');
+        const closeModalBtn = document.getElementById('close-modal');
+
+        let systemData = { plugins: {}, tools: {}, domains: {} };
 
         async function refreshData() {
             try {
@@ -468,6 +605,120 @@
 
                 pluginGrid.appendChild(card);
             });
+
+            // Render Models
+            modelGrid.innerHTML = '';
+            Object.entries(data.domains || {}).forEach(([domainName, metadata]) => {
+                Object.entries(metadata).forEach(([key, content]) => {
+                    if (key.startsWith('model_')) {
+                        const modelName = key.replace('model_', '');
+                        const card = document.createElement('div');
+                        card.className = 'node-card model';
+                        card.id = `model-${domainName}-${modelName}`;
+                        card.innerHTML = `
+                            <span class="node-name">${modelName}</span>
+                            <span class="node-type">Domain: ${domainName}</span>
+                            <span class="node-status status-ready">CODE</span>
+                        `;
+
+                        // --- CLICK LOGIC TO SHOW MODAL ---
+                        card.onclick = () => {
+                            modalTitle.textContent = `${domainName} / ${modelName}`;
+
+                            const parsedClasses = parsePythonClasses(content);
+                            let htmlContent = '';
+
+                            if (parsedClasses.length > 0) {
+                                parsedClasses.forEach(cls => {
+                                    htmlContent += `<div style="margin-bottom: 24px; background: rgba(0,0,0,0.2); padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border);">
+                                        <h3 style="color: var(--warning); margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 1.1rem;">class ${cls.name}</h3>
+                                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                                            <thead>
+                                                <tr style="border-bottom: 1px solid var(--glass-border);">
+                                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">Field Name</th>
+                                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">Data Type</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>`;
+
+                                    if (cls.fields.length === 0) {
+                                        htmlContent += `<tr><td colspan="2" style="padding: 8px; color: #666; font-style: italic;">No fields detected</td></tr>`;
+                                    } else {
+                                        cls.fields.forEach(f => {
+                                            htmlContent += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                                <td style="padding: 10px 8px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">${f.name}</td>
+                                                <td style="padding: 10px 8px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${f.type}</td>
+                                            </tr>`;
+                                        });
+                                    }
+
+                                    htmlContent += `</tbody></table></div>`;
+                                });
+                            } else {
+                                htmlContent = `<pre class="code-block">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+                            }
+
+                            document.getElementById('modal-code').innerHTML = htmlContent;
+                            codeModal.classList.add('active');
+                        };
+
+                        modelGrid.appendChild(card);
+                    }
+                });
+            });
+
+            // Render Database Schema
+            dbGrid.innerHTML = '';
+            Object.entries(data.database_schema || {}).forEach(([tableName, columns]) => {
+                if (tableName.startsWith('sqlite_') || tableName.startsWith('_')) return; // Filter internals
+
+                const card = document.createElement('div');
+                card.className = 'node-card tool'; // using tool color styling (blue) to distinguish from models (yellow)
+                card.id = `db-table-${tableName}`;
+                card.innerHTML = `
+                    <span class="node-name">${tableName}</span>
+                    <span class="node-type">SQLite Table</span>
+                    <span class="node-status status-ready">SCHEMA</span>
+                `;
+
+                // --- CLICK LOGIC TO SHOW MODAL ---
+                card.onclick = () => {
+                    modalTitle.textContent = `Database: ${tableName}`;
+
+                    let htmlContent = `<div style="margin-bottom: 24px; background: rgba(0,0,0,0.2); padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border);">
+                        <h3 style="color: var(--tool-color); margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 1.1rem;">TABLE ${tableName}</h3>
+                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--glass-border);">
+                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">Column Name</th>
+                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">Type</th>
+                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">Not Null</th>
+                                    <th style="padding: 8px; color: var(--text-secondary); font-weight: 600;">PK</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+
+                    if (!columns || columns.length === 0) {
+                        htmlContent += `<tr><td colspan="4" style="padding: 8px; color: #666; font-style: italic;">No columns detected</td></tr>`;
+                    } else {
+                        columns.forEach(c => {
+                            htmlContent += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                                <td style="padding: 10px 8px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;">${c.name}</td>
+                                <td style="padding: 10px 8px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${c.type}</td>
+                                <td style="padding: 10px 8px; color: ${c.notnull ? 'var(--warning)' : 'var(--text-secondary)'}; font-size: 0.85rem;">${c.notnull ? 'YES' : 'NO'}</td>
+                                <td style="padding: 10px 8px; color: ${c.pk ? 'var(--success)' : 'var(--text-secondary)'}; font-size: 0.85rem;">${c.pk ? 'YES' : 'NO'}</td>
+                            </tr>`;
+                        });
+                    }
+
+                    htmlContent += `</tbody></table></div>`;
+
+                    document.getElementById('modal-code').innerHTML = htmlContent;
+                    codeModal.classList.add('active');
+                };
+
+                dbGrid.appendChild(card);
+            });
         }
 
         function highlightDependencies(deps) {
@@ -487,6 +738,44 @@
             allCards.forEach(c => {
                 c.classList.remove('highlighted', 'dimmed');
             });
+        }
+
+        function parsePythonClasses(code) {
+            const classes = [];
+            const lines = code.split('\n');
+            let currentClass = null;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+
+                // Match class definition
+                const classMatch = line.match(/^class\s+([A-Za-z0-9_]+)/);
+                if (classMatch) {
+                    if (currentClass) classes.push(currentClass);
+                    currentClass = { name: classMatch[1], fields: [] };
+                    continue;
+                }
+
+                if (currentClass) {
+                    // Match Pydantic field: `name: type = ...`
+                    const fieldMatch = trimmed.match(/^([A-Za-z0-9_]+)\s*:\s*([^=]+)/);
+                    if (fieldMatch && !trimmed.startsWith('def ') && !trimmed.startsWith('class ')) {
+                        currentClass.fields.push({ name: fieldMatch[1], type: fieldMatch[2].trim() });
+                    }
+
+                    // Match __init__ args for raw domain models (fallback)
+                    if (trimmed.startsWith('def __init__(')) {
+                        const argsMatch = trimmed.match(/\(([^)]+)\)/);
+                        if (argsMatch) {
+                            const args = argsMatch[1].split(',').map(a => a.split('=')[0].trim()).filter(a => a !== 'self');
+                            args.forEach(arg => currentClass.fields.push({ name: arg, type: 'Any' }));
+                        }
+                    }
+                }
+            }
+            if (currentClass) classes.push(currentClass);
+            return classes;
         }
 
         function addEvent(name, data) {
@@ -533,6 +822,11 @@
         }
 
         document.getElementById('clear-events').onclick = () => eventLog.innerHTML = '';
+
+        closeModalBtn.onclick = () => codeModal.classList.remove('active');
+        codeModal.onclick = (e) => {
+            if (e.target === codeModal) codeModal.classList.remove('active');
+        };
 
         // Init
         refreshData();

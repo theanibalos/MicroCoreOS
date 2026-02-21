@@ -65,14 +65,6 @@ Logging Tool:
         All logs are also published to event_bus as 'system.log'.
 ```
 
-### 🔧 Tool: `db` (Status: ✅ OK)
-**Interface and Capabilities:**
-```text
-SQLite Tool (db):
-        - query(sql, params): Read query (SELECT).
-        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
-```
-
 ### 🔧 Tool: `state` (Status: ✅ OK)
 **Interface and Capabilities:**
 ```text
@@ -97,6 +89,14 @@ Identity Tool (identity) - Pure Crypto:
         - verify_password(password, hashed): Verifies a password against a hash.
         - generate_token(data, expires_delta=None): Generates a JWT token.
         - decode_token(token): Decodes a JWT token. Raises JWTErrors if invalid.
+```
+
+### 🔧 Tool: `db` (Status: ✅ OK)
+**Interface and Capabilities:**
+```text
+SQLite Tool (db):
+        - query(sql, params): Read query (SELECT).
+        - execute(sql, params): Write operations (INSERT, UPDATE, DELETE).
 ```
 
 ## 📦 Domain Models (Data Structures)

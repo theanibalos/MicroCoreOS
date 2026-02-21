@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from tools.sqlite.sqlite_tool import SqliteTool
     from tools.event_bus.event_bus_tool import EventBusTool
     from tools.logger.logger_tool import LoggerTool
+    from tools.identity.identity_tool import IdentityTool
 
 class UserDeleteRequest(BaseModel):
     user_id: int
@@ -16,11 +17,12 @@ class UserDeleteResponse(BaseModel):
     error: str = None
 
 class DeleteUserPlugin(BasePlugin):
-    def __init__(self, http: 'HttpServerTool', db: 'SqliteTool', event_bus: 'EventBusTool', logger: 'LoggerTool'):
+    def __init__(self, http: 'HttpServerTool', db: 'SqliteTool', event_bus: 'EventBusTool', logger: 'LoggerTool', identity: 'IdentityTool'):
         self.http = http
         self.db = db
         self.bus = event_bus
         self.logger = logger
+        self.identity = identity
 
     def on_boot(self):
         # Register endpoint with schema
@@ -30,7 +32,8 @@ class DeleteUserPlugin(BasePlugin):
             handler=self.execute,
             tags=["Users"],
             request_model=UserDeleteRequest,
-            response_model=UserDeleteResponse
+            response_model=UserDeleteResponse,
+            auth_validator=self.identity.decode_token
         )
         self.logger.info("DeleteUserPlugin: Endpoint /users/delete registered.")
 
