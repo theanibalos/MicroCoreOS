@@ -2,11 +2,12 @@ import os
 from core.base_plugin import BasePlugin
 
 class SystemDashboardPlugin(BasePlugin):
-    def __init__(self, http, logger, registry, db):
+    def __init__(self, http, logger, registry, db, event_bus):
         self.http = http
         self.logger = logger
         self.registry = registry
         self.db = db
+        self.bus = event_bus
 
     def on_boot(self):
         # 1. Define the static files path relative to the current file
@@ -40,6 +41,7 @@ class SystemDashboardPlugin(BasePlugin):
 
         dump = self.registry.get_system_dump()
         dump["database_schema"] = db_schema
+        dump["event_trace"] = self.bus.get_trace_history()
 
         return {
             "success": True,

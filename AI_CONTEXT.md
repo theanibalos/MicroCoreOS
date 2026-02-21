@@ -15,6 +15,34 @@ MicroCoreOS is a modular, asynchronous, and resilient system based on Clean Arch
 - **Command**: Use `uv run main.py`. Do not use `python main.py` directly.
 - **Pydantic**: Pass your models to `http_server.add_endpoint` to auto-generate Swagger.
 
+## 🛠️ How to create a new Domain & Plugin
+To extend the system, follow this pattern:
+
+1. **Create Directory**: `domains/[domain_name]/plugins/`
+2. **Plugin Template**:
+```python
+from core.base_plugin import BasePlugin
+
+class MyNewPlugin(BasePlugin):
+    def __init__(self, logger, event_bus, http, db): # Request Tools here
+        self.logger = logger
+        self.bus = event_bus
+        self.http = http
+        self.db = db
+
+    def on_boot(self):
+        # 1. Routes & Subscriptions ONLY
+        self.http.add_endpoint('/my/path', 'GET', self.my_handler)
+        self.bus.subscribe('some.event', self.execute)
+
+    def execute(self, data=None): # Core Logic
+        self.logger.info('Executing logic...')
+        return {'success': True}
+
+    def my_handler(self, data, context):
+        return self.execute(data)
+```
+
 ---
 
 ## 🛠️ Available Tools
@@ -101,6 +129,9 @@ SQLite Tool (db):
 
 ## 📦 Domain Models (Data Structures)
 Registered data structures. You can read the code directly at their path for details.
+
+### 🧩 Domain `products`
+- Available model: `products_model.py`
 
 ### 🧩 Domain `users`
 - Available model: `user_model.py`

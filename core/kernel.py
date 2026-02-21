@@ -121,6 +121,12 @@ class Kernel:
                 # Instantiate Plugin
                 instance = plugin_cls(**dependencies)
                 
+                # Save Reference
+                self.plugins[plugin_cls.__name__] = instance
+                
+                # Set status to RUNNING BEFORE starting the thread to avoid race condition
+                self.container.registry.update_plugin_status(plugin_cls.__name__, "RUNNING")
+
                 # Boot Plugin Thread
                 def boot_plugin_task(plugin_instance, name):
                     try:
@@ -133,10 +139,6 @@ class Kernel:
 
                 t = threading.Thread(target=boot_plugin_task, args=(instance, plugin_cls.__name__), daemon=True)
                 t.start()
-                
-                # Save Reference
-                self.plugins[plugin_cls.__name__] = instance
-                self.container.registry.update_plugin_status(plugin_cls.__name__, "RUNNING")
                 
                 print(f"[Kernel] Plugin loaded (DI) and starting task: {plugin_cls.__name__}")
                 

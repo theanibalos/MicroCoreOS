@@ -41,11 +41,7 @@ class HealthPlugin(BasePlugin):
                 health_status = "HEALTHY" if not stats["failing_tools"] and not stats["failing_plugins"] else "DEGRADED"
 
                 # Emit health event
-                self.bus.publish("system.health_status", {
-                    "status": health_status,
-                    "stats": stats,
-                    "timestamp": time.time()
-                })
+                self.logger.info(f"system.health_status: {health_status}")
 
                 if health_status == "DEGRADED":
                     self.logger.warning(f"System Health DEGRADED: {stats['failing_tools']} / {stats['failing_plugins']}")

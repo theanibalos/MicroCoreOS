@@ -128,6 +128,13 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            cursor: pointer;
+            user-select: none;
+            transition: opacity 0.2s;
+        }
+
+        .section-header:hover {
+            opacity: 0.8;
         }
 
         .section-header:first-child {
@@ -260,18 +267,47 @@
         }
 
         .event-item {
-            padding: 0.75rem;
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.03);
+            position: relative;
+            padding: 0.75rem 0.75rem 0.75rem 2rem;
             margin-bottom: 0.75rem;
-            border: 1px solid transparent;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
             animation: slideIn 0.3s ease-out;
             transition: all 0.2s;
         }
 
+        .event-item::before {
+            content: '';
+            position: absolute;
+            left: 0.7rem;
+            top: 1.2rem;
+            bottom: -1rem;
+            width: 2px;
+            background: rgba(99, 102, 241, 0.3);
+            z-index: 1;
+        }
+
+        .event-item:last-child::before {
+            display: none;
+        }
+
+        .event-node {
+            position: absolute;
+            left: 0.45rem;
+            top: 0.8rem;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 10px var(--accent-glow);
+            z-index: 2;
+        }
+
         .event-item:hover {
-            background: rgba(255, 255, 255, 0.05);
-            border-color: var(--glass-border);
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateX(5px);
+            border-color: rgba(99, 102, 241, 0.5);
         }
 
         .event-meta {
@@ -287,25 +323,28 @@
         }
 
         .event-tag {
-            color: var(--accent);
+            color: var(--warning);
             font-weight: 600;
+            font-size: 0.85rem;
         }
 
         .event-msg {
-            font-size: 0.85rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
             line-height: 1.4;
             word-break: break-all;
+            margin-bottom: 0.5rem;
         }
 
-        .event-payload-btn {
-            background: none;
-            border: none;
-            color: var(--accent);
-            font-size: 0.7rem;
-            cursor: pointer;
-            padding: 0;
-            margin-top: 5px;
-            text-decoration: underline;
+        .payload-badge {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            color: var(--tool-color);
+            margin-right: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         /* --- Animations --- */
@@ -438,7 +477,31 @@
             tab-size: 4;
             margin: 0;
         }
+
+        /* --- Filter Buttons --- */
+        .filter-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            flex: 1;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .filter-btn.active {
+            background: rgba(99, 102, 241, 0.2);
+            color: var(--accent);
+            border-color: rgba(99, 102, 241, 0.5);
+        }
     </style>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 
 <body>
@@ -465,15 +528,25 @@
     <div class="container">
         <main class="system-graph">
             <div class="section-header">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path
-                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
-                    </path>
-                </svg>
-                Core Plugins
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path
+                            d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+                        </path>
+                    </svg>
+                    System Plugins
+                </div>
+                <div style="display: flex; gap: 8px; margin-left: auto;">
+                    <button class="filter-btn plugin-view-btn active" data-view="flat"
+                        style="padding: 2px 8px; flex: 0 0 auto;">Flat List</button>
+                    <button class="filter-btn plugin-view-btn" data-view="domain"
+                        style="padding: 2px 8px; flex: 0 0 auto;">By Domain</button>
+                </div>
             </div>
-            <div id="plugin-grid" class="card-grid">
-                <!-- Plugins injected here -->
+            <div id="plugin-render-area">
+                <div id="plugin-grid" class="card-grid">
+                    <!-- Plugins injected here -->
+                </div>
             </div>
 
             <div class="section-header">
@@ -513,18 +586,27 @@
         </main>
 
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <span class="sidebar-title">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15.19A1 1 0 0 1 20 16H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10.19z">
-                        </path>
-                        <path d="M12 16v4"></path>
-                        <path d="M8 20h8"></path>
-                    </svg>
-                    Event Stream
-                </span>
-                <button id="clear-events"
-                    style="background:none; border:none; color:var(--text-secondary); cursor:pointer; font-size:0.7rem;">Clear</button>
+            <div class="sidebar-header" style="flex-direction: column; align-items: stretch; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="sidebar-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15.19A1 1 0 0 1 20 16H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10.19z">
+                            </path>
+                            <path d="M12 16v4"></path>
+                            <path d="M8 20h8"></path>
+                        </svg>
+                        Event Stream
+                    </span>
+                    <button id="clear-events"
+                        style="background:none; border:none; color:var(--text-secondary); cursor:pointer; font-size:0.7rem;">Clear</button>
+                </div>
+                <div
+                    style="display: flex; gap: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--glass-border);">
+                    <button class="filter-btn active" data-filter="events">Events</button>
+                    <button class="filter-btn" data-filter="logs">Logs</button>
+                    <button class="filter-btn" data-filter="all">All</button>
+                </div>
             </div>
             <div id="event-log" class="event-list">
                 <!-- Events injected here -->
@@ -560,6 +642,53 @@
         const closeModalBtn = document.getElementById('close-modal');
 
         let systemData = { plugins: {}, tools: {}, domains: {} };
+        let currentFilter = 'events';
+        let currentPluginView = 'flat';
+
+        document.querySelectorAll('.filter-btn:not(.plugin-view-btn)').forEach(btn => {
+            btn.onclick = (e) => {
+                document.querySelectorAll('.filter-btn:not(.plugin-view-btn)').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentFilter = e.target.getAttribute('data-filter');
+                if (systemData.event_trace) renderSystem(systemData);
+            };
+        });
+
+        document.querySelectorAll('.plugin-view-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                document.querySelectorAll('.plugin-view-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentPluginView = e.target.getAttribute('data-view');
+                if (systemData.plugins) renderSystem(systemData);
+            };
+        });
+
+        // Add collapsible behavior to main section headers
+        document.querySelectorAll('main .section-header').forEach(header => {
+            header.title = 'Click to collapse/expand section';
+
+            // Add toggle icon
+            const iconSpan = document.createElement('span');
+            iconSpan.innerHTML = '▼';
+            iconSpan.style.marginRight = '4px';
+            iconSpan.style.fontSize = '0.7rem';
+            iconSpan.style.color = 'var(--text-secondary)';
+            iconSpan.style.transition = 'transform 0.2s';
+            iconSpan.className = 'collapse-icon';
+            header.prepend(iconSpan);
+
+            header.onclick = (e) => {
+                // Don't toggle if clicking a button inside the header (like 'By Domain')
+                if (e.target.closest('button')) return;
+
+                const content = header.nextElementSibling;
+                if (!content) return;
+
+                const isHidden = content.style.display === 'none';
+                content.style.display = isHidden ? '' : 'none';
+                header.querySelector('.collapse-icon').innerHTML = isHidden ? '▼' : '▶';
+            };
+        });
 
         async function refreshData() {
             try {
@@ -573,6 +702,125 @@
         }
 
         function renderSystem(data) {
+            // Render Event Tracer Timeline Grouped by Causality Trees
+            eventLog.innerHTML = '';
+            let traces = data.event_trace || [];
+
+            if (currentFilter === 'events') {
+                traces = traces.filter(t => !t.event_name.startsWith('system.log'));
+            } else if (currentFilter === 'logs') {
+                traces = traces.filter(t => t.event_name.startsWith('system.log'));
+            }
+
+            // 1. Build Causality Tree
+            const lookup = {};
+            const roots = [];
+
+            traces.forEach(t => {
+                lookup[t.id] = { ...t, children: [] };
+            });
+
+            traces.forEach(t => {
+                // If it has a parent AND the parent is in the current filtered list, nest it
+                if (t.parent_id && lookup[t.parent_id]) {
+                    lookup[t.parent_id].children.push(lookup[t.id]);
+                } else {
+                    roots.push(lookup[t.id]);
+                }
+            });
+
+            // Helper to render a single event row
+            function createEventRow(trace, hasChildren, isChild) {
+                const item = document.createElement('div');
+                item.className = 'event-item';
+                // Highlight children with a left border or indent
+                if (isChild) {
+                    item.style.borderLeft = '2px solid rgba(99, 102, 241, 0.4)';
+                    item.style.marginLeft = '12px';
+                    item.style.paddingLeft = '12px';
+                    item.style.background = 'rgba(0,0,0,0.15)';
+                    item.style.marginTop = '4px';
+                }
+
+                item.style.cursor = 'pointer';
+
+                const d = new Date(trace.timestamp * 1000);
+                const time = d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + d.getMilliseconds();
+
+                let badges = trace.payload_keys.map(k => `<span class="payload-badge">${k}</span>`).join('');
+                if (!badges) badges = '<span class="payload-badge" style="color: #666">Empty Payload</span>';
+
+                const em = trace.emitter || 'Unknown';
+                const subs = trace.subscribers && trace.subscribers.length > 0
+                    ? trace.subscribers.join(', ')
+                    : 'None';
+
+                const toggleIcon = hasChildren ? `<span class="toggle-icon" style="color:var(--accent); font-size: 0.7rem; margin-right:4px;">▼</span>` : '';
+
+                item.innerHTML = `
+                    <div class="event-node" style="${isChild ? 'background: var(--accent);' : ''}"></div>
+                    <div class="event-meta">
+                        ${toggleIcon}
+                        <span class="event-tag">${trace.event_name}</span>
+                        <span class="event-time">${time}</span>
+                    </div>
+                    <div class="event-msg" style="color: var(--text-primary); margin-bottom: 8px;">
+                        <span style="color: var(--warning); font-weight: bold;">[${em}]</span>
+                        <span style="color: var(--text-secondary); margin: 0 6px;">⟶</span>
+                        <span style="color: var(--success); font-weight: bold;">[${subs}]</span>
+                    </div>
+                    <div style="margin-top: 4px;">${badges}</div>
+                `;
+                return item;
+            }
+
+            // Recursive renderer
+            function renderEventNode(node, container, isChild = false) {
+                const hasChildren = node.children && node.children.length > 0;
+
+                // Container for this node and its children
+                const groupContainer = document.createElement('div');
+                groupContainer.style.marginBottom = isChild ? '0' : '12px';
+
+                // Render the parent event
+                const row = createEventRow(node, hasChildren, isChild);
+                groupContainer.appendChild(row);
+
+                // Setup Click Handlers
+                // Left click opens the graph modal
+                row.onclick = () => showEventGraph(node, traces);
+
+                if (hasChildren) {
+                    const childrenContainer = document.createElement('div');
+                    // Add a nice visual vertical line connecting children
+                    childrenContainer.style.position = 'relative';
+
+                    // Render children recursively into this container (newest at bottom, natural flow)
+                    node.children.forEach(child => renderEventNode(child, childrenContainer, true));
+
+                    groupContainer.appendChild(childrenContainer);
+
+                    // Right Click (Context Menu) toggles the children visibility
+                    row.oncontextmenu = (e) => {
+                        e.preventDefault();
+                        const isHidden = childrenContainer.style.display === 'none';
+                        childrenContainer.style.display = isHidden ? 'block' : 'none';
+                        const tIcon = row.querySelector('.toggle-icon');
+                        if (tIcon) tIcon.textContent = isHidden ? '▼' : '▶';
+                    };
+
+                    // Add a small hint title
+                    row.title = "Left Click: Graph modal. Right Click: Collapse/Expand chain.";
+                }
+
+                container.appendChild(groupContainer);
+            }
+
+            // Render from newest root to oldest root (timeline goes chronologically downwards for children, but roots are newest first)
+            roots.reverse().forEach(rootNode => {
+                renderEventNode(rootNode, eventLog, false);
+            });
+
             // Render Tools
             toolGrid.innerHTML = '';
             Object.entries(data.tools || {}).forEach(([name, info]) => {
@@ -588,8 +836,65 @@
             });
 
             // Render Plugins
-            pluginGrid.innerHTML = '';
-            Object.entries(data.plugins || {}).forEach(([name, info]) => {
+            const pluginArea = document.getElementById('plugin-render-area');
+            pluginArea.innerHTML = '';
+
+            const pluginEntries = Object.entries(data.plugins || {});
+
+            if (currentPluginView === 'flat') {
+                const grid = document.createElement('div');
+                grid.className = 'card-grid';
+
+                pluginEntries.forEach(([name, info]) => {
+                    const card = createPluginCard(name, info);
+                    grid.appendChild(card);
+                });
+
+                pluginArea.appendChild(grid);
+            } else {
+                // Group by domain
+                const domains = {};
+                pluginEntries.forEach(([name, info]) => {
+                    const d = info.domain || 'core';
+                    if (!domains[d]) domains[d] = [];
+                    domains[d].push([name, info]);
+                });
+
+                Object.keys(domains).sort().forEach(domainName => {
+                    // Create domain header
+                    const header = document.createElement('div');
+                    header.style.color = 'var(--text-secondary)';
+                    header.style.fontSize = '0.75rem';
+                    header.style.fontWeight = '600';
+                    header.style.textTransform = 'uppercase';
+                    header.style.letterSpacing = '1px';
+                    header.style.marginBottom = '0.5rem';
+                    header.style.marginTop = '1rem';
+                    header.style.display = 'flex';
+                    header.style.alignItems = 'center';
+                    header.style.gap = '6px';
+
+                    header.innerHTML = `
+                        <div style="width: 8px; height: 8px; background: var(--plugin-color); border-radius: 50%;"></div>
+                        DOMAIN: ${domainName}
+                    `;
+                    pluginArea.appendChild(header);
+
+                    // Create grid for this domain
+                    const grid = document.createElement('div');
+                    grid.className = 'card-grid';
+
+                    domains[domainName].forEach(([name, info]) => {
+                        const card = createPluginCard(name, info);
+                        grid.appendChild(card);
+                    });
+
+                    pluginArea.appendChild(grid);
+                });
+            }
+
+            // Helper function to create a plugin card element
+            function createPluginCard(name, info) {
                 const card = document.createElement('div');
                 card.className = 'node-card plugin';
                 card.id = `plugin-${name}`;
@@ -603,8 +908,8 @@
                 card.onmouseenter = () => highlightDependencies(info.dependencies || []);
                 card.onmouseleave = resetHighlight;
 
-                pluginGrid.appendChild(card);
-            });
+                return card;
+            }
 
             // Render Models
             modelGrid.innerHTML = '';
@@ -721,6 +1026,274 @@
             });
         }
 
+        function showEventGraph(clickedTrace, allTraces) {
+            modalTitle.textContent = `Event Origin: ${clickedTrace.event_name}`;
+            modalCode.innerHTML = `
+                <div style="margin-bottom: 20px; display: flex; gap: 20px; align-items: center; background: rgba(0,0,0,0.3); padding: 12px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); font-family: 'JetBrains Mono', monospace;">
+                    <span style="color: var(--text-secondary); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Hide Plugins:</span>
+                    <label style="color: #d4d4d8; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="hideRealtime" style="accent-color: var(--accent); width: 16px; height: 16px;"> RealTimeBridgePlugin
+                    </label>
+                    <label style="color: #d4d4d8; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="hideObservability" style="accent-color: var(--accent); width: 16px; height: 16px;"> ObservabilityPlugin
+                    </label>
+                </div>
+                <div id="vis-container" style="width: 100%; height: 550px; background: #09090b; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); box-shadow: inset 0 0 60px rgba(0,0,0,0.5);"></div>
+            `;
+
+            const container = document.getElementById('vis-container');
+            let network = null;
+
+            let rootId = clickedTrace.id;
+            let current = allTraces.find(t => t.id === rootId);
+            while (current && current.parent_id) {
+                const p = allTraces.find(t => t.id === current.parent_id);
+                if (!p) break;
+                current = p;
+                rootId = p.id;
+            }
+
+            let family = new Set();
+            function collect(id) {
+                const evt = allTraces.find(t => t.id === id);
+                if (!evt || family.has(evt)) return;
+                family.add(evt);
+                allTraces.filter(t => t.parent_id === id).forEach(child => collect(child.id));
+            }
+            collect(rootId);
+
+            function renderGraph() {
+                const hideRt = document.getElementById('hideRealtime').checked;
+                const hideObs = document.getElementById('hideObservability').checked;
+
+                let nodes = [];
+                let edges = [];
+                let addedPlugins = new Set();
+
+                family.forEach(evt => {
+                    // Filter logic: if the emitter is hidden, skip drawing it 
+                    // (Note: its subscribers might still belong to other events if complex, but usually we just hide the whole chain)
+                    if (hideRt && evt.emitter === 'RealTimeBridgePlugin') return;
+                    if (hideObs && evt.emitter === 'ObservabilityPlugin') return;
+
+                    const d = new Date(evt.timestamp * 1000);
+                    const tm = d.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + d.getMilliseconds();
+                    const isClicked = evt.id === clickedTrace.id;
+
+                    // Filter Subscribers
+                    let visibleSubscribers = (evt.subscribers || []).filter(sub => {
+                        if (hideRt && sub === 'RealTimeBridgePlugin') return false;
+                        if (hideObs && sub === 'ObservabilityPlugin') return false;
+                        return true;
+                    });
+
+                    // React Flow Aesthetic for Emitter Plugin Box
+                    if (!addedPlugins.has(evt.emitter)) {
+                        nodes.push({
+                            id: evt.emitter,
+                            label: evt.emitter,
+                            shape: 'box',
+                            color: { background: '#18181b', border: '#8b5cf6' },
+                            font: { color: '#e4e4e7', face: 'Inter, sans-serif', size: 14, bold: true },
+                            borderWidth: 2,
+                            shadow: { enabled: true, color: 'rgba(139, 92, 246, 0.15)', size: 15, x: 0, y: 5 },
+                            shapeProperties: { borderRadius: 8 },
+                            margin: 16
+                        });
+                        addedPlugins.add(evt.emitter);
+                    }
+
+                    // React Flow Aesthetic for Central Event Node (Pill Shape)
+                    const eventNodeId = `evt_${evt.id}`;
+                    nodes.push({
+                        id: eventNodeId,
+                        label: `⚡ ${evt.event_name}\n${tm}`,
+                        shape: 'box',
+                        color: {
+                            background: isClicked ? '#f59e0b' : '#27272a',
+                            border: isClicked ? '#fbbf24' : '#52525b'
+                        },
+                        font: { color: isClicked ? '#18181b' : '#a1a1aa', face: 'JetBrains Mono', size: 13, bold: isClicked },
+                        borderWidth: isClicked ? 3 : 1,
+                        shadow: isClicked ? { enabled: true, color: 'rgba(245, 158, 11, 0.5)', size: 25, x: 0, y: 0 } : false,
+                        shapeProperties: { borderRadius: 24 },
+                        margin: 14
+                    });
+
+                    // Edge: Emitter -> Event
+                    edges.push({
+                        from: evt.emitter,
+                        to: eventNodeId,
+                        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                        smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
+                        color: { color: '#52525b', highlight: '#fbbf24' },
+                        width: 2
+                    });
+
+                    // Subscribers
+                    if (visibleSubscribers.length > 0) {
+                        visibleSubscribers.forEach(sub => {
+                            if (!addedPlugins.has(sub)) {
+                                nodes.push({
+                                    id: sub,
+                                    label: sub,
+                                    shape: 'box',
+                                    color: { background: '#18181b', border: '#10b981' },
+                                    font: { color: '#e4e4e7', face: 'Inter, sans-serif', size: 14, bold: true },
+                                    borderWidth: 2,
+                                    shadow: { enabled: true, color: 'rgba(16, 185, 129, 0.15)', size: 15, x: 0, y: 5 },
+                                    shapeProperties: { borderRadius: 8 },
+                                    margin: 16
+                                });
+                                addedPlugins.add(sub);
+                            }
+
+                            // Edge: Event -> Subscriber (Using dashes to simulate flow animation)
+                            edges.push({
+                                from: eventNodeId,
+                                to: sub,
+                                arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                                smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
+                                color: { color: '#52525b', highlight: '#fbbf24' },
+                                width: 2,
+                                dashes: [4, 4]
+                            });
+                        });
+                    }
+
+                    // Parent causality link
+                    if (evt.parent_id) {
+                        const parentEventNodeId = `evt_${evt.parent_id}`;
+                        edges.push({
+                            from: parentEventNodeId,
+                            to: evt.emitter,
+                            arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+                            smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.6 },
+                            color: { color: 'rgba(255,255,255,0.15)' },
+                            width: 1,
+                            dashes: true,
+                            label: 'causes',
+                            font: { color: '#71717a', size: 10, align: 'horizontal' }
+                        });
+                    }
+                });
+
+                var data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+                var options = {
+                    layout: { hierarchical: { direction: 'LR', sortMethod: 'directed', nodeSpacing: 100, levelSeparation: 350 } },
+                    physics: { enabled: false },
+                    interaction: { dragNodes: true, hover: true, tooltipDelay: 200 }
+                };
+
+                if (network !== null) {
+                    network.destroy();
+                }
+                network = new vis.Network(container, data, options);
+
+                // Flow animation trick using canvas beforeDrawing
+                let particleOffset = 0;
+
+                network.on("afterDrawing", function (ctx) {
+                    particleOffset += 0.005; // Particle speed (slower)
+                    if (particleOffset > 1) particleOffset -= 1;
+
+                    // Draw particles along edges
+                    const edgePositions = network.getPositions();
+                    const edgesData = network.body.data.edges.get();
+
+                    edgesData.forEach(edge => {
+                        const fromNode = network.body.nodes[edge.from];
+                        const toNode = network.body.nodes[edge.to];
+
+                        if (!fromNode || !toNode) return;
+
+                        // Helper to draw a subtle neon box glow over a node
+                        function drawNodeGlow(node, intensity) {
+                            if (!node.shape || !node.shape.boundingBox) return;
+                            const isEvt = node.options.id.toString().startsWith('evt_');
+                            const isSub = node.options.color && node.options.color.border === '#10b981';
+                            const r = isEvt ? 245 : (isSub ? 16 : 139);
+                            const g = isEvt ? 158 : (isSub ? 185 : 92);
+                            const b = isEvt ? 11 : (isSub ? 129 : 246);
+                            const rgb = `${r}, ${g}, ${b}`;
+                            const radius = isEvt ? 24 : 8;
+
+                            const bbox = node.shape.boundingBox;
+                            ctx.beginPath();
+                            if (ctx.roundRect) {
+                                ctx.roundRect(bbox.left, bbox.top, bbox.right - bbox.left, bbox.bottom - bbox.top, radius);
+                            } else {
+                                ctx.rect(bbox.left, bbox.top, bbox.right - bbox.left, bbox.bottom - bbox.top);
+                            }
+                            // Much more subtle glow
+                            ctx.strokeStyle = `rgba(${rgb}, ${intensity * 0.4})`;
+                            ctx.lineWidth = 2;
+                            ctx.shadowColor = `rgb(${rgb})`;
+                            ctx.shadowBlur = 10 * intensity;
+                            ctx.stroke();
+                            ctx.fillStyle = `rgba(${rgb}, ${intensity * 0.05})`;
+                            ctx.fill();
+                            ctx.closePath();
+                        }
+
+                        // 1. Illuminate Emitter on particle launch (0.0 to 0.2)
+                        if (particleOffset < 0.2) {
+                            drawNodeGlow(fromNode, 1 - (particleOffset / 0.2));
+                        }
+
+                        // 2. Illuminate Subscriber on particle arrival (0.8 to 1.0)
+                        if (particleOffset > 0.8) {
+                            drawNodeGlow(toNode, (particleOffset - 0.8) / 0.2);
+                        }
+
+                        // Calculate bezier curve points internally based on vis.js physics
+                        // Vis.js edges have a custom 'edgeType' property that manages the curves
+                        const edgeView = network.body.edges[edge.id];
+                        if (edgeView && edgeView.edgeType && edgeView.edgeType.getPoint) {
+                            // Get exactly the point on the curve at the current offset (0.0 to 1.0)
+                            const point = edgeView.edgeType.getPoint(particleOffset);
+
+                            if (point) {
+                                ctx.beginPath();
+                                ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                                ctx.fillStyle = '#fbbf24'; // Warning yellow glow
+                                ctx.shadowColor = '#f59e0b';
+                                ctx.shadowBlur = 15;
+                                ctx.shadowOffsetX = 0;
+                                ctx.shadowOffsetY = 0;
+                                ctx.fill();
+                                ctx.closePath();
+
+                                // Draw a smaller bright core
+                                ctx.beginPath();
+                                ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                                ctx.fillStyle = '#ffffff';
+                                ctx.shadowBlur = 0;
+                                ctx.fill();
+                                ctx.closePath();
+                            }
+                        }
+                    });
+                });
+
+                // Force continuous redraw for the dashes and particle animation
+                function animateFlow() {
+                    if (document.getElementById('vis-container')) {
+                        network.redraw();
+                        requestAnimationFrame(animateFlow);
+                    }
+                }
+                animateFlow();
+            }
+
+            renderGraph();
+
+            document.getElementById('hideRealtime').addEventListener('change', renderGraph);
+            document.getElementById('hideObservability').addEventListener('change', renderGraph);
+
+            codeModal.classList.add('active');
+        }
+
         function highlightDependencies(deps) {
             const allCards = document.querySelectorAll('.node-card');
             allCards.forEach(c => {
@@ -779,21 +1352,7 @@
         }
 
         function addEvent(name, data) {
-            const item = document.createElement('div');
-            item.className = 'event-item';
-            const now = new Date();
-            const time = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-            item.innerHTML = `
-                <div class="event-meta">
-                    <span class="event-tag">${name}</span>
-                    <span class="event-time">${time}</span>
-                </div>
-                <div class="event-msg">System internal activity detected.</div>
-                <button class="event-payload-btn" onclick="alert(JSON.stringify(${JSON.stringify(data).replace(/"/g, '&quot;')}, null, 2))">View Payload</button>
-            `;
-            eventLog.insertBefore(item, eventLog.firstChild);
-            if (eventLog.children.length > 30) eventLog.removeChild(eventLog.lastChild);
+            // Replaced by real-time fetch via websocket trigger
         }
 
         function connectWS() {
@@ -808,8 +1367,7 @@
             socket.onmessage = (e) => {
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'event') {
-                    addEvent(msg.event, msg.data);
-                    // Smart refresh: only refresh if registry changed (placeholder check)
+                    // When an event happens, simply refresh the entire tracer view to keep it synchronized with backend memory
                     refreshData();
                 }
             };
