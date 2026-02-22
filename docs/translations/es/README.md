@@ -221,7 +221,8 @@ En arquitecturas tradicionales, una sola funcionalidad requiere coordinación:
 
 Las Tools no guardan estado de negocio—son pura infraestructura. Esto significa:
 
-- **Cambio de base de datos instantáneo**: Reemplaza la Tool `db` por PostgreSQL, MongoDB o un ORM. Los plugins no cambian.
+- **Inicio Rápido Sin Fricción**: La Tool `db` por defecto usa SQLite y el `event_bus` usa la memoria. Cualquiera puede clonar y ejecutar el proyecto inmediatamente sin Docker ni dependencias externas.
+- **Escalado Horizontal Infinito**: ¿Necesitas escalar a 10 servidores? Inyecta una Tool `redis_event_bus` o `rabbitmq_tool`. ¿Necesitas una base de datos robusta? Cambia SQLite por PostgreSQL. **Tus Plugins (lógica de negocio) no cambiarán ni una sola línea.** El Kernel se encarga del nuevo cableado.
 - **Sin riesgo de migración**: Las Tools son intercambiables por diseño.
 - **En la era del código barato**: Tu IA escribe el SQL en 2 segundos. ¿Para qué abstraerlo?
 

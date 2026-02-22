@@ -238,11 +238,13 @@ In traditional architectures, a single feature requires coordination:
 
 Tools don't hold business state—they're pure infrastructure. This means:
 
-- **Swap databases instantly**: Replace the `db` Tool with PostgreSQL, MongoDB, or an ORM. Plugins don't change.
+- **Zero-Friction Quickstart**: The default `db` Tool uses SQLite, and the `event_bus` uses memory. Anyone can clone and run the project immediately without Docker or external dependencies.
+- **Infinite Horizontal Scaling**: Need to scale to 10 servers? Drop in a `redis_event_bus` Tool or a `rabbitmq_tool`. Need a robust database? Swap SQLite for PostgreSQL. **Your Plugins (business logic) won't change a single line.** The Kernel handles the new wiring.
 - **No migration risk**: Tools are interchangeable by design.
 - **In the age of cheap code**: Your AI writes the SQL in 2 seconds. Why abstract it?
 
 ### Same Isolation, Less Ceremony
+
 
 | Traditional Benefit | MicroCoreOS Equivalent |
 |--------------------|-----------------------|
