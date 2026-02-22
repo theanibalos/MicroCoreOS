@@ -7,7 +7,7 @@ class WelcomeLogger(BasePlugin):
 
     def on_boot(self):
         # Subscribe to the event as soon as the system starts
-        self.bus.subscribe("useEstaba rs.created", self.on_user_created)
+        self.bus.subscribe("users.created", self.on_user_created)
         print("[Notifications] Subscribed to user events.")
 
     def on_user_created(self, data, event_name):

@@ -252,6 +252,9 @@ Tools don't hold business state—they're pure infrastructure. This means:
 | "Onboarding new devs" | Read AI_CONTEXT.md in 5 minutes |
 
 
+
+
+
 ---
 
 ## Translations

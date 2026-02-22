@@ -123,11 +123,17 @@ class HttpServerTool(BaseTool):
         print(f"[HttpServer] WebSocket registered: {path}")
 
     def on_boot_complete(self, container):
+        config = uvicorn.Config(self.app, host="0.0.0.0", port=self._port, log_level="warning")
+        self._server = uvicorn.Server(config)
+
         def run():
-            uvicorn.run(self.app, host="0.0.0.0", port=self._port, log_level="warning")
+            self._server.run()
+
         self._server_thread = threading.Thread(target=run, daemon=True)
         self._server_thread.start()
         print(f"[HttpServer] FastAPI server active at http://localhost:{self._port}")
 
     def shutdown(self):
         print("[HttpServer] Stopping...")
+        if hasattr(self, '_server'):
+            self._server.should_exit = True
