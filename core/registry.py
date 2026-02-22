@@ -40,7 +40,7 @@ class Registry:
         self._sync(upd)
 
     def get_system_dump(self) -> dict:
-        return self._data
+        return copy.deepcopy(self._data)
 
     def get_domain_metadata(self) -> dict:
-        return self._data["domains"]
+        return copy.deepcopy(self._data["domains"])

@@ -1,0 +1,36 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Verify core compilation (Syntax Check)
+        run: |
+          uv run python -c "from core.kernel import Kernel; print('✅ Kernel OK')"
+          uv run python -c "from core.container import Container; print('✅ Container OK')"
+          uv run python -c "from core.base_plugin import BasePlugin; print('✅ BasePlugin OK')"
+          uv run python -c "from core.base_tool import BaseTool; print('✅ BaseTool OK')"
+
+      - name: Run Core Tests
+        run: uv run pytest tests/ -v --tb=short
