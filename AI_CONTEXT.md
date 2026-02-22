@@ -49,6 +49,17 @@ HTTP Server Tool (http):
             - HttpContext.set_cookie(...): Advanced cookie management.
 ```
 
+### 🔧 Tool: `identity` (Status: ✅)
+```text
+Identity & Security Tool (identity):
+        - PURPOSE: Cryptographic services for Authentication and Authorization.
+        - CAPABILITIES:
+            - hash_password(password): Secure password hashing (Bcrypt).
+            - verify_password(password, hashed): Fast password verification.
+            - generate_token(data, expires_delta=None): JWT creation.
+            - decode_token(token): JWT validation and decoding.
+```
+
 ### 🔧 Tool: `logger` (Status: ✅)
 ```text
 Logging Tool (logger):
@@ -58,6 +69,16 @@ Logging Tool (logger):
             - error(message): Critical failures.
             - warning(message): Non-critical alerts.
             - add_sink(callback): Connect external observability (e.g. to EventBus).
+```
+
+### 🔧 Tool: `db` (Status: ✅)
+```text
+SQLite Persistence Tool (db):
+        - PURPOSE: Persistent relational data storage using SQL.
+        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
+        - CAPABILITIES:
+            - query(sql, params): Read data (SELECT). Returns list of tuples.
+            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
 ```
 
 ### 🔧 Tool: `state` (Status: ✅)
@@ -79,27 +100,6 @@ Systems Registry Tool (registry):
         - CAPABILITIES:
             - get_system_dump(): Full inventory of active Tools, Domains and Plugins.
             - get_domain_metadata(): Detailed analysis of models and schemas.
-```
-
-### 🔧 Tool: `identity` (Status: ✅)
-```text
-Identity & Security Tool (identity):
-        - PURPOSE: Cryptographic services for Authentication and Authorization.
-        - CAPABILITIES:
-            - hash_password(password): Secure password hashing (Bcrypt).
-            - verify_password(password, hashed): Fast password verification.
-            - generate_token(data, expires_delta=None): JWT creation.
-            - decode_token(token): JWT validation and decoding.
-```
-
-### 🔧 Tool: `db` (Status: ✅)
-```text
-SQLite Persistence Tool (db):
-        - PURPOSE: Persistent relational data storage using SQL.
-        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
-        - CAPABILITIES:
-            - query(sql, params): Read data (SELECT). Returns list of tuples.
-            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
 ```
 
 ## 📦 Domain Models

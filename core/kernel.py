@@ -92,6 +92,7 @@ class Kernel:
                 print(f"[Kernel] 🚨 Tool '{t_name}' failed: {e}")
 
         # 2. Boot Plugins
+        boot_threads = []
         for plugin_cls, domain in self._load_modules_from_dir("domains", BasePlugin):
             p_name = plugin_cls.__name__
             try:
@@ -122,12 +123,18 @@ class Kernel:
                         print(f"[Kernel] ⚠️ Failure in {name}: {repr(ex)}")
                         self.container.registry.update_plugin_status(name, "DEAD", str(ex))
 
-                threading.Thread(target=_start, args=(instance, p_name), daemon=True).start()
+                t = threading.Thread(target=_start, args=(instance, p_name), daemon=True)
+                boot_threads.append(t)
+                t.start()
                 print(f"[Kernel] Plugin loaded (DI) and starting task: {p_name}")
                 
             except Exception as e:
                 print(f"[Kernel] ⚠️ Initialization error in {p_name}: {e}")
                 self.container.registry.update_plugin_status(p_name, "DEAD", str(e))
+
+        # Wait for all plugins to finish booting before finalizing tools
+        for t in boot_threads:
+            t.join()
 
         # 3. Finalize
         for name in self.container.list_tools():
