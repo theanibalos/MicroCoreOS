@@ -77,3 +77,4 @@ These rules are inviolable. Any deviation is a violation of the "Atomic Microker
 
 ## 📂 Supplementary Information
 For detailed agent persona and behavioral refinement, refer to [agent.md](./agent.md).
+5. **Zero-Touch Bootstrapper**: The `main.py` file is sacred and immutable. It only instantiates the `Kernel()`, binds OS signals, and calls `app.boot()`. **NEVER** modify the bootstrapper to add imports or setup logic.

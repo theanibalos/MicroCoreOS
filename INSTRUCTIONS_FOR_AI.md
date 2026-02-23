@@ -1,5 +1,10 @@
 # 🤖 AI Agent Implementation Guide
 
+## ⚠️ CRITICAL ARCHITECTURE RULES (DO NOT IGNORE)
+1. **NO MANUAL INJECTION IN `main.py`:** The `Kernel` handles 100% of dependency injection via auto-discovery of the `tools/` and `domains/` folders. **NEVER** modify `main.py` to manually instantiate tools or plugins.
+2. **NO HARDCODED IMPORTS:** Plugins must only request tools via their `__init__` arguments matching the tool's `name` property. Do not `import` tools directly into plugins.
+3. **DO NOT APPLY FASTAPI/FLASK PATTERNS:** This is an Atomic Microkernel. There are no "Routers", "Controllers", or "Services". There are only Tools (Infrastructure capabilities) and Plugins (Domain business logic).
+
 This guide is an "Interface Router" for AI agents. Do not read the whole document—jump to the section that matches your task.
 
 ## 🧭 Navigation Index
