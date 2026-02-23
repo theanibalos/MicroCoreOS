@@ -210,7 +210,6 @@ MicroCoreOS is moving towards a fully decentralized, marketplace-driven ecosyste
 
 - 🏗️ **Atomic Tool Marketplace**: A drop-in ecosystem where tools (Redis, PostgreSQL, LLMs) are self-contained folders with their own manifests, default configs, and AI instructions.
 - 🔍 **Tracer Tool**: Integrated mapping of which plugins react to which events for full observability.
-- 🛡️ **Global Middleware**: Intercept plugin execution for auditing, security, or performance gating.
 - 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM for language-agnostic development.
 - 📦 **One-Click Distribution**: Install new capabilities via `uv` or simply by copying a folder into `/tools`.
 
@@ -280,5 +279,3 @@ For commercial consulting or support: theanibalos@gmail.com
 Built because I was tired of explaining my architecture to Claude.
 
 ---
-
-*If this saves you time, consider giving it a ⭐*

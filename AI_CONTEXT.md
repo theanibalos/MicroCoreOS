@@ -81,6 +81,16 @@ Systems Registry Tool (registry):
             - get_domain_metadata(): Detailed analysis of models and schemas.
 ```
 
+### 🔧 Tool: `db` (Status: ✅)
+```text
+SQLite Persistence Tool (db):
+        - PURPOSE: Persistent relational data storage using SQL.
+        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
+        - CAPABILITIES:
+            - query(sql, params): Read data (SELECT). Returns list of tuples.
+            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
+```
+
 ## 📦 Domain Models
 Active data structures. Use these in `request_model`/`response_model`.
 
