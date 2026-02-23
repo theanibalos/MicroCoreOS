@@ -152,6 +152,7 @@ class Kernel:
             return self.plugins[plugin_name].execute(**kwargs)
         except Exception as e:
             print(f"[Kernel] 💥 Crash in {plugin_name}: {e}")
+            self.container.registry.update_plugin_status(plugin_name, "DEAD", str(e))
             return {"success": False, "error": str(e)}
 
     def shutdown(self):
