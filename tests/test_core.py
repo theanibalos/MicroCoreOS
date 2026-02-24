@@ -30,10 +30,10 @@ class FakePlugin(BasePlugin):
         self.fake_tool = fake_tool
         self.booted = False
     
-    def on_boot(self):
+    async def on_boot(self):
         self.booted = True
     
-    def execute(self, data=None, context=None):
+    async def execute(self, data=None, context=None):
         return {"success": True, "data": "executed"}
 
 
@@ -125,16 +125,18 @@ class TestRegistry:
 # ─── BasePlugin Tests ──────────────────────────────────────
 
 class TestBasePlugin:
-    def test_execute_returns_data(self):
+    @pytest.mark.anyio
+    async def test_execute_returns_data(self):
         plugin = FakePlugin(FakeTool())
-        result = plugin.execute()
+        result = await plugin.execute()
         assert result == {"success": True, "data": "executed"}
 
-    def test_unimplemented_execute_raises(self):
+    @pytest.mark.anyio
+    async def test_unimplemented_execute_raises(self):
         """Plugins that don't override execute() should raise NotImplementedError."""
         class EventOnlyPlugin(BasePlugin):
             pass
         
         plugin = EventOnlyPlugin()
         with pytest.raises(NotImplementedError):
-            plugin.execute()
+            await plugin.execute()

@@ -1,26 +1,26 @@
 import os
-import sqlite3
-import threading
+import aiosqlite
+import asyncio
 from core.base_tool import BaseTool
 
 class SqliteTool(BaseTool):
     def __init__(self):
-        self._local = threading.local()
-        # Read directly from global environment (main.py already loaded it)
         self._db_path = os.getenv("DB_PATH", "database.db")
+        self._conn = None
 
     @property
     def name(self) -> str:
         return "db"
 
-    def _get_conn(self):
-        """Gets the unique connection for the current thread"""
-        if not hasattr(self._local, "conn"):
-            self._local.conn = sqlite3.connect(self._db_path, check_same_thread=False)
-            self._local.cursor = self._local.conn.cursor()
-        return self._local.conn, self._local.cursor
+    async def _get_conn(self) -> aiosqlite.Connection:
+        """Gets the shared connection or creates it"""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self._db_path)
+            # This allows accessing columns by name like row['id']
+            self._conn.row_factory = aiosqlite.Row
+        return self._conn
 
-    def setup(self):
+    async def setup(self):
         """Initializes the database and ensures migration history table exists"""
         print(f"[System] SqliteTool: Preparing database at '{self._db_path}'...")
         # Ensure the file exists
@@ -29,7 +29,7 @@ class SqliteTool(BaseTool):
                 pass
         
         # Create migrations history table
-        self.execute("""
+        await self.execute("""
             CREATE TABLE IF NOT EXISTS _migrations_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT NOT NULL,
@@ -39,7 +39,7 @@ class SqliteTool(BaseTool):
             )
         """)
         
-    def on_boot_complete(self, container):
+    async def on_boot_complete(self, container):
         """Executes pending .sql migrations found in domains/*/migrations/ directories"""
         print("[System] SqliteTool: Checking for pending migrations...")
         domains_dir = os.path.abspath("domains")
@@ -55,7 +55,7 @@ class SqliteTool(BaseTool):
             migration_files = sorted([f for f in os.listdir(migrations_dir) if f.endswith('.sql')])
             for filename in migration_files:
                 # Check if already applied
-                applied = self.query(
+                applied = await self.query(
                     "SELECT 1 FROM _migrations_history WHERE domain = ? AND filename = ?", 
                     (domain, filename)
                 )
@@ -66,43 +66,53 @@ class SqliteTool(BaseTool):
                     with open(filepath, "r", encoding="utf-8") as file:
                         sql_script = file.read()
                         
+                    conn = await self._get_conn()
                     try:
-                        # Execute SQL script (may contain multiple statements)
-                        conn, cursor = self._get_conn()
-                        cursor.executescript(sql_script)
+                        await conn.execute("BEGIN TRANSACTION")
+                        
+                        # Split by semicolon and execute one by one
+                        statements = [s.strip() for s in sql_script.split(';') if s.strip()]
+                        for statement in statements:
+                            await conn.execute(statement)
+                        
                         # Record successful migration
-                        cursor.execute(
+                        await conn.execute(
                             "INSERT INTO _migrations_history (domain, filename) VALUES (?, ?)",
                             (domain, filename)
                         )
-                        conn.commit()
+                        await conn.commit()
                         print(f"  [Migration] Successfully applied {domain}/{filename}")
                     except Exception as e:
+                        await conn.rollback()
                         print(f"  [Migration/ERROR] Failed applying {domain}/{filename}: {e}")
-                        # In a real scenario, you might want to halt the system here
                         raise e
 
     def get_interface_description(self) -> str:
         return """
-        SQLite Persistence Tool (db):
-        - PURPOSE: Persistent relational data storage using SQL.
-        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
+        Async SQLite Persistence Tool (db):
+        - PURPOSE: Persistent relational data storage using SQL (Asynchronous).
         - CAPABILITIES:
-            - query(sql, params): Read data (SELECT). Returns list of tuples.
-            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
+            - await query(sql, params): Read data (SELECT). Returns list of rows.
+            - await execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
         """
 
-    def query(self, sql, params=()):
-        _, cursor = self._get_conn()
-        cursor.execute(sql, params)
-        return cursor.fetchall()
+    async def query(self, sql, params=()):
+        conn = await self._get_conn()
+        async with conn.execute(sql, params) as cursor:
+            # We convert it back to a list of tuples for compatibility with basic plugins
+            # but using Row would be better. For now, let's keep it simple.
+            rows = await cursor.fetchall()
+            return [tuple(row) for row in rows]
 
-    def execute(self, sql, params=()):
-        conn, cursor = self._get_conn()
-        cursor.execute(sql, params)
-        conn.commit()
-        return cursor.lastrowid
+    async def execute(self, sql, params=()):
+        conn = await self._get_conn()
+        async with conn.execute(sql, params) as cursor:
+            row_id = cursor.lastrowid
+            await conn.commit()
+            return row_id
 
-    def shutdown(self):
-        # Being daemon threads, the OS will clean up.
-        pass
+    async def shutdown(self):
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+            print("[SqliteTool] Database connection closed.")

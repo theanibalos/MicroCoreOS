@@ -9,7 +9,7 @@ class PingPlugin(BasePlugin):
         self.logger = logger
         self.http = http
 
-    def on_boot(self):
+    async def on_boot(self):
         self.http.add_endpoint(
             path="/ping",
             method="GET",
@@ -18,8 +18,8 @@ class PingPlugin(BasePlugin):
             tags=["System"]
         )
 
-    def execute(self, data: dict = None):
+    async def execute(self, data: dict = None):
         return {"success": True, "data": {"status": "ok", "message": "pong"}}
 
-    def handler(self, data, context=None):
-        return self.execute(data)
+    async def handler(self, data, context=None):
+        return await self.execute(data)

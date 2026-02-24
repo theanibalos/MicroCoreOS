@@ -1,28 +1,30 @@
 import signal
-import threading
+import asyncio
 from dotenv import load_dotenv
 from core.kernel import Kernel
 
-def main():
+async def main():
     load_dotenv()
 
-    stop_event = threading.Event()
+    stop_event = asyncio.Event()
     app = Kernel()
 
-    def stop_signal_handler(signum, frame):
+    def stop_signal_handler():
         stop_event.set()
 
-    signal.signal(signal.SIGINT, stop_signal_handler)
-    signal.signal(signal.SIGTERM, stop_signal_handler)
+    # Native asyncio signal handling
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_signal_handler)
 
-    app.boot()
+    await app.boot()
 
     print("\n🚀 [MicroCoreOS] System Online. (Ctrl+C to exit)")
 
-    stop_event.wait()
+    await stop_event.wait()
 
-    app.shutdown()
+    await app.shutdown()
     print("[MicroCoreOS] Shutdown complete. See you soon!")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

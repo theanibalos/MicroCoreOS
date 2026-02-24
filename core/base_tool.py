@@ -7,17 +7,17 @@ class BaseTool(ABC):
         pass
 
     @abstractmethod
-    def setup(self):
+    async def setup(self):
         pass
 
     @abstractmethod
     def get_interface_description(self) -> str:
         pass
 
-    def on_boot_complete(self, container):
+    async def on_boot_complete(self, container):
         """Optional hook: executed when everything is loaded."""
         pass
     
-    def shutdown(self):
+    async def shutdown(self):
         """Optional: Resource cleanup (close DB, stop server)"""
         pass

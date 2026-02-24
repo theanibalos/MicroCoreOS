@@ -21,10 +21,11 @@ Follow the MicroCoreOS CRITICAL RULES strictly:
 2. Do NOT create Data Transfer Objects (DTOs), Services, Controllers, or Repositories. Put ALL the logic inside this single plugin file.
 3. The class must inherit from `BasePlugin`.
 4. Inject the necessary Tools via the `__init__` constructor arguments (e.g., `logger`, `db`, `http`, `event_bus`). DO NOT import tools manually.
-5. In the `__init__` method, ONLY save the injected tools as instance attributes (e.g., `self.db = db`). Do not put logic here.
-6. Register endpoints, web-sockets, or event subscriptions inside the `on_boot(self)` method.
-7. Implement the core business logic inside an `execute(self, ...)` or similar handler method.
-8. The code must be concise, clean, and use the existing Dependency Injection container pattern.
+5. Provide String Type Hints for injected tools using `from typing import TYPE_CHECKING` at the top, to improve readability.
+6. In the `__init__` method, ONLY save the injected tools as instance attributes (e.g., `self.db = db`). Do not put logic here.
+7. Register endpoints, web-sockets, or event subscriptions inside the `on_boot(self)` method. Use `tags`, `request_model`, and `response_model` when registering HTTP endpoints.
+8. Implement the core business logic inside an `execute(self, ...)` or similar handler method, wrapping it in a Try/Except block.
+9. The code must be concise, clean, and use the existing Dependency Injection container pattern.
 ```
 
 ---

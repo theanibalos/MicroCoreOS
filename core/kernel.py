@@ -1,25 +1,43 @@
 import os
 import importlib.util
 import inspect
-import threading
+import asyncio
 from core.container import Container
 from core.base_tool import BaseTool
 from core.base_plugin import BasePlugin
+from core.context import current_identity_var
 
 class Kernel:
     def __init__(self):
         self.container = Container()
         self.plugins = {}
 
+    async def _call_maybe_async(self, func, *args, **kwargs):
+        """
+        Calls a function and awaits it if it returns a coroutine.
+        If it's a synchronous function, it runs it in a separate thread 
+        to avoid blocking the main Event Loop.
+        """
+        if inspect.iscoroutinefunction(func):
+            return await func(*args, **kwargs)
+        
+        # Call it (possibly in thread)
+        res = await asyncio.to_thread(func, *args, **kwargs)
+        
+        # Handle cases where a sync func returns a coroutine (rare but possible with wrappers)
+        if inspect.iscoroutine(res):
+            return await res
+        return res
+
     def _load_modules_from_dir(self, directory, base_class):
-        """Discovers and instantiates modules of a given base_class inside a directory."""
+        """Discovers and instantiates modules from a directory."""
         found_classes = []
         if not os.path.exists(directory): 
             return found_classes
 
         abs_dir = os.path.abspath(directory)
         for root, _, files in os.walk(abs_dir):
-            for file in files:
+            for file in sorted(files):
                 if not file.endswith(".py") or file == "__init__.py":
                     continue
                 
@@ -32,12 +50,10 @@ class Kernel:
                     if spec.loader:
                         spec.loader.exec_module(module)
 
-                    # Extract metadata if it's a domain
                     domain_name = None
                     if "domains" in path:
                         domain_name = os.path.relpath(path, abs_dir).split(os.sep)[0]
 
-                    # Register models content if found
                     if domain_name and "models" in path:
                         with open(path, "r", encoding="utf-8") as f:
                             self.container.registry.register_domain_metadata(domain_name, f"model_{file}", f.read())
@@ -52,15 +68,13 @@ class Kernel:
         return found_classes
 
     def _resolve_plugin_dependencies(self, plugin_cls):
-        """Resolves dependencies for a plugin using type hints and default values."""
+        """Resolves dependencies for a plugin using type hints."""
         sig = inspect.signature(plugin_cls.__init__)
         dependencies = {}
         missing = []
         
         for param_name, param in sig.parameters.items():
-            if param_name in ("self", "args", "kwargs"): 
-                continue
-            
+            if param_name in ("self", "args", "kwargs"): continue
             if param_name == "container":
                 dependencies["container"] = self.container
                 continue
@@ -74,25 +88,24 @@ class Kernel:
                     
         return dependencies, missing
 
-    def boot(self):
-        print("--- [Kernel] Starting System ---")
+    async def boot(self):
+        print("--- [Kernel] Starting System (Async Engine) ---")
         
         # 1. Boot Tools
         for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
             try:
                 instance = tool_cls()
                 t_name = instance.name
-                instance.setup()
+                await self._call_maybe_async(instance.setup)
                 self.container.register(instance)
                 self.container.registry.register_tool(t_name, "OK")
             except Exception as e:
-                # Capture name without full instantiation if possible
-                t_name = getattr(tool_cls, 'name', tool_cls.__name__)
+                t_name = tool_cls.__name__
                 self.container.registry.register_tool(t_name, "FAIL", str(e))
                 print(f"[Kernel] 🚨 Tool '{t_name}' failed: {e}")
 
         # 2. Boot Plugins
-        boot_threads = []
+        boot_tasks = []
         for plugin_cls, domain in self._load_modules_from_dir("domains", BasePlugin):
             p_name = plugin_cls.__name__
             try:
@@ -114,52 +127,42 @@ class Kernel:
                 self.plugins[p_name] = instance
                 self.container.registry.update_plugin_status(p_name, "RUNNING")
 
-                def _start(p_inst, name):
+                async def _start(p_inst, name):
+                    token = current_identity_var.set(f"{name}.on_boot")
                     try:
-                        p_inst.on_boot()
+                        await self._call_maybe_async(p_inst.on_boot)
                         print(f"[Kernel] Plugin ready: {name}")
                         self.container.registry.update_plugin_status(name, "READY")
                     except Exception as ex:
                         print(f"[Kernel] ⚠️ Failure in {name}: {repr(ex)}")
                         self.container.registry.update_plugin_status(name, "DEAD", str(ex))
+                    finally:
+                        current_identity_var.reset(token)
 
-                t = threading.Thread(target=_start, args=(instance, p_name), daemon=True)
-                boot_threads.append(t)
-                t.start()
-                print(f"[Kernel] Plugin loaded (DI) and starting task: {p_name}")
+                boot_tasks.append(asyncio.create_task(_start(instance, p_name)))
                 
             except Exception as e:
                 print(f"[Kernel] ⚠️ Initialization error in {p_name}: {e}")
                 self.container.registry.update_plugin_status(p_name, "DEAD", str(e))
 
-        # Wait for all plugins to finish booting before finalizing tools
-        for t in boot_threads:
-            t.join()
+        # Wait for all plugins to finish booting
+        if boot_tasks:
+            await asyncio.gather(*boot_tasks)
 
         # 3. Finalize
         for name in self.container.list_tools():
             try:
-                self.container.get(name).on_boot_complete(self.container)
+                await self._call_maybe_async(self.container.get(name).on_boot_complete, self.container)
             except Exception as e:
                 print(f"[Kernel] Post-boot error in {name}: {e}")
 
         print("--- [Kernel] System Ready ---")
 
-    def run_plugin(self, plugin_name, **kwargs):
-        if plugin_name not in self.plugins:
-            return {"success": False, "error": f"Plugin {plugin_name} not found."}
-        try:
-            return self.plugins[plugin_name].execute(**kwargs)
-        except Exception as e:
-            print(f"[Kernel] 💥 Crash in {plugin_name}: {e}")
-            self.container.registry.update_plugin_status(plugin_name, "DEAD", str(e))
-            return {"success": False, "error": str(e)}
-
-    def shutdown(self):
-        print("\n--- [Kernel] Shutting down tools ---")
+    async def shutdown(self):
+        print("\n--- [Kernel] Shutting down ---")
         for name in self.container.list_tools():
             try:
-                self.container.get(name).shutdown()
+                await self._call_maybe_async(self.container.get(name).shutdown)
                 print(f"[Kernel] Tool '{name}' closed.")
             except Exception as e:
                 print(f"[Kernel] Error closing '{name}': {e}")

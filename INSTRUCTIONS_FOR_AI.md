@@ -48,31 +48,53 @@ When building new data-driven features, always follow this Inside-Out process. P
 3. **Usage Pattern**: Tools are injected via `__init__`. Use `self.tool_name` to interact.
 
 ```python
+from typing import TYPE_CHECKING
 from core.base_plugin import BasePlugin
+from domains.users.models.user import UserEntity
+
+if TYPE_CHECKING:
+    from tools.http_server.http_server_tool import HttpServerTool
+    from tools.sqlite.sqlite_tool import SqliteTool
+    from tools.logger.logger_tool import LoggerTool
+    from tools.event_bus.event_bus_tool import EventBusTool
 
 class MyPlugin(BasePlugin):
-    def __init__(self, logger, event_bus, http, db):
+    def __init__(self, logger: 'LoggerTool', event_bus: 'EventBusTool', http: 'HttpServerTool', db: 'SqliteTool'):
         # 1. Dependency Injection (Save as instance attributes)
         self.logger = logger
         self.bus = event_bus
         self.http = http
         self.db = db
 
-    def on_boot(self):
+    async def on_boot(self):
         # 2. Registration Phase (Executed only once)
-        self.http.add_endpoint("/my-path", "POST", self.handler)
-        self.bus.subscribe("user.created", self.execute)
+        self.http.add_endpoint(
+            path="/my-path", 
+            method="POST", 
+            handler=self.handler,
+            tags=["MyDomain"],
+            request_model=UserEntity
+        )
+        await self.bus.subscribe("user.created", self.execute)
 
-    def execute(self, data: dict):
+    async def execute(self, data: dict):
         # 3. Execution Phase (Business Logic)
-        # Using tools:
-        self.logger.info("New request received")
-        result = self.db.query("SELECT * FROM users WHERE id=?", (data.get('id'),))
-        return {"success": True, "data": result}
+        try:
+            self.logger.info("New request received")
+            # Tools like 'db' are now async. Await them!
+            result = await self.db.query("SELECT * FROM users WHERE id=?", (data.get('id'),))
+            return {"success": True, "data": result}
+        except Exception as e:
+            self.logger.error(f"Error handling request: {e}")
+            return {"success": False, "error": str(e)}
     
-    def handler(self, data, context):
-        return self.execute(data)
+    async def handler(self, data, context):
+        return await self.execute(data)
 ```
+
+> [!TIP]
+> **Hybrid Power**: Use `async def` for I/O tasks (database, network). 
+> If you have a heavy CPU task (video, crypto), use `def`. The Kernel will automatically offload `def` methods to a thread pool to avoid blocking the system.
 
 ---
 
@@ -100,7 +122,9 @@ class MyServiceTool(BaseTool):
         My Service Tool (my_service):
         - PURPOSE: Briefly describe what it does.
         - CAPABILITIES:
-            - some_method(arg1): Description of the method.
+            - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, auth_validator=None): 
+                Registers a new route. Supports Pydantic models for request validation and OpenAPI auto-generation.
+                Example: self.http.add_endpoint("/users", "POST", self.handler, tags=["Users"], request_model=UserEntity)
         """
 
     def on_boot_complete(self, container):
@@ -125,9 +149,13 @@ Understanding *when* code runs is critical.
 
 ### 🧩 Plugin Lifecycle
 1. **`__init__`**: **DI Phase**. Just save the requested tools. Don't perform logic here.
-2. **`on_boot()`**: **Subscription Phase**. Register HTTP endpoints or EventBus subscribers.
-3. **`execute(data)`**: **Action Phase**. The standard entry point for logic.
+2. **`on_boot()`**: **Subscription Phase**. Register HTTP endpoints or EventBus subscribers. Can be `async def` or `def`.
+3. **`execute(data)`**: **Action Phase**. The standard entry point for logic. Can be `async def` or `def`.
 4. **`shutdown()`**: **Cleanup**. Optional.
+
+> [!IMPORTANT]
+> **The Async Rule**: If you use `async def`, NEVER use `time.sleep()`. Use `await asyncio.sleep()`.
+> If you must use a blocking library, use `def` and the Kernel will handle it.
 
 ---
 

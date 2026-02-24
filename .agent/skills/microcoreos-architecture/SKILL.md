@@ -7,12 +7,13 @@ description: Ensures adherence to MicroCoreOS "Atomic Microkernel" architecture.
     
 This skill enforces the modular, asynchronous, and resilient design principles of MicroCoreOS.
 
-## 🏛️ The Three Golden Rules (SACRED)
+## 🏛️ The Four Golden Rules (SACRED)
 These rules are inviolable. Any deviation is a violation of the "Atomic Microkernel" architecture.
 
 1.  **Rule 1: The Core is Sacred**: Files in `/core` MUST NOT be modified for business logic or observability.
-2.  **Rule 2: Absolute Tool Isolation**: Tools are independent atoms. A Tool **MUST NEVER** import, request, or depend on another Tool. They are 100% agnostic of each other.
-3.  **Rule 3: Plugin-as-Glue (The Bridge)**: Plugins are the ONLY place where Tools collaborate. If two Tools need to work together (e.g., HTTP needs Identity), the Plugin MUST orchestrate the bridge.
+2.  **Rule 2: Absolute Tool Isolation**: Tools are independent atoms. A Tool **MUST NEVER** import, request, or depend on another Tool.
+3.  **Rule 3: Plugin-as-Glue (The Bridge)**: Plugins orchestrate Tools. 
+4.  **Rule 4: Hybrid Async Integrity**: The system supports both `async` and `sync`. Never block the Event Loop from a coroutine. Use `asyncio.to_thread` for heavy CPU work.
 
 > [!IMPORTANT]
 > **Tool vs Plugin Philosophy**: 
@@ -68,6 +69,7 @@ These rules are inviolable. Any deviation is a violation of the "Atomic Microker
 2.  **No Logic in Init**: `__init__` is for DI only.
 3.  **No Logic in Setup**: `setup` is for infrastructure resources only.
 4.  **Action Entry**: All plugin activity MUST start in `execute()` or from an `on_boot()` registration.
+5.  **Smart Core Dispatch**: The Kernel automatically offloads `def` (sync) methods to threads. Use `async def` for I/O (DB, APIs) for maximum performance.
 
 ### Step-by-Step for Creating a Plugin
 1.  **Consult Inventory**: Read `AI_CONTEXT.md` for live tools/models.

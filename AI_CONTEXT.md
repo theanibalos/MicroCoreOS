@@ -28,25 +28,28 @@ Context Manager Tool (context_manager):
 
 ### 🔧 Tool: `event_bus` (Status: ✅)
 ```text
-Event Bus Tool (event_bus):
-        - PURPOSE: Centralized pub/sub & RPC communication between plugins.
+Async Event Bus Tool (event_bus):
+        - PURPOSE: High-performance, non-blocking communication between plugins using Pub/Sub and Async RPC.
         - CAPABILITIES:
-            - publish(event_name, data): Fire an asynchronous event. Emitter auto-detected.
-            - subscribe(event_name, callback): Listen to events. Use '*' for all. Callback: callback(data, event_name).
-            - unsubscribe(event_name, callback): Stop listening.
-            - request(event_name, data, timeout=5): Synchronous RPC call. Returns the handler's return value.
-            - get_trace_history(): Returns list of traced events for observability.
+            - await publish(event_name, data): Broadcasts an event. Fire-and-forget.
+            - await subscribe(event_name, callback): Listens for a specific event. Callback can be async or sync.
+            - await request(event_name, data, timeout=5): Performs an Asynchronous RPC. Waits for a response from a subscriber.
+        - TRACING: Tracks event causality across the system for observability.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
 ```text
-HTTP Server Tool (http):
-        - PURPOSE: Expose business logic as a RESTful API and serve Web content.
+Hybrid HTTP Server Tool (http):
+        - PURPOSE: Provides a FastAPI-powered HTTP gateway that supports both sync and async handlers.
         - CAPABILITIES:
-            - add_endpoint(path, method, handler, ...): Registers a new route.
-            - mount_static(path, directory): Serves frontend files (SPA, dashboards).
-            - add_ws_endpoint(path, handler): Enables real-time WebSocket communication.
-            - HttpContext.set_cookie(...): Advanced cookie management.
+            - add_endpoint(path, method, handler, tags=None, request_model=None, response_model=None, auth_validator=None): 
+                Registers a new route.
+                - tags: List of strings for OpenAPI documentation.
+                - request_model: Pydantic class for validation and body parsing.
+                - response_model: Pydantic class for standardized response shapes.
+                - auth_validator: A function (sync or async) that takes a token and returns a payload or None.
+            - mount_static(path, directory_path): Serves static files from a directory.
+            - add_ws_endpoint(path, on_connect, on_disconnect=None): Registers a WebSocket handler.
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅)
@@ -83,12 +86,26 @@ Systems Registry Tool (registry):
 
 ### 🔧 Tool: `db` (Status: ✅)
 ```text
-SQLite Persistence Tool (db):
-        - PURPOSE: Persistent relational data storage using SQL.
-        - IDEAL FOR: Domain entities (Users, Products), relational queries, and ACID transactions.
+Async SQLite Persistence Tool (db):
+        - PURPOSE: Persistent relational data storage using SQL (Asynchronous).
         - CAPABILITIES:
-            - query(sql, params): Read data (SELECT). Returns list of tuples.
-            - execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
+            - await query(sql, params): Read data (SELECT). Returns list of rows.
+            - await execute(sql, params): Write data (INSERT, UPDATE, DELETE). Returns last ID.
+```
+
+### 🔧 Tool: `auth` (Status: ✅)
+```text
+Authentication Tool (auth):
+        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
+        - CAPABILITIES:
+            - hash_password(password: str) -> str: Securely hashes a plain-text password using bcrypt.
+            - verify_password(password: str, hashed_password: str) -> bool: Verifies if a password matches its hash.
+            - create_token(data: dict, expires_delta: Optional[int] = None) -> str: 
+                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}). 
+                'expires_delta' is optional minutes until expiration.
+            - decode_token(token: str) -> dict: 
+                Verifies and decodes a JWT token. Returns the payload dictionary. 
+                Raises Exception if token is expired or invalid.
 ```
 
 ## 📦 Domain Models
@@ -96,4 +113,8 @@ Active data structures. Use these in `request_model`/`response_model`.
 
 ### 🧩 Domain `ping`
 - Model: `ping_model.py`
+
+### 🧩 Domain `users`
+- Model: `auth.py`
+- Model: `user.py`
 
