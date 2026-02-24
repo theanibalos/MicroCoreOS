@@ -39,13 +39,22 @@ class CreateProductPlugin(BasePlugin):
     def on_boot(self):
         self.http.add_endpoint("/products", "POST", self.execute)
 
-    def execute(self, data: dict):
-        product_id = self.db.execute(
-            "INSERT INTO products (name, price) VALUES (?, ?)",
-            (data["name"], data["price"])
-        )
-        self.bus.publish("product.created", {"id": product_id})
-        return {"success": True, "id": product_id}
+    async def execute(self, data: dict):
+        try:
+            user = UserEntity(**data)
+            password_hash = self.auth.hash_password(user.password) if user.password else None
+            user_id = await self.db.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                (user.name, user.email, password_hash)
+            )
+            await self.bus.publish("user.created", {"id": user_id, "email": user.email})
+            return {"success": True, "data": {"id": user_id, "name": user.name}}
+        except Exception as e:
+            self.logger.error(f"Failed to create user: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def handler(self, data: dict, context):
+        return await self.execute(data)
 ```
 
 **48 lines. One file. Complete feature.**
@@ -60,9 +69,11 @@ class CreateProductPlugin(BasePlugin):
 
 ## For AI-Driven Development
 
-The architecture generates `AI_CONTEXT.md` automatically—a manifest with all available tools and their signatures. Your AI assistant always knows what's available without exploring the codebase.
+The architecture generates `AI_CONTEXT.md` automatically—a manifest with all available tools and their exact method signatures. Your AI assistant always knows what's available without exploring the codebase. This allows for near-zero explanation when asking an AI to implement new features.
 
 **Measured token usage per feature:**
+
+The architecture minimizes "Context Noise". Every extra file in a traditional architecture is extra surface area for AI hallucinations and context saturation.
 
 | Architecture | Files | Lines | Est. Tokens |
 |--------------|-------|-------|-------------|
@@ -95,9 +106,9 @@ MicroCoreOS/
 │   ├── base_plugin.py      # Plugin contract (13 lines)
 │   └── base_tool.py        # Tool contract (23 lines)
 ├── tools/                   # Infrastructure (stateless)
-│   ├── http_server/        # FastAPI wrapper
-│   ├── sqlite/             # Database abstraction
-│   └── event_bus/          # Decoupled communication
+│   ├── http_server/        # Gateway with identity seeding
+│   ├── sqlite/             # Async Persistence
+│   └── event_bus/          # Tracer-enabled, monitored bus
 ├── domains/                 # Business logic
 │   └── {domain}/
 │       ├── plugins/        # Use cases (1 file = 1 feature)
@@ -116,6 +127,8 @@ MicroCoreOS/
 | **Plugin = Stateful** | Plugins contain business logic |
 | **Event-Driven** | Plugins communicate via EventBus only |
 | **Declarative DI** | Declare deps in constructor, kernel delivers |
+| **Traceable** | Every event has a parent ID and an owner identity |
+| **Observable** | No silent background failures (Event Watchdog) |
 
 ---
 
@@ -126,8 +139,9 @@ MicroCoreOS/
 | `http_server` | REST endpoints with auto-generated OpenAPI |
 | `db` | SQLite abstraction (query, execute) |
 | `event_bus` | Pub/sub and request/response patterns |
-| `logger` | Structured logging |
-| `state` | In-memory key-value store |
+| `logger` | Structured logging with Sink support |
+| `state` | Sharded in-memory key-value store |
+| `registry` | Sharded high-concurrency architecture browser |
 | `config` | Environment configuration |
 
 ---
@@ -153,6 +167,11 @@ Is it a Tool or a Plugin?
 |--------|-------------|---------|
 | `publish(event, data)` | Fire and forget (no confirmation needed) | Notifications, logs, side-effects |
 | `request(event, data)` | Need a response to continue (RPC) | Cross-domain validations, queries |
+
+### Observability: The Watchdog
+In most async architectures, background tasks die quietly. MicroCoreOS includes a **Monitoring Callback** native to the EventBus:
+- **Zero Silent Failures**: Every task spawned by an event is watched. If an async subscriber crashes, the system captures and logs it immediately.
+- **Causality Engine**: Using `ContextVars` in a neutral `core/context.py`, the system tracks the "Identity Chain". You know exactly which HTTP Request caused which background event.
 
 > [!WARNING]
 > Abuse of `request()` reintroduces coupling. If a Plugin makes too many requests to another, they probably belong in the same domain.
@@ -251,6 +270,35 @@ Tools don't hold business state—they're pure infrastructure. This means:
 | "Test layers in isolation" | Mock Tools in plugin tests |
 | "Clear ownership boundaries" | 1 plugin = 1 owner |
 | "Onboarding new devs" | Read AI_CONTEXT.md in 5 minutes |
+| "High Concurrency" | Sharded Registry Locks |
+| "End-to-end Traceability" | Native Context Engine |
+
+### Testing without Gymnastics
+
+Because dependencies are injected via the constructor, you mock them directly using standard tools. We use **AnyIO** for seamless async/sync testing:
+
+```python
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from domains.users.plugins.create_user_plugin import CreateUserPlugin
+
+@pytest.mark.anyio  # Hybrid-ready testing
+async def test_create_user_success():
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = 42
+    
+    plugin = CreateUserPlugin(
+        http=MagicMock(),
+        db=mock_db,
+        event_bus=AsyncMock(),
+        logger=MagicMock(),
+        auth=MagicMock()
+    )
+
+    result = await plugin.execute({"name": "Test", "email": "a@b.com"})
+    assert result["success"] is True
+    assert result["data"]["id"] == 42
+```
 
 
 
