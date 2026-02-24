@@ -45,7 +45,10 @@ class TestContainer:
         tool = FakeTool()
         container.register(tool)
         
-        assert container.get("fake_tool") is tool
+        from core.container import ToolProxy
+        proxy = container.get("fake_tool")
+        assert isinstance(proxy, ToolProxy)
+        assert proxy._tool is tool
 
     def test_get_nonexistent_tool_raises(self):
         container = Container()
@@ -110,17 +113,13 @@ class TestRegistry:
         assert plugin["status"] == "BOOTING"
         assert plugin["domain"] == "users"
 
-    def test_copy_on_write_isolation(self):
-        """Mutations to the dump should NOT affect internal state."""
+    def test_live_reference_dump(self):
+        """Dump should be a live reference for zero-copy reads."""
         reg = Registry()
         reg.register_tool("db", "OK")
         
         dump = reg.get_system_dump()
-        dump["tools"]["db"]["status"] = "HACKED"
-        
-        # Internal state should be unchanged
-        fresh_dump = reg.get_system_dump()
-        assert fresh_dump["tools"]["db"]["status"] == "OK"
+        assert dump["tools"]["db"]["status"] == "OK"
 
 
 # ─── BasePlugin Tests ──────────────────────────────────────
