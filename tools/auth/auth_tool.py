@@ -1,12 +1,9 @@
 import os
 import jwt
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional
 from core.base_tool import BaseTool
 from passlib.context import CryptContext
-from dotenv import load_dotenv
-
-load_dotenv()
 
 class AuthTool(BaseTool):
     def __init__(self):

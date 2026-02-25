@@ -8,34 +8,21 @@ class DeleteUserPlugin(BasePlugin):
         self.logger = logger
 
     async def on_boot(self):
-        self.http.add_endpoint(
-            "/users/{user_id}", 
-            "DELETE", 
-            self.handler, 
-            tags=["Users"]
-        )
+        self.http.add_endpoint("/users/{user_id}", "DELETE", self.execute, tags=["Users"])
 
-    async def handler(self, data: dict, context):
-        return await self.execute(data)
-
-    async def execute(self, data: dict):
+    async def execute(self, data: dict, context=None):
         try:
-            user_id = data.get("user_id")
+            user_id = int(data.get("user_id"))
             if not user_id:
                 return {"success": False, "error": "Missing user_id"}
-                
-            # AWAIT DB query
-            exists = await self.db.query("SELECT id FROM users WHERE id = ?", (user_id,))
-            if not exists:
-                return {"success": False, "error": "User not found"}
 
-            # AWAIT DB execute
-            await self.db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            affected = await self.db.execute("DELETE FROM users WHERE id = $1", [user_id])
+            if affected == 0:
+                return {"success": False, "error": "User not found"}
             self.logger.info(f"User {user_id} deleted")
-            
-            # AWAIT Event Bus publish
+
             await self.bus.publish("user.deleted", {"id": user_id})
-            
+
             return {"success": True, "message": f"User {user_id} deleted successfully"}
         except Exception as e:
             self.logger.error(f"Failed to delete user: {e}")

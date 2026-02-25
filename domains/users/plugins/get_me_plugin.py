@@ -11,42 +11,35 @@ class GetMePlugin(BasePlugin):
         self.http.add_endpoint(
             path="/users/me",
             method="GET",
-            handler=self.handler,
+            handler=self.execute,
             tags=["Users"],
             auth_validator=self._validate_token
         )
 
     async def _validate_token(self, token: str):
         try:
-            # AuthTool is sync, but we treat it as callable from here
             return self.auth.decode_token(token)
         except Exception:
             return None
 
-    async def handler(self, data: dict, context):
-        return await self.execute(data)
-
-    async def execute(self, data: dict):
+    async def execute(self, data: dict, context=None):
         try:
-            # The http tool injects the payload into '_auth' if validation passes
             auth_payload = data.get("_auth")
             if not auth_payload:
                 return {"success": False, "error": "Unauthorized"}
-            
-            user_id = auth_payload.get("sub")
-            
-            # AWAIT Database call
-            records = await self.db.query("SELECT id, name, email FROM users WHERE id = ?", (user_id,))
-            if not records:
+
+            user_id = int(auth_payload.get("sub"))
+
+            row = await self.db.query_one("SELECT id, name, email FROM users WHERE id = $1", [user_id])
+            if not row:
                 return {"success": False, "error": "User no longer exists"}
-            
-            id, name, email = records[0]
+
             return {
-                "success": True, 
+                "success": True,
                 "data": {
-                    "id": id,
-                    "name": name,
-                    "email": email
+                    "id": row["id"],
+                    "name": row["name"],
+                    "email": row["email"]
                 }
             }
         except Exception as e:

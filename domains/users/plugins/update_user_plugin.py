@@ -11,44 +11,38 @@ class UpdateUserPlugin(BasePlugin):
 
     async def on_boot(self):
         self.http.add_endpoint(
-            "/users/{user_id}", 
-            "PUT", 
-            self.handler, 
+            "/users/{user_id}",
+            "PUT",
+            self.execute,
             tags=["Users"],
             request_model=UserEntity
         )
 
-    async def handler(self, data: dict, context):
-        return await self.execute(data)
-
-    async def execute(self, data: dict):
+    async def execute(self, data: dict, context=None):
         try:
             user_id = data.get("user_id")
             if not user_id:
                 return {"success": False, "error": "Missing user_id"}
-            
-            # Use Pydantic to validate the payload
-            user = UserEntity(id=user_id, **data)
-            
-            # Check if user exists
-            exists = await self.db.query("SELECT id FROM users WHERE id = ?", (user.id,))
-            if not exists:
-                return {"success": False, "error": "User not found"}
 
-            if user.password:
-                password_hash = self.auth.hash_password(user.password)
-                await self.db.execute(
-                    "UPDATE users SET name = ?, email = ?, password_hash = ? WHERE id = ?",
-                    (user.name, user.email, password_hash, user.id)
+            user = UserEntity(id=user_id, **data)
+            password_hash = self.auth.hash_password(user.password) if user.password else None
+
+            if password_hash:
+                affected = await self.db.execute(
+                    "UPDATE users SET name = $1, email = $2, password_hash = $3 WHERE id = $4",
+                    [user.name, user.email, password_hash, user.id]
                 )
             else:
-                await self.db.execute(
-                    "UPDATE users SET name = ?, email = ? WHERE id = ?",
-                    (user.name, user.email, user.id)
+                affected = await self.db.execute(
+                    "UPDATE users SET name = $1, email = $2 WHERE id = $3",
+                    [user.name, user.email, user.id]
                 )
+
+            if affected == 0:
+                return {"success": False, "error": "User not found"}
             self.logger.info(f"User {user.id} updated")
             await self.bus.publish("user.updated", {"id": user.id, "email": user.email})
-            
+
             return {"success": True, "data": {"id": user.id, "name": user.name, "email": user.email}}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")

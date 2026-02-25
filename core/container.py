@@ -1,3 +1,4 @@
+import inspect
 import threading
 from core.registry import Registry
 
@@ -6,6 +7,7 @@ class ToolProxy:
     Transparent Proxy that wraps a Tool.
     Intercepts method calls to automatically report health status (DEAD)
     to the Registry if the underlying Tool raises an Exception.
+    Correctly handles both sync and async methods.
     """
     def __init__(self, tool, registry: Registry):
         self._tool = tool
@@ -15,16 +17,28 @@ class ToolProxy:
         attr = getattr(self._tool, name)
         
         # We only want to intercept callable methods, not properties like 'name'
-        if callable(attr):
-            def wrapper(*args, **kwargs):
-                try:
-                    return attr(*args, **kwargs)
-                except Exception as e:
-                    # Automatic Core Monitoring: The Tool just crashed!
-                    self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
-                    raise e # Re-raise so the Plugin can handle it natively
-            return wrapper
-        return attr
+        if not callable(attr):
+            return attr
+
+        def wrapper(*args, **kwargs):
+            try:
+                result = attr(*args, **kwargs)
+            except Exception as e:
+                self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                raise
+
+            # If the result is a coroutine, wrap it to monitor async exceptions
+            if inspect.isawaitable(result):
+                async def _monitored():
+                    try:
+                        return await result
+                    except Exception as e:
+                        self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                        raise
+                return _monitored()
+
+            return result
+        return wrapper
 
 class Container:
     """
@@ -40,7 +54,10 @@ class Container:
 
     def register(self, tool):
         with self._lock:
-            # Wrap the raw tool in our transparent Proxy for auto-monitoring
+            # Give the tool a direct reference to the registry if it needs it
+            # (e.g. RegistryTool), making it available before on_boot_complete.
+            if hasattr(tool, '_set_core_registry'):
+                tool._set_core_registry(self.registry)
             self._tools[tool.name] = ToolProxy(tool, self.registry)
         print(f"[Container] Tool registered (Proxied): {tool.name}")
 

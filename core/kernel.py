@@ -54,10 +54,6 @@ class Kernel:
                     if "domains" in path:
                         domain_name = os.path.relpath(path, abs_dir).split(os.sep)[0]
 
-                    if domain_name and "models" in path:
-                        with open(path, "r", encoding="utf-8") as f:
-                            self.container.registry.register_domain_metadata(domain_name, f"model_{file}", f.read())
-
                     for _, obj in inspect.getmembers(module):
                         if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
                             if obj.__module__ == module.__name__:
@@ -90,19 +86,23 @@ class Kernel:
 
     async def boot(self):
         print("--- [Kernel] Starting System (Async Engine) ---")
-        
-        # 1. Boot Tools
-        for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
+
+        # 1. Boot Tools — parallel (tools are independent by Rule 2, so setup() is safe to parallelize)
+        async def _setup_tool(tool_cls):
+            t_name = tool_cls.__name__
             try:
                 instance = tool_cls()
                 t_name = instance.name
                 await self._call_maybe_async(instance.setup)
                 self.container.register(instance)
                 self.container.registry.register_tool(t_name, "OK")
+                print(f"[Kernel] Tool ready: {t_name}")
             except Exception as e:
-                t_name = tool_cls.__name__
                 self.container.registry.register_tool(t_name, "FAIL", str(e))
                 print(f"[Kernel] 🚨 Tool '{t_name}' failed: {e}")
+
+        tool_classes = self._load_modules_from_dir("tools", BaseTool)
+        await asyncio.gather(*[asyncio.create_task(_setup_tool(cls)) for cls, _ in tool_classes])
 
         # 2. Boot Plugins
         boot_tasks = []

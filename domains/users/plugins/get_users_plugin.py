@@ -7,21 +7,12 @@ class GetUsersPlugin(BasePlugin):
         self.logger = logger
 
     async def on_boot(self):
-        self.http.add_endpoint(
-            "/users", 
-            "GET", 
-            self.handler, 
-            tags=["Users"]
-        )
+        self.http.add_endpoint("/users", "GET", self.execute, tags=["Users"])
 
-    async def handler(self, data: dict, context):
-        return await self.execute()
-
-    async def execute(self):
+    async def execute(self, data: dict, context=None):
         try:
-            # AWAIT DB query
             records = await self.db.query("SELECT id, name, email FROM users")
-            users = [{"id": row[0], "name": row[1], "email": row[2]} for row in records]
+            users = [{"id": row["id"], "name": row["name"], "email": row["email"]} for row in records]
             return {"success": True, "data": users}
         except Exception as e:
             self.logger.error(f"Failed to fetch users: {e}")

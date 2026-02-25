@@ -6,7 +6,7 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "aiosqlite>=0.22.1",
+    "asyncpg>=0.29.0",
     "bcrypt==3.2.2",
     "fastapi>=0.115.0",
     "passlib>=1.7.4",
@@ -23,5 +23,6 @@ pythonpath = ["."]
 
 [dependency-groups]
 dev = [
+    "anyio[trio]>=4.0.0",
     "pytest>=8.0.0",
 ]
