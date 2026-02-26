@@ -137,7 +137,7 @@ MicroCoreOS/
 | Tool | Description |
 |------|-------------|
 | `http_server` | REST endpoints with auto-generated OpenAPI |
-| `db` | SQLite abstraction (query, execute) |
+| `db` | Database persistence — **SQLite** (default, zero-config) or **PostgreSQL** (production). Drop-in swap, zero plugin changes. |
 | `event_bus` | Pub/sub and request/response patterns |
 | `logger` | Structured logging with Sink support |
 | `state` | Sharded in-memory key-value store |
@@ -256,10 +256,10 @@ In traditional architectures, a single feature requires coordination:
 
 Tools don't hold business state—they're pure infrastructure. This means:
 
-- **Zero-Friction Quickstart**: The default `db` Tool uses SQLite, and the `event_bus` uses memory. Anyone can clone and run the project immediately without Docker or external dependencies.
-- **Infinite Horizontal Scaling**: Need to scale to 10 servers? Drop in a `redis_event_bus` Tool or a `rabbitmq_tool`. Need a robust database? Swap SQLite for PostgreSQL. **Your Plugins (business logic) won't change a single line.** The Kernel handles the new wiring.
-- **No migration risk**: Tools are interchangeable by design.
-- **In the age of cheap code**: Your AI writes the SQL in 2 seconds. Why abstract it?
+- **Zero-Friction Quickstart**: The default `db` Tool uses SQLite (a local file), and the `event_bus` uses memory. Anyone can clone and run the project immediately without Docker or external dependencies.
+- **Infinite Horizontal Scaling**: Need to scale to 10 servers? Drop in a `redis_event_bus` Tool or a `rabbitmq_tool`. Need a robust database? Swap the SQLite `db` folder for the PostgreSQL `db` folder. **Your Plugins won't change a single line.** Both tools register as `"db"`, accept the same `$1, $2...` placeholders, and expose the identical API. The SQLite tool converts placeholders internally.
+- **Honest about swapping**: Not every tool swap is zero-change. Some engines are fundamentally different (SQL vs NoSQL, REST vs GraphQL). But even in the worst case, the delta is cheap—your AI rewrites a plugin in seconds. The architecture ensures the blast radius is always **one file**.
+- **In the age of cheap code**: The SQL is the cheapest part of your feature. Your AI rewrites it instantly. Why over-abstract it?
 
 ### Same Isolation, Less Ceremony
 

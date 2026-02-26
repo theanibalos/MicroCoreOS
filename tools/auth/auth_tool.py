@@ -8,7 +8,9 @@ from passlib.context import CryptContext
 class AuthTool(BaseTool):
     def __init__(self):
         self._pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        self._secret_key = os.getenv("AUTH_SECRET_KEY", "micro-core-secret-key-at-least-32-bytes-long-1234")
+        self._secret_key = os.getenv("AUTH_SECRET_KEY")
+        if not self._secret_key:
+            raise EnvironmentError("AUTH_SECRET_KEY is required. Set it in your .env file.")
         self._algorithm = os.getenv("AUTH_ALGORITHM", "HS256")
         self._access_token_expire_minutes = int(os.getenv("AUTH_TOKEN_EXPIRE_MINUTES", 60))
 

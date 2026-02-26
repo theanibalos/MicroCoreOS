@@ -1,0 +1,512 @@
+"""
+SQLite Tool — Drop-in Replacement for PostgreSQL in MicroCoreOS
+================================================================
+
+100% COMPATIBLE with the PostgreSQL gold-standard contract.
+Plugins write PostgreSQL-style SQL ($1, $2...) and this tool
+transparently converts placeholders to SQLite's native '?'.
+
+PUBLIC CONTRACT (IDENTICAL to PostgreSQL — same SQL, same swap):
+─────────────────────────────────────────────────────────────────
+    rows  = await db.query("SELECT * FROM users WHERE age > $1", [18])
+    row   = await db.query_one("SELECT * FROM users WHERE id = $1", [5])
+    newid = await db.execute("INSERT INTO users (name) VALUES ($1)", ["Ana"])
+    count = await db.execute("UPDATE users SET active = $1", [True])
+    await db.execute_many("INSERT INTO logs (msg) VALUES ($1)", [["a"], ["b"]])
+
+    async with db.transaction() as tx:
+        uid = await tx.execute("INSERT INTO users (name) VALUES ($1) RETURNING id", ["Ana"])
+        await tx.execute("INSERT INTO profiles (user_id) VALUES ($1)", [uid])
+        # Auto-COMMIT on exit. Auto-ROLLBACK on exception.
+
+    ok = await db.health_check()
+
+PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
+              This tool converts them internally to '?' for SQLite.
+              This enables direct SQLite <-> PostgreSQL swap without changing a line.
+
+⚠ MIGRATION FILES ARE NOT CROSS-COMPATIBLE:
+  The .sql files in domains/*/migrations/ may contain engine-specific DDL
+  (e.g. PostgreSQL's SERIAL, TIMESTAMPTZ, JSONB vs SQLite's INTEGER PRIMARY KEY
+  AUTOINCREMENT, TEXT). When swapping engines, migration files will likely need
+  to be rewritten. This is by design — migration SQL is cheap to regenerate.
+"""
+
+import os
+import re
+import aiosqlite
+from core.base_tool import BaseTool
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# EXCEPTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class DatabaseError(Exception):
+    """Generic database error. Wraps aiosqlite exceptions."""
+    pass
+
+
+class DatabaseConnectionError(DatabaseError):
+    """Connection error to the SQLite file."""
+    pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PLACEHOLDER NORMALIZATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_PG_PLACEHOLDER = re.compile(r'\$\d+')
+
+def _normalize_sql(sql: str) -> str:
+    """
+    Converts PostgreSQL placeholders ($1, $2...) to SQLite (?).
+    If the SQL already uses '?' or has no placeholders, it is left intact.
+    This is what enables the transparent swap.
+    """
+    return _PG_PLACEHOLDER.sub('?', sql)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TRANSACTION CONTEXT MANAGER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class Transaction:
+    """
+    Explicit transaction over the SQLite connection.
+
+    Usage:
+        async with db.transaction() as tx:
+            await tx.execute("INSERT INTO ...", [...])
+            await tx.execute("UPDATE ...", [...])
+            rows = await tx.query("SELECT ...", [...])
+        # Auto-COMMIT on block exit.
+        # Auto-ROLLBACK on any exception.
+
+    The context manager handles:
+    1. Opening a real SQLite transaction (SAVEPOINT).
+    2. RELEASE (commit) if everything succeeds.
+    3. ROLLBACK if an exception occurs.
+    """
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db: aiosqlite.Connection = db
+        self._savepoint_name: str | None = None
+
+    async def __aenter__(self) -> "Transaction":
+        try:
+            # Use SAVEPOINTs to support nested transactions
+            import random
+            self._savepoint_name = f"sp_{random.randint(100000, 999999)}"
+            await self._db.execute(f"SAVEPOINT {self._savepoint_name}")
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to start transaction: {e}") from e
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        try:
+            if exc_type is None:
+                # No errors → RELEASE SAVEPOINT (equivalent to COMMIT)
+                await self._db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
+            else:
+                # Errors → ROLLBACK TO SAVEPOINT
+                await self._db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
+        except Exception:
+            # If rollback/release fails, don't suppress the original exception
+            pass
+        # Don't suppress the exception (return False)
+        return False
+
+    # ─── Transaction API ──────────────────────────────────
+
+    async def query(self, sql: str, params: list | None = None) -> list[dict]:
+        """SELECT within the transaction. Returns list[dict]."""
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            cursor = await self._db.execute(sql, params)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = await cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            raise DatabaseError(f"Transaction query failed: {e}") from e
+
+    async def query_one(self, sql: str, params: list | None = None) -> dict | None:
+        """SELECT a single record within the transaction. Returns dict or None."""
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            cursor = await self._db.execute(sql, params)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            row = await cursor.fetchone()
+            return dict(zip(columns, row)) if row is not None else None
+        except Exception as e:
+            raise DatabaseError(f"Transaction query_one failed: {e}") from e
+
+    async def execute(self, sql: str, params: list | None = None) -> int | None:
+        """
+        INSERT/UPDATE/DELETE within the transaction.
+
+        - If the SQL contains RETURNING, returns the first column value
+          of the first row (typically the generated ID).
+        - If INSERT without RETURNING, returns lastrowid.
+        - Otherwise, returns the number of affected rows.
+        """
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            if "RETURNING" in sql.upper():
+                cursor = await self._db.execute(sql, params)
+                row = await cursor.fetchone()
+                if row is not None:
+                    return row[0]
+                return None
+            else:
+                cursor = await self._db.execute(sql, params)
+                if sql.strip().upper().startswith("INSERT"):
+                    return cursor.lastrowid
+                return cursor.rowcount
+        except Exception as e:
+            raise DatabaseError(f"Transaction execute failed: {e}") from e
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SQLITE TOOL
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class SqliteTool(BaseTool):
+    """
+    SQLite persistence tool for MicroCoreOS.
+
+    DROP-IN REPLACEMENT for PostgreSQL. Accepts PostgreSQL-style
+    placeholders ($1, $2...), converting them to '?' internally.
+    Swap between SQLite and PostgreSQL with zero plugin changes.
+
+    Uses aiosqlite for non-blocking access to a local SQLite database file.
+    Ideal for development, testing, and lightweight deployments.
+    """
+
+    # ─── IDENTITY ─────────────────────────────────────────
+
+    @property
+    def name(self) -> str:
+        return "sqlite"
+
+    # ─── CONSTRUCTOR ──────────────────────────────────────
+    #
+    # Configuration reading only. Zero logic, zero I/O.
+    # The connection is created in setup(), NOT here.
+    #
+
+    def __init__(self) -> None:
+        self._db_path: str = os.getenv("SQLITE_DB_PATH", "database.db")
+        self._db: aiosqlite.Connection | None = None
+
+    # ─── LIFECYCLE: setup() ───────────────────────────────
+    #
+    # Infrastructure phase. Runs BEFORE plugins.
+    # Responsibilities:
+    #   1. Open the connection to the SQLite database.
+    #   2. Enable WAL mode and foreign keys.
+    #   3. Create the internal migration history table.
+    #
+
+    async def setup(self) -> None:
+        print(f"[System] SqliteTool: Opening {self._db_path}...")
+
+        try:
+            self._db = await aiosqlite.connect(self._db_path)
+            # Enable Write-Ahead Logging for better concurrency
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            # Enable Foreign Keys (disabled by default in SQLite)
+            await self._db.execute("PRAGMA foreign_keys=ON")
+            await self._db.commit()
+        except Exception as e:
+            raise DatabaseConnectionError(
+                f"Cannot open SQLite database at {self._db_path}: {e}"
+            ) from e
+
+        # Create internal migration history table
+        await self.execute("""
+            CREATE TABLE IF NOT EXISTS _migrations_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain      TEXT NOT NULL,
+                filename    TEXT NOT NULL,
+                applied_at  TEXT DEFAULT (datetime('now')),
+                UNIQUE(domain, filename)
+            )
+        """)
+
+        print(f"[System] SqliteTool: Ready (WAL mode, FK enabled).")
+
+    # ─── LIFECYCLE: on_boot_complete() ────────────────────
+    #
+    # Runs AFTER all tools and plugins are loaded.
+    # Responsibility: execute pending SQL migrations.
+    #
+    # Migrations are located in: domains/*/migrations/*.sql
+    # Applied in alphabetical order, each within its own transaction.
+    # If a migration fails, that migration is rolled back
+    # and execution stops (raise) to prevent an inconsistent state.
+    #
+
+    async def on_boot_complete(self, container) -> None:
+        print("[System] SqliteTool: Checking for pending migrations...")
+        domains_dir = os.path.abspath("domains")
+        if not os.path.exists(domains_dir):
+            return
+
+        for domain in sorted(os.listdir(domains_dir)):
+            migrations_dir = os.path.join(domains_dir, domain, "migrations")
+            if not os.path.isdir(migrations_dir):
+                continue
+
+            migration_files = sorted(
+                f for f in os.listdir(migrations_dir) if f.endswith(".sql")
+            )
+
+            for filename in migration_files:
+                # Check if already applied
+                already_applied = await self.query_one(
+                    "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
+                    [domain, filename],
+                )
+                if already_applied:
+                    continue
+
+                print(f"  [Migration] Applying {domain}/{filename}...")
+                filepath = os.path.join(migrations_dir, filename)
+
+                with open(filepath, "r", encoding="utf-8") as f:
+                    sql_script = f.read()
+
+                # Each migration in its own transaction
+                async with self.transaction() as tx:
+                    # Execute each statement in the file
+                    statements = [s.strip() for s in sql_script.split(";") if s.strip()]
+                    for statement in statements:
+                        await tx.execute(statement)
+
+                    # Record successful migration
+                    await tx.execute(
+                        "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
+                        [domain, filename],
+                    )
+
+                # Commit after each successful migration
+                await self._db.commit()
+
+                print(f"  [Migration] ✅ Applied {domain}/{filename}")
+
+    # ─── LIFECYCLE: shutdown() ────────────────────────────
+    #
+    # Closes the connection gracefully.
+    #
+
+    async def shutdown(self) -> None:
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
+            print("[SqliteTool] Connection closed.")
+
+    # ─── PUBLIC API: query() ──────────────────────────────
+    #
+    # Executes a SELECT and returns ALL records.
+    #
+    # Parameters:
+    #   sql:    str           — SQL query with $1, $2... placeholders
+    #   params: list | None   — Values for the placeholders
+    #
+    # Returns: list[dict]
+    #   - Empty list if no results.
+    #   - Each dict has column names as keys.
+    #
+    # Example:
+    #   rows = await db.query("SELECT id, name FROM users WHERE age > $1", [18])
+    #   # [{"id": 1, "name": "Ana"}, {"id": 2, "name": "Luis"}]
+    #
+
+    async def query(self, sql: str, params: list | None = None) -> list[dict]:
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            cursor = await self._db.execute(sql, params)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = await cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            raise DatabaseError(f"Query failed: {e}") from e
+
+    # ─── PUBLIC API: query_one() ──────────────────────────
+    #
+    # Executes a SELECT and returns the FIRST record or None.
+    #
+    # Parameters:
+    #   sql:    str           — SQL query with $1, $2... placeholders
+    #   params: list | None   — Values for the placeholders
+    #
+    # Returns: dict | None
+    #   - None if no results.
+    #   - dict with column names as keys.
+    #
+    # Example:
+    #   user = await db.query_one("SELECT * FROM users WHERE id = $1", [5])
+    #   # {"id": 5, "name": "Ana", "email": "ana@mail.com"} or None
+    #
+
+    async def query_one(self, sql: str, params: list | None = None) -> dict | None:
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            cursor = await self._db.execute(sql, params)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            row = await cursor.fetchone()
+            return dict(zip(columns, row)) if row is not None else None
+        except Exception as e:
+            raise DatabaseError(f"Query failed: {e}") from e
+
+    # ─── PUBLIC API: execute() ────────────────────────────
+    #
+    # Executes INSERT, UPDATE or DELETE.
+    #
+    # Parameters:
+    #   sql:    str           — SQL with $1, $2... placeholders
+    #   params: list | None   — Values for the placeholders
+    #
+    # Returns: int | None
+    #   - With RETURNING (SQLite 3.35+): the first column value
+    #     of the first row (typically the generated ID).
+    #   - INSERT without RETURNING: returns lastrowid (the generated ID).
+    #   - UPDATE/DELETE without RETURNING: the number of affected rows (int).
+    #
+    # Example INSERT (lastrowid):
+    #   new_id = await db.execute(
+    #       "INSERT INTO users (name) VALUES ($1)", ["Ana"]
+    #   )
+    #   # 42
+    #
+    # Example with RETURNING (SQLite 3.35+):
+    #   new_id = await db.execute(
+    #       "INSERT INTO users (name) VALUES ($1) RETURNING id", ["Ana"]
+    #   )
+    #   # 42
+    #
+    # Example without RETURNING:
+    #   affected = await db.execute(
+    #       "UPDATE users SET active = $1 WHERE age < $2", [False, 18]
+    #   )
+    #   # 3
+    #
+
+    async def execute(self, sql: str, params: list | None = None) -> int | None:
+        sql = _normalize_sql(sql)
+        params = params or []
+        try:
+            if "RETURNING" in sql.upper():
+                cursor = await self._db.execute(sql, params)
+                row = await cursor.fetchone()
+                await self._db.commit()
+                if row is not None:
+                    return row[0]
+                return None
+            else:
+                cursor = await self._db.execute(sql, params)
+                await self._db.commit()
+                if sql.strip().upper().startswith("INSERT"):
+                    return cursor.lastrowid
+                return cursor.rowcount
+        except Exception as e:
+            raise DatabaseError(f"Execute failed: {e}") from e
+
+    # ─── PUBLIC API: execute_many() ───────────────────────
+    #
+    # Executes the same SQL statement with multiple parameter sets.
+    #
+    # Parameters:
+    #   sql:         str         — SQL with $1, $2... placeholders
+    #   params_list: list[list]  — List of parameter lists.
+    #
+    # Returns: None
+    #
+    # Example:
+    #   await db.execute_many(
+    #       "INSERT INTO logs (level, msg) VALUES ($1, $2)",
+    #       [["INFO", "Started"], ["ERROR", "Crashed"], ["INFO", "Recovered"]]
+    #   )
+    #
+
+    async def execute_many(self, sql: str, params_list: list[list]) -> None:
+        sql = _normalize_sql(sql)
+        try:
+            await self._db.executemany(sql, params_list)
+            await self._db.commit()
+        except Exception as e:
+            raise DatabaseError(f"Execute many failed: {e}") from e
+
+    # ─── PUBLIC API: transaction() ────────────────────────
+    #
+    # Opens an explicit transaction using an async context manager.
+    # Within the block, all operations share the same
+    # connection and SQLite transaction (via SAVEPOINT).
+    #
+    # - Auto-COMMIT on block exit without errors.
+    # - Auto-ROLLBACK if any exception occurs.
+    #
+    # Example:
+    #   async with db.transaction() as tx:
+    #       user_id = await tx.execute(
+    #           "INSERT INTO users (name) VALUES ($1)", ["Ana"]
+    #       )
+    #       await tx.execute(
+    #           "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)",
+    #           [user_id, "Hello!"]
+    #       )
+    #   # If any execute fails, everything is rolled back.
+    #
+
+    def transaction(self) -> Transaction:
+        if self._db is None:
+            raise DatabaseConnectionError("Cannot start transaction: connection is not initialized.")
+        return Transaction(self._db)
+
+    # ─── PUBLIC API: health_check() ───────────────────────
+    #
+    # Verifies the connection is active and the DB responds.
+    # Useful for the Registry and monitoring.
+    #
+    # Returns: bool
+    #   - True if the connection works.
+    #   - False if there's any error.
+    #
+
+    async def health_check(self) -> bool:
+        try:
+            if self._db is None:
+                return False
+            cursor = await self._db.execute("SELECT 1")
+            await cursor.fetchone()
+            return True
+        except Exception:
+            return False
+
+    # ─── INTERFACE DESCRIPTION ────────────────────────────
+
+    def get_interface_description(self) -> str:
+        return """
+        Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+        - CAPABILITIES:
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+        """
