@@ -1,5 +1,13 @@
+from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
-from domains.users.models.user import UserEntity
+
+
+# ── Request schema (lives here, not in models/user.py) ──────────────────────
+class UpdateUserRequest(BaseModel):
+    name: str | None = None
+    email: EmailStr | None = None
+    password: str | None = None  # plain-text; hashed before DB write if provided
+
 
 class UpdateUserPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger, auth):
@@ -15,7 +23,7 @@ class UpdateUserPlugin(BasePlugin):
             "PUT",
             self.execute,
             tags=["Users"],
-            request_model=UserEntity
+            request_model=UpdateUserRequest
         )
 
     async def execute(self, data: dict, context=None):
@@ -24,26 +32,36 @@ class UpdateUserPlugin(BasePlugin):
             if not user_id:
                 return {"success": False, "error": "Missing user_id"}
 
-            user = UserEntity(id=user_id, **data)
-            password_hash = self.auth.hash_password(user.password) if user.password else None
+            req = UpdateUserRequest(**data)
 
-            if password_hash:
-                affected = await self.db.execute(
-                    "UPDATE users SET name = $1, email = $2, password_hash = $3 WHERE id = $4",
-                    [user.name, user.email, password_hash, user.id]
-                )
-            else:
-                affected = await self.db.execute(
-                    "UPDATE users SET name = $1, email = $2 WHERE id = $3",
-                    [user.name, user.email, user.id]
-                )
+            # Build SET clause dynamically — only touch provided fields
+            fields = []
+            params = []
 
+            if req.name:
+                fields.append(f"name = ${len(params) + 1}")
+                params.append(req.name)
+
+            if req.email:
+                fields.append(f"email = ${len(params) + 1}")
+                params.append(str(req.email))
+
+            if req.password:
+                fields.append(f"password_hash = ${len(params) + 1}")
+                params.append(self.auth.hash_password(req.password))
+
+            if not fields:
+                return {"success": False, "error": "No fields to update"}
+
+            params.append(user_id)
+            sql = f"UPDATE users SET {', '.join(fields)} WHERE id = ${len(params)}"
+
+            affected = await self.db.execute(sql, params)
             if affected == 0:
                 return {"success": False, "error": "User not found"}
-            self.logger.info(f"User {user.id} updated")
-            await self.bus.publish("user.updated", {"id": user.id, "email": user.email})
 
-            return {"success": True, "data": {"id": user.id, "name": user.name, "email": user.email}}
+            self.logger.info(f"User {user_id} updated")
+            return {"success": True, "message": f"User {user_id} updated successfully"}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")
             return {"success": False, "error": str(e)}

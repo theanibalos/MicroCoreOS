@@ -12,7 +12,7 @@
 
 ## The Problem
 
-AI assistants like Cursor and Claude need to understand your architecture to add features.
+AI assistants need to understand your architecture to add features.
 
 In traditional layered architectures, that means explaining:
 - Where to put the entity
@@ -27,37 +27,39 @@ In traditional layered architectures, that means explaining:
 
 ```python
 # domains/products/plugins/create_product_plugin.py
+from pydantic import BaseModel
 from core.base_plugin import BasePlugin
 
+class CreateProductRequest(BaseModel):  # schema lives in the plugin, not in models/
+    name: str
+    price: float
+
 class CreateProductPlugin(BasePlugin):
-    def __init__(self, http_server, db, logger, event_bus):
-        self.http = http_server
+    def __init__(self, http, db, event_bus, logger):
+        self.http = http
         self.db = db
-        self.logger = logger
         self.bus = event_bus
+        self.logger = logger
 
-    def on_boot(self):
-        self.http.add_endpoint("/products", "POST", self.execute)
+    async def on_boot(self):
+        self.http.add_endpoint("/products", "POST", self.execute, tags=["Products"],
+                               request_model=CreateProductRequest)
 
-    async def execute(self, data: dict):
+    async def execute(self, data: dict, context=None):
         try:
-            user = UserEntity(**data)
-            password_hash = self.auth.hash_password(user.password) if user.password else None
-            user_id = await self.db.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-                (user.name, user.email, password_hash)
+            req = CreateProductRequest(**data)
+            product_id = await self.db.execute(
+                "INSERT INTO products (name, price) VALUES ($1, $2) RETURNING id",
+                [req.name, req.price]
             )
-            await self.bus.publish("user.created", {"id": user_id, "email": user.email})
-            return {"success": True, "data": {"id": user_id, "name": user.name}}
+            await self.bus.publish("product.created", {"id": product_id})
+            return {"success": True, "data": {"id": product_id, "name": req.name}}
         except Exception as e:
-            self.logger.error(f"Failed to create user: {e}")
+            self.logger.error(f"Failed to create product: {e}")
             return {"success": False, "error": str(e)}
-
-    async def handler(self, data: dict, context):
-        return await self.execute(data)
 ```
 
-**48 lines. One file. Complete feature.**
+**30 lines. One file. Complete feature.**
 
 - ✅ Endpoint registration
 - ✅ Database operation
@@ -83,6 +85,39 @@ The architecture minimizes "Context Noise". Every extra file in a traditional ar
 | Hexagonal | 5-7 | ~200 | ~3,500 |
 | Clean Architecture | 6-8 | ~250 | ~4,000 |
 
+### How the AI Documentation Works
+
+The documentation is designed for **minimal reads, zero redundancy**:
+
+| File | What it does | When it's read |
+|------|-------------|----------------|
+| `AI_CONTEXT.md` | Live inventory of tools + method signatures | **Auto-generated** on every boot |
+| `CLAUDE.md` / `SKILL.md` | Rules + plugin template | **Auto-loaded** by the AI agent at start |
+| `INSTRUCTIONS_FOR_AI.md` | Deep reference (lifecycle, tools, edge cases) | **On demand** — rare tasks only |
+| `.agent/workflows/` | Step-by-step recipes (e.g. `/new-domain`) | **On demand** — triggered by the user |
+
+**To write a plugin**, the AI reads exactly 2 files:
+1. `AI_CONTEXT.md` → what tools exist and their signatures
+2. `domains/{domain}/models/{entity}.py` → the DB table structure
+
+That's it. No `main.py`, no core files, no framework docs. The fewer files the AI reads, the fewer it hallucinates.
+
+### Building with MicroCoreOS
+
+MicroCoreOS is designed for AI-assisted development. Copy these prompts directly into Claude, Cursor, or any AI agent.
+
+**Add a feature to an existing domain:**
+> Add a plugin to the `{domain}` domain that `{describe what it does}`.
+> Read `AI_CONTEXT.md` for available tools and `domains/{domain}/models/` for the data structure.
+
+**Create a new domain from scratch:**
+> Use the `/new-domain` workflow to create a `{name}` domain with these fields: `{list fields}`.
+> Read `AI_CONTEXT.md` first.
+
+**Create a new infrastructure Tool:**
+> Create a new Tool called `{name}` that wraps `{technology/library}`.
+> Read `AI_CONTEXT.md` and `INSTRUCTIONS_FOR_AI.md` for the Tool template.
+
 ---
 
 ## Quick Start
@@ -100,20 +135,30 @@ uv run main.py
 
 ```
 MicroCoreOS/
-├── core/                    # The micro-kernel (~240 lines total)
+├── core/                    # The micro-kernel (~340 lines total)
 │   ├── kernel.py           # Orchestrator with autodiscovery
-│   ├── container.py        # Thread-safe DI container
-│   ├── base_plugin.py      # Plugin contract (13 lines)
+│   ├── container.py        # DI container + ToolProxy monitoring
+│   ├── registry.py         # Sharded-lock architecture browser
+│   ├── context.py          # ContextVars for causality tracking
+│   ├── base_plugin.py      # Plugin contract (15 lines)
 │   └── base_tool.py        # Tool contract (23 lines)
-├── tools/                   # Infrastructure (stateless)
-│   ├── http_server/        # Gateway with identity seeding
-│   ├── sqlite/             # Async Persistence
-│   └── event_bus/          # Tracer-enabled, monitored bus
+├── tools/                   # Infrastructure (stateless, drop-in)
+│   ├── http_server/        # FastAPI-powered REST + WebSocket gateway
+│   ├── sqlite/             # Async SQLite (default, zero-config)
+│   ├── postgresql/         # Async PostgreSQL (production)
+│   ├── event_bus/          # Pub/Sub + Async RPC with tracing
+│   ├── auth/               # JWT + bcrypt authentication
+│   ├── logger/             # Structured logging with Sink support
+│   ├── state/              # Sharded in-memory key-value store
+│   ├── config/             # Environment configuration for plugins
+│   ├── context/            # AI_CONTEXT.md auto-generator
+│   └── ...                 # chaos, system, registry tools
 ├── domains/                 # Business logic
 │   └── {domain}/
 │       ├── plugins/        # Use cases (1 file = 1 feature)
-│       └── models/         # Domain models
-└── AI_CONTEXT.md           # Auto-generated for AI assistants
+│       ├── models/         # Domain models (Pydantic)
+│       └── migrations/     # SQL migration scripts
+└── AI_CONTEXT.md           # Auto-generated manifest for AI assistants
 ```
 
 ---
@@ -127,8 +172,10 @@ MicroCoreOS/
 | **Plugin = Stateful** | Plugins contain business logic |
 | **Event-Driven** | Plugins communicate via EventBus only |
 | **Declarative DI** | Declare deps in constructor, kernel delivers |
-| **Traceable** | Every event has a parent ID and an owner identity |
-| **Observable** | No silent background failures (Event Watchdog) |
+| **Hybrid Async** | Supports `async` and `sync`; kernel offloads sync to threads automatically |
+| **Traceable** | Every event has a parent ID and an owner identity via `ContextVars` |
+| **Observable** | No silent background failures (ToolProxy + Event Watchdog) |
+| **AI-Native** | `AI_CONTEXT.md` auto-generated on every boot for AI assistants |
 
 ---
 
@@ -136,13 +183,16 @@ MicroCoreOS/
 
 | Tool | Description |
 |------|-------------|
-| `http_server` | REST endpoints with auto-generated OpenAPI |
+| `http` | FastAPI-powered REST + WebSocket gateway with auto-generated OpenAPI |
 | `db` | Database persistence — **SQLite** (default, zero-config) or **PostgreSQL** (production). Drop-in swap, zero plugin changes. |
-| `event_bus` | Pub/sub and request/response patterns |
+| `event_bus` | Pub/sub and async RPC with built-in tracing |
+| `auth` | JWT token lifecycle + bcrypt password hashing |
 | `logger` | Structured logging with Sink support |
 | `state` | Sharded in-memory key-value store |
-| `registry` | Sharded high-concurrency architecture browser |
-| `config` | Environment configuration |
+| `registry` | Sharded-lock architecture introspection |
+| `config` | Environment configuration for plugins |
+| `context_manager` | Auto-generates `AI_CONTEXT.md` from live system state |
+| `chaos` | Chaos engineering — intentional boot failures for fault tolerance testing |
 
 ---
 
@@ -201,25 +251,14 @@ Boot Sequence:
 
 ---
 
-## High Performance & Production
+## Performance Characteristics
 
-If your implementation requires extreme performance (game engines, 4K video processing, or HFT):
+MicroCoreOS is designed for **developer velocity**, not raw throughput. That said, the architecture includes several performance-conscious decisions:
 
-### 1. Zero-Copy Architecture
-To handle large data volumes between plugins without overhead:
-* **Ownership Pointers**: In languages like **Rust**, use `Arc` (Atomic Reference Counting). This allows multiple plugins to read the **same physical memory** simultaneously without copying a single byte.
-
-### 2. Static Dispatch
-Dynamic DI has a small "indirection" cost. For instant speed:
-* **Code Generation**: Use tools to generate the dependency wiring at compile-time. This allows the compiler to perform *Inlining*, eliminating call overhead.
-
-### 3. Selection by Latency
-
-| Language | Profile | Ideal for... |
-|----------|---------|---------------|
-| **Python** | Context-Efficient | Rapid Prototyping, APIs, AI Logic |
-| **Go** | Throughput-Optimal | High-traffic Microservices |
-| **Rust** | Latency-Extreme | Engines, Video, Real-time Systems |
+- **Hybrid Async Engine**: The Kernel automatically offloads synchronous plugin methods to threads via `asyncio.to_thread`, ensuring the event loop is never blocked.
+- **Sharded Registry Locks**: The `Registry` uses per-category locks (`tools`, `plugins`, `domains`) to reduce contention during concurrent boot and runtime updates.
+- **ToolProxy Monitoring**: Tool calls are wrapped in a transparent proxy that detects failures and updates the Registry in real-time — zero overhead on the happy path.
+- **Parallel Boot**: All tools are initialized concurrently via `asyncio.gather`. Plugins boot in parallel after tool setup.
 
 ---
 
@@ -227,10 +266,11 @@ Dynamic DI has a small "indirection" cost. For instant speed:
 
 MicroCoreOS is moving towards a fully decentralized, marketplace-driven ecosystem:
 
-- 🏗️ **Atomic Tool Marketplace**: A drop-in ecosystem where tools (Redis, PostgreSQL, LLMs) are self-contained folders with their own manifests, default configs, and AI instructions.
-- 🔍 **Tracer Tool**: Integrated mapping of which plugins react to which events for full observability.
+- 🏗️ **Atomic Tool Marketplace**: A drop-in ecosystem where tools (Redis, LLMs, Stripe) are self-contained folders with their own manifests, default configs, and AI instructions.
+- 🔍 **Visual Tracer**: Integrated mapping of which plugins react to which events for full observability.
 - 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM for language-agnostic development.
 - 📦 **One-Click Distribution**: Install new capabilities via `uv` or simply by copying a folder into `/tools`.
+- 🦀 **Language Ports**: The architecture is language-agnostic by design. Future ports to Go and Rust can leverage static dispatch and zero-copy patterns for extreme-latency use cases.
 
 ---
 
@@ -282,13 +322,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from domains.users.plugins.create_user_plugin import CreateUserPlugin
 
-@pytest.mark.anyio  # Hybrid-ready testing
+@pytest.mark.anyio  # Hybrid async/sync testing
 async def test_create_user_success():
     mock_db = AsyncMock()
-    mock_db.execute.return_value = 42
+    mock_db.execute.return_value = 42  # Simulates RETURNING id
     
     plugin = CreateUserPlugin(
-        http=MagicMock(),
+        http=MagicMock(),       # Tools injected by name
         db=mock_db,
         event_bus=AsyncMock(),
         logger=MagicMock(),
@@ -298,6 +338,7 @@ async def test_create_user_success():
     result = await plugin.execute({"name": "Test", "email": "a@b.com"})
     assert result["success"] is True
     assert result["data"]["id"] == 42
+    mock_db.execute.assert_called_once()  # Verify DB was called
 ```
 
 

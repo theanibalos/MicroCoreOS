@@ -190,7 +190,7 @@ class SqliteTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "sqlite"
+        return "db"
 
     # ─── CONSTRUCTOR ──────────────────────────────────────
     #

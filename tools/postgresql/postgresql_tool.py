@@ -176,7 +176,7 @@ class PostgresqlTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "db"
+        return "postgresql"
 
     # ─── CONSTRUCTOR ──────────────────────────────────────
     #

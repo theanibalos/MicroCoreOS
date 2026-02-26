@@ -1,5 +1,13 @@
+from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
-from domains.users.models.user import UserEntity
+
+
+# ── Request schema (lives here, not in models/user.py) ──────────────────────
+class CreateUserRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str  # plain-text; hashed before DB write
+
 
 class CreateUserPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger, auth):
@@ -15,23 +23,23 @@ class CreateUserPlugin(BasePlugin):
             "POST",
             self.execute,
             tags=["Users"],
-            request_model=UserEntity
+            request_model=CreateUserRequest
         )
 
     async def execute(self, data: dict, context=None):
         try:
-            user = UserEntity(**data)
-            password_hash = self.auth.hash_password(user.password) if user.password else None
+            req = CreateUserRequest(**data)
+            password_hash = self.auth.hash_password(req.password)
 
             user_id = await self.db.execute(
                 "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
-                [user.name, user.email, password_hash]
+                [req.name, req.email, password_hash]
             )
             self.logger.info(f"User created with ID {user_id}")
 
-            await self.bus.publish("user.created", {"id": user_id, "email": user.email})
+            await self.bus.publish("user.created", {"id": user_id, "email": req.email})
 
-            return {"success": True, "data": {"id": user_id, "name": user.name, "email": user.email}}
+            return {"success": True, "data": {"id": user_id, "name": req.name, "email": req.email}}
         except Exception as e:
             self.logger.error(f"Failed to create user: {e}")
             return {"success": False, "error": str(e)}
