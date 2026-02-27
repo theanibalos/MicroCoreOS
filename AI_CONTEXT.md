@@ -144,7 +144,6 @@ Async SQLite Persistence Tool (sqlite):
 ```
 
 ## 📦 Domain Models
-
 Read the models folder for the domain you are working on before implementing a plugin.
 
 - `ping` → `domains/ping/models/`

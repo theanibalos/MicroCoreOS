@@ -5,7 +5,7 @@ PostgreSQL Tool — Gold-Standard Database Contract for MicroCoreOS
 This is the REFERENCE IMPLEMENTATION for database tools in MicroCoreOS.
 Any new database tool (MySQL, MariaDB, etc.) MUST follow this contract.
 
-CONTRATO PÚBLICO (lo que los plugins usan):
+PUBLIC CONTRACT (what plugins use):
 ─────────────────────────────────────────────
     rows  = await db.query("SELECT * FROM users WHERE age > $1", [18])
     row   = await db.query_one("SELECT * FROM users WHERE id = $1", [5])
@@ -16,11 +16,11 @@ CONTRATO PÚBLICO (lo que los plugins usan):
     async with db.transaction() as tx:
         uid = await tx.execute("INSERT INTO users (name) VALUES ($1) RETURNING id", ["Ana"])
         await tx.execute("INSERT INTO profiles (user_id) VALUES ($1)", [uid])
-        # COMMIT automático al salir. ROLLBACK automático si hay excepción.
+        # Auto-COMMIT on exit. Auto-ROLLBACK on exception.
 
     ok = await db.health_check()
 
-PLACEHOLDERS: PostgreSQL usa $1, $2, $3... (NO '?' como SQLite).
+PLACEHOLDERS: PostgreSQL uses $1, $2, $3... (NOT '?' like SQLite).
 """
 
 import os
@@ -29,16 +29,16 @@ from core.base_tool import BaseTool
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# EXCEPCIONES
+# EXCEPTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class DatabaseError(Exception):
-    """Error genérico de base de datos. Envuelve excepciones de asyncpg."""
+    """Generic database error. Wraps asyncpg exceptions."""
     pass
 
 
 class DatabaseConnectionError(DatabaseError):
-    """Error de conexión al servidor PostgreSQL."""
+    """Connection error to the PostgreSQL server."""
     pass
 
 
@@ -48,22 +48,22 @@ class DatabaseConnectionError(DatabaseError):
 
 class Transaction:
     """
-    Transacción explícita sobre una conexión adquirida del pool.
+    Explicit transaction over a connection acquired from the pool.
 
-    Uso:
+    Usage:
         async with db.transaction() as tx:
             await tx.execute("INSERT INTO ...", [...])
             await tx.execute("UPDATE ...", [...])
             rows = await tx.query("SELECT ...", [...])
-        # COMMIT automático al salir del bloque.
-        # ROLLBACK automático si ocurre cualquier excepción.
+        # Auto-COMMIT on block exit.
+        # Auto-ROLLBACK if any exception occurs.
 
-    El context manager gestiona:
-    1. Adquirir una conexión del pool.
-    2. Abrir una transacción PostgreSQL real (BEGIN).
-    3. Hacer COMMIT si todo sale bien.
-    4. Hacer ROLLBACK si ocurre una excepción.
-    5. Devolver la conexión al pool SIEMPRE.
+    The context manager handles:
+    1. Acquiring a connection from the pool.
+    2. Opening a real PostgreSQL transaction (BEGIN).
+    3. COMMIT if everything succeeds.
+    4. ROLLBACK if an exception occurs.
+    5. Returning the connection to the pool ALWAYS.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:
@@ -77,7 +77,7 @@ class Transaction:
             self._tx = self._conn.transaction()
             await self._tx.start()
         except asyncpg.PostgresError as e:
-            # Si falla la adquisición o el BEGIN, limpiamos y propagamos
+            # If acquisition or BEGIN fails, clean up and propagate
             if self._conn is not None:
                 await self._pool.release(self._conn)
                 self._conn = None
@@ -87,23 +87,23 @@ class Transaction:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         try:
             if exc_type is None:
-                # Sin errores → COMMIT
+                # No errors → COMMIT
                 await self._tx.commit()
             else:
-                # Con errores → ROLLBACK
+                # Errors occurred → ROLLBACK
                 await self._tx.rollback()
         finally:
-            # SIEMPRE devolver la conexión al pool
+            # ALWAYS return the connection to the pool
             if self._conn is not None:
                 await self._pool.release(self._conn)
                 self._conn = None
-        # No suprimimos la excepción (return False)
+        # Do not suppress the exception (return False)
         return False
 
-    # ─── API dentro de la transacción ─────────────────────
+    # ─── API within the transaction ──────────────────────
 
     async def query(self, sql: str, params: list | None = None) -> list[dict]:
-        """SELECT dentro de la transacción. Retorna list[dict]."""
+        """SELECT within the transaction. Returns list[dict]."""
         params = params or []
         try:
             rows = await self._conn.fetch(sql, *params)
@@ -112,7 +112,7 @@ class Transaction:
             raise DatabaseError(f"Transaction query failed: {e}") from e
 
     async def query_one(self, sql: str, params: list | None = None) -> dict | None:
-        """SELECT de un solo registro dentro de la transacción. Retorna dict o None."""
+        """SELECT a single record within the transaction. Returns dict or None."""
         params = params or []
         try:
             row = await self._conn.fetchrow(sql, *params)
@@ -122,15 +122,15 @@ class Transaction:
 
     async def execute(self, sql: str, params: list | None = None) -> int | None:
         """
-        INSERT/UPDATE/DELETE dentro de la transacción.
+        INSERT/UPDATE/DELETE within the transaction.
 
-        - Si el SQL tiene RETURNING, retorna el valor de la primera columna
-          del primer registro (típicamente el ID generado).
-        - Si no tiene RETURNING, retorna el número de filas afectadas.
+        - If the SQL has RETURNING, returns the value of the first column
+          of the first record (typically the generated ID).
+        - If no RETURNING, returns the number of affected rows.
         """
         params = params or []
         try:
-            # Intentar fetchrow primero (para RETURNING)
+            # Try fetchrow first (for RETURNING)
             if "RETURNING" in sql.upper():
                 row = await self._conn.fetchrow(sql, *params)
                 if row is not None:
@@ -144,13 +144,13 @@ class Transaction:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# UTILIDADES INTERNAS
+# INTERNAL UTILITIES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _parse_affected_rows(status: str) -> int:
     """
-    Parsea el string de status de asyncpg (ej: 'UPDATE 3', 'DELETE 1', 'INSERT 0 1')
-    y extrae el número de filas afectadas.
+    Parses the asyncpg status string (e.g.: 'UPDATE 3', 'DELETE 1', 'INSERT 0 1')
+    and extracts the number of affected rows.
     """
     try:
         parts = status.split()
@@ -180,8 +180,8 @@ class PostgresqlTool(BaseTool):
 
     # ─── CONSTRUCTOR ──────────────────────────────────────
     #
-    # Solo lectura de configuración. Cero lógica, cero I/O.
-    # El pool se crea en setup(), NO aquí.
+    # Configuration read only. Zero logic, zero I/O.
+    # The pool is created in setup(), NOT here.
     #
 
     def __init__(self) -> None:
@@ -196,10 +196,10 @@ class PostgresqlTool(BaseTool):
 
     # ─── LIFECYCLE: setup() ───────────────────────────────
     #
-    # Fase de infraestructura. Se ejecuta ANTES de los plugins.
-    # Responsabilidades:
-    #   1. Crear el pool de conexiones.
-    #   2. Crear la tabla interna de historial de migraciones.
+    # Infrastructure phase. Runs BEFORE plugins.
+    # Responsibilities:
+    #   1. Create the connection pool.
+    #   2. Create the internal migration history table.
     #
 
     async def setup(self) -> None:
@@ -220,7 +220,7 @@ class PostgresqlTool(BaseTool):
                 f"Cannot connect to PostgreSQL at {self._host}:{self._port}/{self._database}: {e}"
             ) from e
 
-        # Crear tabla interna de migraciones
+        # Create internal migrations table
         await self.execute("""
             CREATE TABLE IF NOT EXISTS _migrations_history (
                 id          SERIAL PRIMARY KEY,
@@ -235,13 +235,13 @@ class PostgresqlTool(BaseTool):
 
     # ─── LIFECYCLE: on_boot_complete() ────────────────────
     #
-    # Se ejecuta DESPUÉS de que todos los tools y plugins están cargados.
-    # Responsabilidad: ejecutar migraciones SQL pendientes.
+    # Runs AFTER all tools and plugins are loaded.
+    # Responsibility: execute pending SQL migrations.
     #
-    # Las migraciones se buscan en: domains/*/migrations/*.sql
-    # Se aplican en orden alfabético, dentro de una transacción por archivo.
-    # Si una migración falla, se hace ROLLBACK de esa migración
-    # y se detiene la ejecución (raise) para no dejar el sistema inconsistente.
+    # Migrations are searched in: domains/*/migrations/*.sql
+    # Applied in alphabetical order, within a transaction per file.
+    # If a migration fails, that migration is ROLLED BACK
+    # and execution stops (raise) to avoid leaving the system inconsistent.
     #
 
     async def on_boot_complete(self, container) -> None:
@@ -260,7 +260,7 @@ class PostgresqlTool(BaseTool):
             )
 
             for filename in migration_files:
-                # Verificar si ya fue aplicada
+                # Check if already applied
                 already_applied = await self.query_one(
                     "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
                     [domain, filename],
@@ -274,14 +274,14 @@ class PostgresqlTool(BaseTool):
                 with open(filepath, "r", encoding="utf-8") as f:
                     sql_script = f.read()
 
-                # Cada migración en su propia transacción
+                # Each migration in its own transaction
                 async with self.transaction() as tx:
-                    # Ejecutar cada statement del archivo
+                    # Execute each statement from the file
                     statements = [s.strip() for s in sql_script.split(";") if s.strip()]
                     for statement in statements:
                         await tx.execute(statement)
 
-                    # Registrar migración exitosa
+                    # Register successful migration
                     await tx.execute(
                         "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
                         [domain, filename],
@@ -291,8 +291,8 @@ class PostgresqlTool(BaseTool):
 
     # ─── LIFECYCLE: shutdown() ────────────────────────────
     #
-    # Cierra el pool de conexiones de forma ordenada.
-    # Espera a que las conexiones activas terminen.
+    # Closes the connection pool in an orderly manner.
+    # Waits for active connections to finish.
     #
 
     async def shutdown(self) -> None:
@@ -303,17 +303,17 @@ class PostgresqlTool(BaseTool):
 
     # ─── PUBLIC API: query() ──────────────────────────────
     #
-    # Ejecuta un SELECT y retorna TODOS los registros.
+    # Executes a SELECT and returns ALL records.
     #
-    # Parámetros:
-    #   sql:    str           — Query SQL con placeholders $1, $2...
-    #   params: list | None   — Valores para los placeholders
+    # Parameters:
+    #   sql:    str           — SQL query with placeholders $1, $2...
+    #   params: list | None   — Values for the placeholders
     #
-    # Retorna: list[dict]
-    #   - Lista vacía si no hay resultados.
-    #   - Cada dict tiene como keys los nombres de las columnas.
+    # Returns: list[dict]
+    #   - Empty list if no results.
+    #   - Each dict has column names as keys.
     #
-    # Ejemplo:
+    # Example:
     #   rows = await db.query("SELECT id, name FROM users WHERE age > $1", [18])
     #   # [{"id": 1, "name": "Ana"}, {"id": 2, "name": "Luis"}]
     #
@@ -329,17 +329,17 @@ class PostgresqlTool(BaseTool):
 
     # ─── PUBLIC API: query_one() ──────────────────────────
     #
-    # Ejecuta un SELECT y retorna el PRIMER registro o None.
+    # Executes a SELECT and returns the FIRST record or None.
     #
-    # Parámetros:
-    #   sql:    str           — Query SQL con placeholders $1, $2...
-    #   params: list | None   — Valores para los placeholders
+    # Parameters:
+    #   sql:    str           — SQL query with placeholders $1, $2...
+    #   params: list | None   — Values for the placeholders
     #
-    # Retorna: dict | None
-    #   - None si no hay resultados.
-    #   - dict con keys = nombres de columnas.
+    # Returns: dict | None
+    #   - None if no results.
+    #   - dict with keys = column names.
     #
-    # Ejemplo:
+    # Example:
     #   user = await db.query_one("SELECT * FROM users WHERE id = $1", [5])
     #   # {"id": 5, "name": "Ana", "email": "ana@mail.com"} or None
     #
@@ -355,24 +355,24 @@ class PostgresqlTool(BaseTool):
 
     # ─── PUBLIC API: execute() ────────────────────────────
     #
-    # Ejecuta INSERT, UPDATE o DELETE.
+    # Executes INSERT, UPDATE or DELETE.
     #
-    # Parámetros:
-    #   sql:    str           — SQL con placeholders $1, $2...
-    #   params: list | None   — Valores para los placeholders
+    # Parameters:
+    #   sql:    str           — SQL with placeholders $1, $2...
+    #   params: list | None   — Values for the placeholders
     #
-    # Retorna: int | None
-    #   - Con RETURNING: el valor de la primera columna del primer registro
-    #     (típicamente el ID generado).
-    #   - Sin RETURNING: el número de filas afectadas (int).
+    # Returns: int | None
+    #   - With RETURNING: the value of the first column of the first record
+    #     (typically the generated ID).
+    #   - Without RETURNING: the number of affected rows (int).
     #
-    # Ejemplo con RETURNING:
+    # Example with RETURNING:
     #   new_id = await db.execute(
     #       "INSERT INTO users (name) VALUES ($1) RETURNING id", ["Ana"]
     #   )
     #   # 42
     #
-    # Ejemplo sin RETURNING:
+    # Example without RETURNING:
     #   affected = await db.execute(
     #       "UPDATE users SET active = $1 WHERE age < $2", [False, 18]
     #   )
@@ -396,16 +396,16 @@ class PostgresqlTool(BaseTool):
 
     # ─── PUBLIC API: execute_many() ───────────────────────
     #
-    # Ejecuta la misma sentencia SQL con múltiples sets de parámetros.
-    # Optimizado internamente por asyncpg (pipeline).
+    # Executes the same SQL statement with multiple parameter sets.
+    # Internally optimized by asyncpg (pipeline).
     #
-    # Parámetros:
-    #   sql:         str         — SQL con placeholders $1, $2...
-    #   params_list: list[list]  — Lista de listas de parámetros.
+    # Parameters:
+    #   sql:         str         — SQL with placeholders $1, $2...
+    #   params_list: list[list]  — List of parameter lists.
     #
-    # Retorna: None
+    # Returns: None
     #
-    # Ejemplo:
+    # Example:
     #   await db.execute_many(
     #       "INSERT INTO logs (level, msg) VALUES ($1, $2)",
     #       [["INFO", "Started"], ["ERROR", "Crashed"], ["INFO", "Recovered"]]
@@ -415,22 +415,22 @@ class PostgresqlTool(BaseTool):
     async def execute_many(self, sql: str, params_list: list[list]) -> None:
         try:
             async with self._pool.acquire() as conn:
-                # asyncpg.executemany espera una lista de tuples
+                # asyncpg.executemany expects a list of tuples
                 await conn.executemany(sql, [tuple(p) for p in params_list])
         except asyncpg.PostgresError as e:
             raise DatabaseError(f"Execute many failed: {e}") from e
 
     # ─── PUBLIC API: transaction() ────────────────────────
     #
-    # Abre una transacción explícita usando un context manager async.
-    # Dentro del bloque, todas las operaciones comparten la misma
-    # conexión y transacción PostgreSQL.
+    # Opens an explicit transaction using an async context manager.
+    # Within the block, all operations share the same
+    # PostgreSQL connection and transaction.
     #
-    # - COMMIT automático al salir del bloque sin errores.
-    # - ROLLBACK automático si ocurre cualquier excepción.
-    # - La conexión se devuelve al pool SIEMPRE.
+    # - Auto-COMMIT on block exit without errors.
+    # - Auto-ROLLBACK if any exception occurs.
+    # - The connection is returned to the pool ALWAYS.
     #
-    # Ejemplo:
+    # Example:
     #   async with db.transaction() as tx:
     #       user_id = await tx.execute(
     #           "INSERT INTO users (name) VALUES ($1) RETURNING id", ["Ana"]
@@ -439,7 +439,7 @@ class PostgresqlTool(BaseTool):
     #           "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)",
     #           [user_id, "Hello!"]
     #       )
-    #   # Si cualquier execute falla, todo se revierte.
+    #   # If any execute fails, everything is rolled back.
     #
 
     def transaction(self) -> Transaction:
@@ -449,12 +449,12 @@ class PostgresqlTool(BaseTool):
 
     # ─── PUBLIC API: health_check() ───────────────────────
     #
-    # Verifica que el pool está activo y la BD responde.
-    # Útil para el Registry y monitoring.
+    # Verifies that the pool is active and the DB responds.
+    # Useful for the Registry and monitoring.
     #
-    # Retorna: bool
-    #   - True si la conexión funciona.
-    #   - False si hay algún error.
+    # Returns: bool
+    #   - True if the connection works.
+    #   - False if there is any error.
     #
 
     async def health_check(self) -> bool:
