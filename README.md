@@ -365,6 +365,6 @@ For commercial consulting or support: theanibalos@gmail.com
 
 **AnibalOS** ([@theanibalos](https://github.com/theanibalos))
 
-Built because I was tired of explaining my architecture to Claude.
+Built because I was tired of explaining my architecture to IA.
 
 ---

@@ -239,9 +239,15 @@ class PostgresqlTool(BaseTool):
     # Responsibility: execute pending SQL migrations.
     #
     # Migrations are searched in: domains/*/migrations/*.sql
-    # Applied in alphabetical order, within a transaction per file.
-    # If a migration fails, that migration is ROLLED BACK
-    # and execution stops (raise) to avoid leaving the system inconsistent.
+    # Applied in TOPOLOGICAL ORDER based on "-- depends:" headers.
+    # If no dependencies are declared, falls back to alphabetical.
+    #
+    # Dependency syntax (first lines of .sql file):
+    #   -- depends: users/001_create_users_table
+    #   -- depends: profiles/001_create_profiles_table
+    #
+    # Each migration runs in its own transaction.
+    # If a migration fails, it is ROLLED BACK.
     #
 
     async def on_boot_complete(self, container) -> None:
@@ -250,44 +256,85 @@ class PostgresqlTool(BaseTool):
         if not os.path.exists(domains_dir):
             return
 
+        # ── 1. Discover ALL migration files across all domains ──────────
+        migrations = {}  # key: "domain/filename" → value: {"path": ..., "depends": [...]}
         for domain in sorted(os.listdir(domains_dir)):
             migrations_dir = os.path.join(domains_dir, domain, "migrations")
             if not os.path.isdir(migrations_dir):
                 continue
 
-            migration_files = sorted(
-                f for f in os.listdir(migrations_dir) if f.endswith(".sql")
-            )
-
-            for filename in migration_files:
-                # Check if already applied
-                already_applied = await self.query_one(
-                    "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
-                    [domain, filename],
-                )
-                if already_applied:
-                    continue
-
-                print(f"  [Migration] Applying {domain}/{filename}...")
+            for filename in sorted(f for f in os.listdir(migrations_dir) if f.endswith(".sql")):
+                key = f"{domain}/{filename}"
                 filepath = os.path.join(migrations_dir, filename)
 
+                # Parse "-- depends: domain/filename" from first lines
+                depends = []
                 with open(filepath, "r", encoding="utf-8") as f:
-                    sql_script = f.read()
+                    for line in f:
+                        line = line.strip()
+                        if line.lower().startswith("-- depends:"):
+                            dep = line.split(":", 1)[1].strip()
+                            if not dep.endswith(".sql"):
+                                dep += ".sql"
+                            depends.append(dep)
+                        elif line.startswith("--"):
+                            continue  # skip other comments
+                        else:
+                            break  # stop parsing after first non-comment line
 
-                # Each migration in its own transaction
-                async with self.transaction() as tx:
-                    # Execute each statement from the file
-                    statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-                    for statement in statements:
-                        await tx.execute(statement)
+                migrations[key] = {"path": filepath, "depends": depends, "domain": domain, "filename": filename}
 
-                    # Register successful migration
-                    await tx.execute(
-                        "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
-                        [domain, filename],
-                    )
+        # ── 2. Topological sort using graphlib ──────────────────────────
+        from graphlib import TopologicalSorter
 
-                print(f"  [Migration] ✅ Applied {domain}/{filename}")
+        graph = {}
+        for key, info in migrations.items():
+            graph[key] = set(info["depends"])
+
+        try:
+            sorter = TopologicalSorter(graph)
+            ordered_keys = list(sorter.static_order())
+        except Exception as e:
+            print(f"  [Migration] ⚠️  Circular dependency detected: {e}")
+            ordered_keys = sorted(migrations.keys())
+
+        # ── 3. Apply in topological order ───────────────────────────────
+        for key in ordered_keys:
+            if key not in migrations:
+                continue  # dependency references a migration that doesn't exist (yet)
+
+            info = migrations[key]
+            domain = info["domain"]
+            filename = info["filename"]
+
+            # Check if already applied
+            already_applied = await self.query_one(
+                "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
+                [domain, filename],
+            )
+            if already_applied:
+                continue
+
+            print(f"  [Migration] Applying {key}...")
+
+            with open(info["path"], "r", encoding="utf-8") as f:
+                sql_script = f.read()
+
+            # Each migration in its own transaction
+            async with self.transaction() as tx:
+                statements = [s.strip() for s in sql_script.split(";") if s.strip()]
+                for statement in statements:
+                    if statement.startswith("--"):
+                        continue
+                    await tx.execute(statement)
+
+                # Register successful migration
+                await tx.execute(
+                    "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
+                    [domain, filename],
+                )
+
+            print(f"  [Migration] ✅ Applied {key}")
 
     # ─── LIFECYCLE: shutdown() ────────────────────────────
     #

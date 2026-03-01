@@ -333,7 +333,12 @@ class HttpServerTool(BaseTool):
 
         The wrapper captures the FastAPI Request and Response objects and delegates
         to the core request processing pipeline (_process_request).
+
+        Path parameters (e.g. {user_id}) are extracted from the path template and
+        injected into the wrapper's signature so FastAPI generates proper OpenAPI docs.
         """
+        import re
+
         path = ep["path"]
         method = ep["method"].upper()
         handler = ep["handler"]
@@ -346,18 +351,38 @@ class HttpServerTool(BaseTool):
         clean_path = path.replace("/", "_").replace("{", "").replace("}", "")
         operation_id = f"{method.lower()}{clean_path}"
 
+        # Extract path parameter names from the path template (e.g. "/profiles/{id}" → ["id"])
+        path_param_names = re.findall(r"\{(\w+)\}", path)
+
         # Build the FastAPI-compatible wrapper.
-        # Three variants based on whether the endpoint has a Pydantic request model,
-        # because FastAPI uses different injection strategies for GET vs POST/PUT/etc.
+        # Wrappers use **kwargs to accept FastAPI-injected path params at runtime.
+        # __signature__ is overridden below to control what Swagger shows.
         if request_model and method == "GET":
-            async def fastapi_wrapper(request: Request, params: request_model = Depends()):
+            async def fastapi_wrapper(request: Request, params: request_model = Depends(), **kwargs):
                 return await self._process_request(request, params, handler, auth_validator)
         elif request_model:
-            async def fastapi_wrapper(request: Request, body: request_model = None):
+            async def fastapi_wrapper(request: Request, body: request_model = None, **kwargs):
                 return await self._process_request(request, body, handler, auth_validator)
         else:
-            async def fastapi_wrapper(request: Request):
+            async def fastapi_wrapper(request: Request, **kwargs):
                 return await self._process_request(request, None, handler, auth_validator)
+
+        # Override __signature__ to control OpenAPI documentation.
+        # Always remove **kwargs; add explicit path params if present.
+        sig = inspect.signature(fastapi_wrapper)
+        existing_params = [
+            p for p in sig.parameters.values() if p.kind != inspect.Parameter.VAR_KEYWORD
+        ]
+        if path_param_names:
+            path_params_list = [
+                inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=str)
+                for name in path_param_names
+            ]
+            # Insert path params after 'request' but before body/params
+            new_params = [existing_params[0]] + path_params_list + existing_params[1:]
+        else:
+            new_params = existing_params
+        fastapi_wrapper.__signature__ = sig.replace(parameters=new_params)
 
         fastapi_wrapper.__name__ = operation_id
         self.app.add_api_route(
