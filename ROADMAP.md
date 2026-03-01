@@ -1,5 +1,3 @@
----
-
 **Issue 1 — High Priority**
 **Domain-level AI_CONTEXT.md**
 
