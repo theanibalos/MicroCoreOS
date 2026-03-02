@@ -320,16 +320,14 @@ class SqliteTool(BaseTool):
             print(f"  [Migration] Applying {key}...")
 
             with open(info["path"], "r", encoding="utf-8") as f:
-                sql_script = f.read()
+                lines = f.readlines()
+                sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
 
             # Each migration in its own transaction
             async with self.transaction() as tx:
                 # Execute each statement in the file
                 statements = [s.strip() for s in sql_script.split(";") if s.strip()]
                 for statement in statements:
-                    # Skip dependency comments
-                    if statement.startswith("--"):
-                        continue
                     await tx.execute(statement)
 
                 # Record successful migration
