@@ -1,4 +1,20 @@
+from typing import Optional
+from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class UserData(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+
+
+class GetMeResponse(BaseModel):
+    success: bool
+    data: Optional[UserData] = None
+    error: Optional[str] = None
+
 
 class GetMePlugin(BasePlugin):
     def __init__(self, http, db, auth, logger):
@@ -13,7 +29,8 @@ class GetMePlugin(BasePlugin):
             method="GET",
             handler=self.execute,
             tags=["Users"],
-            auth_validator=self._validate_token
+            response_model=GetMeResponse,
+            auth_validator=self._validate_token,
         )
 
     async def _validate_token(self, token: str):

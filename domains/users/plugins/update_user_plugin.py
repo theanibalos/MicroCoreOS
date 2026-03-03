@@ -1,12 +1,20 @@
+from typing import Optional
 from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
 
 
-# ── Request schema (lives here, not in models/user.py) ──────────────────────
+# ── Request schema ───────────────────────────────────────────────────────────
 class UpdateUserRequest(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
     password: str | None = None  # plain-text; hashed before DB write if provided
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class UpdateUserResponse(BaseModel):
+    success: bool
+    data: None = None
+    error: Optional[str] = None
 
 
 class UpdateUserPlugin(BasePlugin):
@@ -23,7 +31,8 @@ class UpdateUserPlugin(BasePlugin):
             "PUT",
             self.execute,
             tags=["Users"],
-            request_model=UpdateUserRequest
+            request_model=UpdateUserRequest,
+            response_model=UpdateUserResponse,
         )
 
     async def execute(self, data: dict, context=None):
@@ -61,7 +70,7 @@ class UpdateUserPlugin(BasePlugin):
                 return {"success": False, "error": "User not found"}
 
             self.logger.info(f"User {user_id} updated")
-            return {"success": True, "message": f"User {user_id} updated successfully"}
+            return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")
             return {"success": False, "error": str(e)}

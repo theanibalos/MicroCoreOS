@@ -1,12 +1,26 @@
+from typing import Optional
 from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
 
 
-# ── Request schema (lives here, not in models/user.py) ──────────────────────
+# ── Request schema ───────────────────────────────────────────────────────────
 class CreateUserRequest(BaseModel):
     name: str
     email: EmailStr
     password: str  # plain-text; hashed before DB write
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class CreatedUserData(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+
+
+class CreateUserResponse(BaseModel):
+    success: bool
+    data: Optional[CreatedUserData] = None
+    error: Optional[str] = None
 
 
 class CreateUserPlugin(BasePlugin):
@@ -23,7 +37,8 @@ class CreateUserPlugin(BasePlugin):
             "POST",
             self.execute,
             tags=["Users"],
-            request_model=CreateUserRequest
+            request_model=CreateUserRequest,
+            response_model=CreateUserResponse,
         )
 
     async def execute(self, data: dict, context=None):

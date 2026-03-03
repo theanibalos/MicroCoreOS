@@ -1,5 +1,24 @@
+from typing import Optional
+from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
-from domains.users.models.auth import LoginRequest, LoginResponse
+
+
+# ── Request schema ───────────────────────────────────────────────────────────
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class LoginData(BaseModel):
+    token: str
+
+
+class LoginResponse(BaseModel):
+    success: bool
+    data: Optional[LoginData] = None
+    error: Optional[str] = None
+
 
 class LoginPlugin(BasePlugin):
     def __init__(self, http, db, auth, logger):
@@ -15,7 +34,7 @@ class LoginPlugin(BasePlugin):
             handler=self.execute,
             tags=["Auth"],
             request_model=LoginRequest,
-            response_model=LoginResponse
+            response_model=LoginResponse,
         )
 
     async def execute(self, data: dict, context=None):
@@ -42,7 +61,7 @@ class LoginPlugin(BasePlugin):
                 context.set_cookie("access_token", token, max_age=86400)
 
             self.logger.info(f"User {req.email} logged in successfully")
-            return {"success": True, "token": token}
+            return {"success": True, "data": {"token": token}}
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")

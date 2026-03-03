@@ -1,4 +1,19 @@
+from typing import Optional
+from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
+
+
+class UserData(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+
+
+class GetUserByIdResponse(BaseModel):
+    success: bool
+    data: Optional[UserData] = None
+    error: Optional[str] = None
+
 
 class GetUserByIdPlugin(BasePlugin):
     def __init__(self, http, db, logger):
@@ -7,7 +22,8 @@ class GetUserByIdPlugin(BasePlugin):
         self.logger = logger
 
     async def on_boot(self):
-        self.http.add_endpoint("/users/{user_id}", "GET", self.execute, tags=["Users"])
+        self.http.add_endpoint("/users/{user_id}", "GET", self.execute, tags=["Users"],
+                               response_model=GetUserByIdResponse)
 
     async def execute(self, data: dict, context=None):
         try:

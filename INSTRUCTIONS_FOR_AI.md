@@ -44,9 +44,15 @@ domains/{name}/
 | What | Where |
 |---|---|
 | `<Name>Entity` — DB mirror | `domains/{name}/models/{name}.py` — only changes when the DB table changes |
-| Request/Response schema | **Top of the plugin file** that owns it — never in `models/` |
+| Request schema | **Top of the plugin file** that owns it — never in `models/` |
+| Response schema | **Top of the plugin file** that owns it — never import the Entity for this |
 
 **Why:** Each plugin is self-contained. An AI reads entity + its plugin, nothing else. Multiple AI agents work in parallel without conflicts.
+
+**Response schema rules:**
+- Define only the fields you actually return — never expose `password_hash` or other sensitive entity fields.
+- `data` field type must match exactly what `execute()` returns, not the full Entity.
+- Always pass `response_model=` to `add_endpoint` — this is what generates complete OpenAPI docs.
 
 ### The AI-Driven Build Sequence
 
@@ -64,6 +70,7 @@ domains/{name}/
 **Rule**: 1 File = 1 Feature. Schema defined inline.
 
 ```python
+from typing import Optional
 from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
 
@@ -71,6 +78,17 @@ from core.base_plugin import BasePlugin
 class CreateProductRequest(BaseModel):
     name: str
     price: float
+
+# ── Response schema lives HERE — define only what you return ─
+class ProductData(BaseModel):
+    id: int
+    name: str
+    price: float
+
+class CreateProductResponse(BaseModel):
+    success: bool
+    data: Optional[ProductData] = None
+    error: Optional[str] = None
 
 class CreateProductPlugin(BasePlugin):
     def __init__(self, logger, event_bus, http, db):
@@ -87,7 +105,8 @@ class CreateProductPlugin(BasePlugin):
             method="POST",
             handler=self.execute,
             tags=["Products"],
-            request_model=CreateProductRequest
+            request_model=CreateProductRequest,
+            response_model=CreateProductResponse,
         )
         await self.bus.subscribe("order.created", self.on_order_created)
 
@@ -100,7 +119,7 @@ class CreateProductPlugin(BasePlugin):
                 [req.name, req.price]
             )
             await self.bus.publish("product.created", {"id": product_id})
-            return {"success": True, "data": {"id": product_id}}
+            return {"success": True, "data": {"id": product_id, "name": req.name, "price": req.price}}
         except Exception as e:
             self.logger.error(f"Failed to create product: {e}")
             return {"success": False, "error": str(e)}

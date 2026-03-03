@@ -1,4 +1,14 @@
+from typing import Optional
+from pydantic import BaseModel
 from core.base_plugin import BasePlugin
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class DeleteUserResponse(BaseModel):
+    success: bool
+    data: None = None
+    error: Optional[str] = None
+
 
 class DeleteUserPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger):
@@ -8,7 +18,8 @@ class DeleteUserPlugin(BasePlugin):
         self.logger = logger
 
     async def on_boot(self):
-        self.http.add_endpoint("/users/{user_id}", "DELETE", self.execute, tags=["Users"])
+        self.http.add_endpoint("/users/{user_id}", "DELETE", self.execute, tags=["Users"],
+                               response_model=DeleteUserResponse)
 
     async def execute(self, data: dict, context=None):
         try:
@@ -23,7 +34,7 @@ class DeleteUserPlugin(BasePlugin):
 
             await self.bus.publish("user.deleted", {"id": user_id})
 
-            return {"success": True, "message": f"User {user_id} deleted successfully"}
+            return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to delete user: {e}")
             return {"success": False, "error": str(e)}

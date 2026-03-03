@@ -57,13 +57,17 @@ CREATE TABLE IF NOT EXISTS {name}s (
 
 For each operation (create, get_all, get_by_id, update, delete), create a separate plugin file in `domains/{name}/plugins/`.
 
-**Critical rule**: Define the request schema (what the HTTP client sends) at the **top of the plugin file**, NOT in the models folder.
+**Critical rules**:
+- Define the **request schema** (what the HTTP client sends) at the **top of the plugin file**, NOT in the models folder.
+- Define the **response schema** (what the HTTP client receives) at the **top of the plugin file** too — never import the Entity for this; only expose the fields you actually return.
+- Always pass `response_model=` to `add_endpoint` — this generates complete OpenAPI docs.
 
 Example for create:
 
 File: `domains/{name}/plugins/create_{name}_plugin.py`
 
 ```python
+from typing import Optional
 from pydantic import BaseModel
 from core.base_plugin import BasePlugin
 
@@ -72,6 +76,17 @@ class Create{Name}Request(BaseModel):
     # Only input fields — no id, no internal fields
     field1: str
     field2: int
+
+# ── Response schema lives HERE ─────────────────────
+class {Name}Data(BaseModel):
+    id: int
+    field1: str
+    field2: int
+
+class Create{Name}Response(BaseModel):
+    success: bool
+    data: Optional[{Name}Data] = None
+    error: Optional[str] = None
 
 class Create{Name}Plugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger):
@@ -83,7 +98,8 @@ class Create{Name}Plugin(BasePlugin):
     async def on_boot(self):
         self.http.add_endpoint(
             "/{name}s", "POST", self.execute,
-            tags=["{Name}s"], request_model=Create{Name}Request
+            tags=["{Name}s"], request_model=Create{Name}Request,
+            response_model=Create{Name}Response,
         )
 
     async def execute(self, data: dict, context=None):
@@ -95,7 +111,7 @@ class Create{Name}Plugin(BasePlugin):
             )
             self.logger.info(f"{Name} created with ID {new_id}")
             await self.bus.publish("{name}.created", {"id": new_id})
-            return {"success": True, "data": {"id": new_id}}
+            return {"success": True, "data": {"id": new_id, "field1": req.field1, "field2": req.field2}}
         except Exception as e:
             self.logger.error(f"Failed to create {name}: {e}")
             return {"success": False, "error": str(e)}

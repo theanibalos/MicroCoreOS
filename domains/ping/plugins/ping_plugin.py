@@ -1,5 +1,19 @@
+from typing import Optional
+from pydantic import BaseModel
 from core.base_plugin import BasePlugin
-from domains.ping.models.ping_model import PingResponse
+
+
+# ── Response schema ──────────────────────────────────────────────────────────
+class PingData(BaseModel):
+    status: str
+    message: str
+
+
+class PingResponse(BaseModel):
+    success: bool
+    data: Optional[PingData] = None
+    error: Optional[str] = None
+
 
 class PingPlugin(BasePlugin):
     """
@@ -13,13 +27,10 @@ class PingPlugin(BasePlugin):
         self.http.add_endpoint(
             path="/ping",
             method="GET",
-            handler=self.handler,
+            handler=self.execute,
+            tags=["System"],
             response_model=PingResponse,
-            tags=["System"]
         )
 
-    async def execute(self, data: dict = None):
+    async def execute(self, data: dict = None, context=None):
         return {"success": True, "data": {"status": "ok", "message": "pong"}}
-
-    async def handler(self, data, context=None):
-        return await self.execute(data)
