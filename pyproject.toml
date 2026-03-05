@@ -1,5 +1,5 @@
 [project]
-name = "microos"
+name = "microcoreos"
 version = "0.1.0"
 description = "Atomic Microkernel Architecture optimized for AI-Driven Development"
 license = {text = "MIT"}
@@ -26,4 +26,5 @@ pythonpath = ["."]
 dev = [
     "anyio[trio]>=4.0.0",
     "pytest>=8.0.0",
+    "watchfiles>=1.1.1",
 ]

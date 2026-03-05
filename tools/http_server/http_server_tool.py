@@ -231,16 +231,19 @@ class HttpServerTool(BaseTool):
         FastAPI to sort static paths before parameterized paths, preventing routing conflicts.
         """
         self._register_all_endpoints()
-
         config = uvicorn.Config(self.app, host="0.0.0.0", port=self._port, log_level="warning")
         self._server = uvicorn.Server(config)
-        asyncio.create_task(self._server.serve())
+        self._server_task = asyncio.create_task(self._server.serve())
         print(f"[HttpServer] Server active → http://localhost:{self._port}/docs")
 
     async def shutdown(self) -> None:
         if self._server:
             self._server.should_exit = True
-            await asyncio.sleep(0.5)
+            if self._server_task:
+                try:
+                    await asyncio.wait_for(self._server_task, timeout=5.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
 
     def get_interface_description(self) -> str:
         return """
