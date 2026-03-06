@@ -56,15 +56,47 @@ class DatabaseConnectionError(DatabaseError):
 # PLACEHOLDER NORMALIZATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-_PG_PLACEHOLDER = re.compile(r'\$\d+')
+_PG_PLACEHOLDER = re.compile(r'\$(\d+)')
 
-def _normalize_sql(sql: str) -> str:
+def _normalize_sql(sql: str, params: list | None = None) -> tuple[str, list]:
     """
     Converts PostgreSQL placeholders ($1, $2...) to SQLite (?).
-    If the SQL already uses '?' or has no placeholders, it is left intact.
-    This is what enables the transparent swap.
+    Expands params to match the positional placeholders.
     """
-    return _PG_PLACEHOLDER.sub('?', sql)
+    params = params or []
+    matches = _PG_PLACEHOLDER.findall(sql)
+    if not matches:
+        return sql, params
+        
+    new_params = []
+    for m in matches:
+        idx = int(m) - 1
+        if 0 <= idx < len(params):
+            new_params.append(params[idx])
+        else:
+            new_params.append(None)
+            
+    sql = _PG_PLACEHOLDER.sub('?', sql)
+    return sql, new_params
+
+def _normalize_sql_many(sql: str, params_list: list[list]) -> tuple[str, list[list]]:
+    matches = _PG_PLACEHOLDER.findall(sql)
+    if not matches:
+        return sql, params_list
+        
+    sql = _PG_PLACEHOLDER.sub('?', sql)
+    new_params_list = []
+    for params in params_list:
+        new_params = []
+        for m in matches:
+            idx = int(m) - 1
+            if 0 <= idx < len(params):
+                new_params.append(params[idx])
+            else:
+                new_params.append(None)
+        new_params_list.append(new_params)
+        
+    return sql, new_params_list
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -121,8 +153,7 @@ class Transaction:
 
     async def query(self, sql: str, params: list | None = None) -> list[dict]:
         """SELECT within the transaction. Returns list[dict]."""
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             cursor = await self._db.execute(sql, params)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -133,8 +164,7 @@ class Transaction:
 
     async def query_one(self, sql: str, params: list | None = None) -> dict | None:
         """SELECT a single record within the transaction. Returns dict or None."""
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             cursor = await self._db.execute(sql, params)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -152,8 +182,7 @@ class Transaction:
         - If INSERT without RETURNING, returns lastrowid.
         - Otherwise, returns the number of affected rows.
         """
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             if "RETURNING" in sql.upper():
                 cursor = await self._db.execute(sql, params)
@@ -370,8 +399,7 @@ class SqliteTool(BaseTool):
     #
 
     async def query(self, sql: str, params: list | None = None) -> list[dict]:
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             cursor = await self._db.execute(sql, params)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -398,8 +426,7 @@ class SqliteTool(BaseTool):
     #
 
     async def query_one(self, sql: str, params: list | None = None) -> dict | None:
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             cursor = await self._db.execute(sql, params)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -442,8 +469,7 @@ class SqliteTool(BaseTool):
     #
 
     async def execute(self, sql: str, params: list | None = None) -> int | None:
-        sql = _normalize_sql(sql)
-        params = params or []
+        sql, params = _normalize_sql(sql, params)
         try:
             if "RETURNING" in sql.upper():
                 cursor = await self._db.execute(sql, params)
@@ -479,7 +505,7 @@ class SqliteTool(BaseTool):
     #
 
     async def execute_many(self, sql: str, params_list: list[list]) -> None:
-        sql = _normalize_sql(sql)
+        sql, params_list = _normalize_sql_many(sql, params_list)
         try:
             await self._db.executemany(sql, params_list)
             await self._db.commit()
