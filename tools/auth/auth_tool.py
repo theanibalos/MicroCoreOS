@@ -34,6 +34,9 @@ class AuthTool(BaseTool):
             - decode_token(token: str) -> dict: 
                 Verifies and decodes a JWT token. Returns the payload dictionary. 
                 Raises Exception if token is expired or invalid.
+            - validate_token(token: str) -> dict | None: (async)
+                Safe, non-throwing token validation. Returns the decoded payload 
+                if valid, or None if expired/invalid. Ideal for middleware guards.
         """
 
     def hash_password(self, password: str) -> str:
@@ -63,6 +66,12 @@ class AuthTool(BaseTool):
             raise Exception("Invalid token")
         except Exception as e:
             raise Exception(f"Could not validate credentials: {str(e)}")
+
+    async def validate_token(self, token: str) -> dict | None:
+        try:
+            return self.decode_token(token)
+        except Exception:
+            return None
 
     def shutdown(self):
         pass

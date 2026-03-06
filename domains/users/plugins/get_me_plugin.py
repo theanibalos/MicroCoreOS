@@ -30,14 +30,8 @@ class GetMePlugin(BasePlugin):
             handler=self.execute,
             tags=["Users"],
             response_model=GetMeResponse,
-            auth_validator=self._validate_token,
+            auth_validator=self.auth.validate_token,
         )
-
-    async def _validate_token(self, token: str):
-        try:
-            return self.auth.decode_token(token)
-        except Exception:
-            return None
 
     async def execute(self, data: dict, context=None):
         try:
