@@ -121,6 +121,9 @@ Authentication Tool (auth):
             - decode_token(token: str) -> dict: 
                 Verifies and decodes a JWT token. Returns the payload dictionary. 
                 Raises Exception if token is expired or invalid.
+            - validate_token(token: str) -> dict | None:
+                Safe, non-throwing token validation. Returns the decoded payload
+                if valid, or None if expired/invalid. Ideal for middleware guards.
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
