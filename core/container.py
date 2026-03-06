@@ -20,24 +20,31 @@ class ToolProxy:
         if not callable(attr):
             return attr
 
-        def wrapper(*args, **kwargs):
-            try:
-                result = attr(*args, **kwargs)
-            except Exception as e:
-                self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
-                raise
+        if inspect.iscoroutinefunction(attr):
+            async def wrapper(*args, **kwargs):
+                try:
+                    return await attr(*args, **kwargs)
+                except Exception as e:
+                    self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                    raise
+        else:
+            def wrapper(*args, **kwargs):
+                try:
+                    result = attr(*args, **kwargs)
+                except Exception as e:
+                    self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                    raise
 
-            # If the result is a coroutine, wrap it to monitor async exceptions
-            if inspect.isawaitable(result):
-                async def _monitored():
-                    try:
-                        return await result
-                    except Exception as e:
-                        self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
-                        raise
-                return _monitored()
+                if inspect.isawaitable(result):
+                    async def _monitored():
+                        try:
+                            return await result
+                        except Exception as e:
+                            self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                            raise
+                    return _monitored()
 
-            return result
+                return result
         return wrapper
 
 class Container:
