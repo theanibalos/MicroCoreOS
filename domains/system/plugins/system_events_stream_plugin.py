@@ -51,6 +51,8 @@ class SystemEventsStreamPlugin(BasePlugin):
                 await ws.receive_text()  # keep connection alive, ignore client messages
         except Exception:
             pass
+        finally:
+            self._clients.discard(ws)
 
     async def _on_disconnect(self, ws):
         self._clients.discard(ws)

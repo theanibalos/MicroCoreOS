@@ -52,6 +52,8 @@ class SystemLogsStreamPlugin(BasePlugin):
                 await ws.receive_text()
         except Exception:
             pass
+        finally:
+            self._clients.discard(ws)
 
     async def _on_disconnect(self, ws):
         self._clients.discard(ws)

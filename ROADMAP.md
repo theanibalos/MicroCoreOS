@@ -17,43 +17,6 @@ This eliminates the need to read code to understand a domain. The AI reads this 
 ---
 
 **Issue 2 — Medium Priority**
-**Plugin scaffold / template**
-
-Add an explicit CRUD template to `SKILL.md` or `INSTRUCTIONS_FOR_AI.md` that the AI copies and adapts in seconds:
-
-```python
-# Template: CRUD Plugin
-# Copy this, replace ENTITY_NAME, and you're done.
-class Create__EntityName__Plugin(BasePlugin):
-    def __init__(self, http, db, logger):
-        self.http = http
-        self.db = db
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint(
-            "/__entity__", "POST", self.execute,
-            tags=["__EntityName__"], request_model=Create__EntityName__Request
-        )
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = Create__EntityName__Request(**data)
-            new_id = await self.db.execute(
-                "INSERT INTO __entity__s (field1) VALUES ($1) RETURNING id",
-                [req.field1]
-            )
-            return {"success": True, "data": {"id": new_id}}
-        except Exception as e:
-            self.logger.error(f"Failed: {e}")
-            return {"success": False, "error": str(e)}
-```
-
-The `/new-domain` workflow already does something similar but this makes it more explicit and copy-paste ready.
-
----
-
-**Issue 3 — Medium Priority**
 **Standardized validation pattern**
 
 Currently each plugin validates differently. Pydantic with Field validators should be the official standard across all plugins:
@@ -71,7 +34,7 @@ Document this in `SKILL.md` and `INSTRUCTIONS_FOR_AI.md` as the only accepted pa
 
 ---
 
-**Issue 4 — Medium Priority**
+**Issue 3 — Medium Priority**
 **Unified error response format**
 
 Currently each plugin returns errors differently. Standardize across all plugins:
@@ -91,5 +54,47 @@ return self.http.error(404, "PROFILE_NOT_FOUND", "Profile not found")
 ```
 
 Document the standard error codes per domain in `AI_CONTEXT.md`.
+
+---
+
+**Issue 4 — Medium Priority**
+**Separate administration port**
+
+Expose the `system` domain (observability) on a separate port (e.g. 8001) isolated from the public API port. The admin port never reaches the outside in production — only accessible from internal network or VPN.
+
+Reference: Spring Boot Actuator pattern. The HTTP tool would need to support a second internal server instance.
+
+Affected endpoints: `GET /system/status`, `GET /system/events`, `GET /system/traces`, `WS /system/events/stream`, `WS /system/logs/stream`.
+
+---
+
+**Issue 5 — Medium Priority**
+**WebSocket broadcast via dedicated Queue**
+
+Currently each log or event creates an `asyncio.create_task` that calls `send_text` on every connected WebSocket client. Under high load this competes with the main event loop.
+
+Solution: sinks enqueue into an `asyncio.Queue` and a dedicated worker drains it and broadcasts. The main event loop never blocks due to streaming regardless of log volume.
+
+Affects: `SystemEventsStreamPlugin` and `SystemLogsStreamPlugin`.
+
+---
+
+**Issue 6 — Low Priority**
+**Proactive tool health check**
+
+`ToolProxy` detects failures reactively (when an operation raises an exception). Tools that fail silently (e.g. DB stops responding without raising) remain in `OK` state indefinitely.
+
+Solution: a background plugin that calls `db.health_check()` every N seconds and updates the registry. The DB tool already exposes `health_check() -> bool`. The pattern is extensible to any tool that implements the method.
+
+Note: keep outside the core to preserve the blind-kernel principle.
+
+---
+
+**Issue 7 — Low Priority**
+**Real-time causal tree via WebSocket**
+
+`GET /system/traces` exposes the causal event tree reconstructed from the in-memory trace log (last 500 events). Add a WebSocket endpoint `WS /system/traces/stream` that emits tree updates in real time as new event chains occur.
+
+Depends on Issue 5 (dedicated Queue) to avoid adding additional overhead to the event loop.
 
 ---

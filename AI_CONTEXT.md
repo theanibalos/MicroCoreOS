@@ -37,6 +37,10 @@ Async Event Bus Tool (event_bus):
             - await request(event_name, data, timeout=5): Async RPC.
                 The subscriber must return a non-None dict.
             - get_trace_history() -> list: Last 500 event records with causality data.
+            - get_subscribers() -> dict: Current subscriber map {event_name: [subscriber_names]}.
+            - add_listener(callback): Sink pattern — called with full trace record on every event.
+                Signature: callback(record: dict) — record has: id, event, emitter, subscribers, payload_keys, timestamp.
+                Use for real-time observability (e.g. WebSocket broadcast). Non-blocking.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
@@ -88,6 +92,9 @@ Logging Tool (logger):
             - error(message): Critical failures.
             - warning(message): Non-critical alerts.
             - add_sink(callback): Connect external observability (e.g. to EventBus).
+                Sink signature: callback(level: str, message: str, timestamp: str, identity: str)
+                'identity' is the current plugin/tool context (from current_identity_var).
+                Use it to attribute errors to specific plugins for health tracking.
 ```
 
 ### 🔧 Tool: `state` (Status: ✅)
