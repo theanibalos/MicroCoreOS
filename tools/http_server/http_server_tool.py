@@ -29,6 +29,14 @@ PUBLIC CONTRACT (what plugins use):
         on_disconnect=self.on_ws_disconnect,  # optional, called on disconnect
     )
 
+    # Server-Sent Events endpoint
+    http.add_sse_endpoint(
+        path="/events/stream",
+        generator=self._stream,            # async generator: yields "data: ...\n\n" strings
+        tags=["Events"],
+        auth_validator=self._validate,     # optional, same contract as add_endpoint
+    )
+
 
 HANDLER SIGNATURE:
 ────────────────────────────────────────────────────────────────────────────────
@@ -89,10 +97,11 @@ REPLACEMENT STANDARD (implement this to swap the backend):
 
     1. Create tools/aiohttp_server/aiohttp_server_tool.py
     2. name = "http"                               ← same injection key, plugins are unaffected
-    3. Implement the 3 public methods:
+    3. Implement the 4 public methods:
           add_endpoint(path, method, handler, tags, request_model, response_model, auth_validator)
           mount_static(path, directory_path)
           add_ws_endpoint(path, on_connect, on_disconnect)
+          add_sse_endpoint(path, generator, tags, auth_validator)
     4. Handler contract: handler(data: dict, context: HttpContext) → dict
        - data: flat merge of path params + query params + body
        - context: instance of HttpContext (or a compatible duck-type)
@@ -273,6 +282,10 @@ class HttpServerTool(BaseTool):
                   → returned payload is injected into data["_auth"].
             - mount_static(path, directory_path): Serve static files.
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket endpoint.
+            - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
+                Server-Sent Events endpoint (GET, text/event-stream).
+                generator: async generator callable(data: dict) → yields "data: ...\n\n" strings.
+                Client disconnect is detected automatically; generator's finally block runs on cleanup.
         - RESPONSE CONTRACT: return {"success": bool, "data": ..., "error": ...}
           Use context.set_status(N) to override HTTP status code (default: 200).
           WARNING: All values in the returned dict must be JSON-serializable (plain dicts,
@@ -329,6 +342,64 @@ class HttpServerTool(BaseTool):
                         await run_in_threadpool(on_disconnect, websocket)
             except Exception as e:
                 print(f"[HttpServer] WebSocket error on {path}: {e}")
+
+    def add_sse_endpoint(
+        self,
+        path: str,
+        generator: Callable,
+        tags: Optional[list] = None,
+        auth_validator: Optional[Callable] = None,
+    ) -> None:
+        """
+        Registers a Server-Sent Events endpoint (GET, text/event-stream).
+
+        generator: async generator callable(data: dict) that yields pre-formatted SSE strings,
+                   e.g. "data: {...}\\n\\n". The generator's finally block runs on client disconnect.
+        """
+        from fastapi.responses import StreamingResponse
+
+        async def sse_handler(request: Request):
+            data: dict = {}
+            data.update(request.query_params)
+            data.update(request.path_params)
+
+            if auth_validator:
+                token = self._extract_bearer_token(request)
+                if not token:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"success": False, "error": "Missing authorization token"},
+                    )
+                if inspect.iscoroutinefunction(auth_validator):
+                    payload = await auth_validator(token)
+                else:
+                    payload = await run_in_threadpool(auth_validator, token)
+                if not payload:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"success": False, "error": "Invalid or expired token"},
+                    )
+                data["_auth"] = payload
+
+            async def event_stream():
+                gen = generator(data)
+                try:
+                    async for chunk in gen:
+                        if await request.is_disconnected():
+                            break
+                        yield chunk
+                finally:
+                    await gen.aclose()
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        clean_path = path.replace("/", "_")
+        sse_handler.__name__ = f"sse{clean_path}"
+        self.app.add_api_route(path, sse_handler, methods=["GET"], tags=tags or [])
 
     # ── Endpoint registration ────────────────────────────────────────────────────
 

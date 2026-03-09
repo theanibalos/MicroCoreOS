@@ -64,18 +64,7 @@ Expose the `system` domain (observability) on a separate port (e.g. 8001) isolat
 
 Reference: Spring Boot Actuator pattern. The HTTP tool would need to support a second internal server instance.
 
-Affected endpoints: `GET /system/status`, `GET /system/events`, `GET /system/traces`, `WS /system/events/stream`, `WS /system/logs/stream`.
-
----
-
-**Issue 5 — Medium Priority**
-**WebSocket broadcast via dedicated Queue**
-
-Currently each log or event creates an `asyncio.create_task` that calls `send_text` on every connected WebSocket client. Under high load this competes with the main event loop.
-
-Solution: sinks enqueue into an `asyncio.Queue` and a dedicated worker drains it and broadcasts. The main event loop never blocks due to streaming regardless of log volume.
-
-Affects: `SystemEventsStreamPlugin` and `SystemLogsStreamPlugin`.
+Affected endpoints: `GET /system/status`, `GET /system/events`, `GET /system/traces`, `GET /system/events/stream` (SSE), `GET /system/logs/stream` (SSE).
 
 ---
 
@@ -90,10 +79,24 @@ Note: keep outside the core to preserve the blind-kernel principle.
 
 ---
 
-**Issue 7 — Low Priority**
-**Real-time causal tree via WebSocket**
+**Issue 8 — Medium Priority**
+**Event contract validation / linter**
 
-`GET /system/traces` exposes the causal event tree reconstructed from the in-memory trace log (last 500 events). Add a WebSocket endpoint `WS /system/traces/stream` that emits tree updates in real time as new event chains occur.
+Currently there is no contract between event publishers and subscribers. A plugin can publish `user.created` with `{id, email}` while the subscriber expects `{user_id, email}` — the system boots without errors and fails silently at runtime.
+
+Options to explore:
+- **Static linter**: analyzes plugin code before boot and cross-references published vs subscribed event schemas. No runtime overhead.
+- **Registry-based declaration**: plugins declare in `on_boot` what events they emit and with what schema. The registry cross-references on boot and raises early if there is a mismatch.
+- **Bus-level validation**: `subscribe()` accepts an optional Pydantic model; the bus validates the payload before dispatching.
+
+Key tension: the event bus is intentionally decoupled. Adding event schemas introduces coupling between publisher and subscriber — exactly what the bus is designed to avoid. The right balance needs to be found.
+
+---
+
+**Issue 7 — Low Priority**
+**Real-time causal tree via SSE**
+
+`GET /system/traces` exposes the causal event tree reconstructed from the in-memory trace log (last 500 events). Add an SSE endpoint `GET /system/traces/stream` that emits tree updates in real time as new event chains occur.
 
 Depends on Issue 5 (dedicated Queue) to avoid adding additional overhead to the event loop.
 
