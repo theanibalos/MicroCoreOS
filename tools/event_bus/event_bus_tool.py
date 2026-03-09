@@ -96,6 +96,7 @@ class EventBusTool(BaseTool):
         self._subscribers: dict[str, list] = {}
         self._lock = asyncio.Lock()
         self._trace_log: collections.deque = collections.deque(maxlen=500)
+        self._listeners: list = []  # sink pattern — called with full trace record on every event
 
     @property
     def name(self) -> str:
@@ -117,6 +118,10 @@ class EventBusTool(BaseTool):
             - await request(event_name, data, timeout=5): Async RPC.
                 The subscriber must return a non-None dict.
             - get_trace_history() -> list: Last 500 event records with causality data.
+            - get_subscribers() -> dict: Current subscriber map {event_name: [subscriber_names]}.
+            - add_listener(callback): Sink pattern — called with full trace record on every event.
+                Signature: callback(record: dict) — record has: id, event, emitter, subscribers, payload_keys, timestamp.
+                Use for real-time observability (e.g. WebSocket broadcast). Non-blocking.
         """
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -200,6 +205,22 @@ class EventBusTool(BaseTool):
         """Returns a snapshot of the last 500 event records (thread-safe copy)."""
         return list(self._trace_log)
 
+    def add_listener(self, callback) -> None:
+        """
+        Registers a sink that receives the full trace record on every event.
+        Signature: callback(record: dict) where record = {id, event, emitter, subscribers, payload_keys, timestamp}
+        Intended for observability (e.g. WebSocket broadcast). Non-blocking.
+        """
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def get_subscribers(self) -> dict:
+        """Returns the current subscriber map: {event_name: [subscriber_names]}."""
+        return {
+            event: [self._get_name(cb) for cb in cbs]
+            for event, cbs in self._subscribers.items()
+        }
+
     # ── Internal dispatch pipeline ───────────────────────────────────────────────
 
     async def _collect_callbacks(self, event_name: str) -> tuple[list, list]:
@@ -263,7 +284,7 @@ class EventBusTool(BaseTool):
         data: dict,
         callbacks: list,
     ) -> None:
-        self._trace_log.append({
+        record = {
             "id": event_id,
             "parent_id": parent_id,
             "timestamp": time.time(),
@@ -271,7 +292,13 @@ class EventBusTool(BaseTool):
             "emitter": emitter,
             "subscribers": list({self._get_name(cb) for cb in callbacks}),
             "payload_keys": list(data.keys()) if isinstance(data, dict) else [],
-        })
+        }
+        self._trace_log.append(record)
+        for listener in self._listeners:
+            try:
+                listener(record)
+            except Exception as e:
+                print(f"[EventBus] Listener failure: {e}")
         print(
             f"[EventBus] 📣 {event_name}"
             f"  id={event_id[:8]}"

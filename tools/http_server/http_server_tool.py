@@ -110,6 +110,18 @@ import asyncio
 import inspect
 import uvicorn
 from typing import Optional, Any, Callable
+from pydantic import BaseModel
+
+
+def _serialize(obj):
+    """Recursively convert Pydantic models to dicts so JSONResponse can serialize them."""
+    if isinstance(obj, BaseModel):
+        return _serialize(obj.model_dump())
+    if isinstance(obj, dict):
+        return {k: _serialize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_serialize(i) for i in obj]
+    return obj
 from core.base_tool import BaseTool
 from core.context import current_identity_var, current_event_id_var
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends
@@ -485,7 +497,7 @@ class HttpServerTool(BaseTool):
             )
 
             # ── Phase 5: Response ──────────────────────────────────────────────
-            json_response = JSONResponse(status_code=context.status_code, content=result)
+            json_response = JSONResponse(status_code=context.status_code, content=_serialize(result))
             context.apply_to(json_response)
             return json_response
 
