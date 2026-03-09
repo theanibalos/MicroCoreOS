@@ -59,6 +59,12 @@ HTTP Server Tool (http):
                   → returned payload is injected into data["_auth"].
             - mount_static(path, directory_path): Serve static files.
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket endpoint.
+            - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
+                Server-Sent Events endpoint (GET, text/event-stream).
+                generator: async generator callable(data: dict) → yields "data: ...
+
+" strings.
+                Client disconnect is detected automatically; generator's finally block runs on cleanup.
         - RESPONSE CONTRACT: return {"success": bool, "data": ..., "error": ...}
           Use context.set_status(N) to override HTTP status code (default: 200).
           WARNING: All values in the returned dict must be JSON-serializable (plain dicts,
@@ -81,6 +87,7 @@ Context Manager Tool (context_manager):
         - CAPABILITIES:
             - Reads the system registry.
             - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Generates per-domain AI_CONTEXT.md files inside each domain folder.
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅)
@@ -174,7 +181,37 @@ Async SQLite Persistence Tool (sqlite):
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
-## 📦 Domain Models
-Read the models folder for the domain you are working on before implementing a plugin.
+## 📦 Domains
 
-- `users` → `domains/users/models/`
+### `chaos`
+- **Tables**: none
+- **Endpoints**: none
+- **Events emitted**: none
+- **Events consumed**: none
+- **Dependencies**: http, logger
+- **Plugins**: BlockingBootPlugin, FailingPlugin, StressPlugin
+
+### `ping`
+- **Tables**: none
+- **Endpoints**: none
+- **Events emitted**: none
+- **Events consumed**: none
+- **Dependencies**: http, logger
+- **Plugins**: PingPlugin
+
+### `system`
+- **Tables**: none
+- **Endpoints**: none
+- **Events emitted**: none
+- **Events consumed**: none
+- **Dependencies**: event_bus, http, logger, registry
+- **Plugins**: SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin
+
+### `users`
+- **Tables**: user
+- **Endpoints**: none
+- **Events emitted**: user.created, user.deleted
+- **Events consumed**: user.created
+- **Dependencies**: auth, db, event_bus, http, logger
+- **Plugins**: CreateUserPlugin, DeleteUserPlugin, GetMePlugin, GetUserByIdPlugin, GetUsersPlugin, LoginPlugin, LogoutPlugin, UpdateUserPlugin, WelcomeServicePlugin
+
