@@ -57,6 +57,9 @@ HTTP Server Tool (http):
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket endpoint.
         - RESPONSE CONTRACT: return {"success": bool, "data": ..., "error": ...}
           Use context.set_status(N) to override HTTP status code (default: 200).
+          WARNING: All values in the returned dict must be JSON-serializable (plain dicts,
+          lists, str, int, etc.). Pydantic model instances are NOT serializable — always call
+          .model_dump() before nesting them: MyModel(...).model_dump()
 ```
 
 ### 🔧 Tool: `chaos` (Status: ✅)
@@ -104,8 +107,26 @@ In-Memory State Tool (state):
 Systems Registry Tool (registry):
         - PURPOSE: Introspection and discovery of the system's architecture at runtime.
         - CAPABILITIES:
-            - get_system_dump(): Full inventory of active Tools, Domains and Plugins.
-            - get_domain_metadata(): Detailed analysis of models and schemas.
+            - get_system_dump() -> dict: Full inventory of active Tools, Domains and Plugins.
+                Returns:
+                {
+                  "tools": {
+                    "<tool_name>": {"status": "OK"|"FAIL"|"DEAD", "message": str|None}
+                  },
+                  "plugins": {
+                    "<PluginClassName>": {
+                      "status": "BOOTING"|"RUNNING"|"READY"|"DEAD",
+                      "error": str|None,
+                      "domain": str,
+                      "class": str,
+                      "dependencies": ["tool_name", ...]  # tools injected in __init__
+                    }
+                  },
+                  "domains": { ... }
+                }
+                NOTE: status is updated REACTIVELY (on exception via ToolProxy).
+                A tool that silently stopped responding may still show "OK".
+            - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
 ```
 
 ### 🔧 Tool: `auth` (Status: ✅)

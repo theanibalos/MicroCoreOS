@@ -263,6 +263,9 @@ class HttpServerTool(BaseTool):
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket endpoint.
         - RESPONSE CONTRACT: return {"success": bool, "data": ..., "error": ...}
           Use context.set_status(N) to override HTTP status code (default: 200).
+          WARNING: All values in the returned dict must be JSON-serializable (plain dicts,
+          lists, str, int, etc.). Pydantic model instances are NOT serializable — always call
+          .model_dump() before nesting them: MyModel(...).model_dump()
         """
 
     # ── Public API ───────────────────────────────────────────────────────────────

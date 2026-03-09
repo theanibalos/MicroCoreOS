@@ -25,8 +25,26 @@ class RegistryTool(BaseTool):
         Systems Registry Tool (registry):
         - PURPOSE: Introspection and discovery of the system's architecture at runtime.
         - CAPABILITIES:
-            - get_system_dump(): Full inventory of active Tools, Domains and Plugins.
-            - get_domain_metadata(): Detailed analysis of models and schemas.
+            - get_system_dump() -> dict: Full inventory of active Tools, Domains and Plugins.
+                Returns:
+                {
+                  "tools": {
+                    "<tool_name>": {"status": "OK"|"FAIL"|"DEAD", "message": str|None}
+                  },
+                  "plugins": {
+                    "<PluginClassName>": {
+                      "status": "BOOTING"|"RUNNING"|"READY"|"DEAD",
+                      "error": str|None,
+                      "domain": str,
+                      "class": str,
+                      "dependencies": ["tool_name", ...]  # tools injected in __init__
+                    }
+                  },
+                  "domains": { ... }
+                }
+                NOTE: status is updated REACTIVELY (on exception via ToolProxy).
+                A tool that silently stopped responding may still show "OK".
+            - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
         """
 
     def get_system_dump(self) -> dict:

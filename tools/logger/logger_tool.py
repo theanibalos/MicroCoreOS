@@ -1,4 +1,5 @@
 from core.base_tool import BaseTool
+from core.context import current_identity_var
 import datetime
 from typing import List, Callable
 
@@ -36,26 +37,33 @@ class LoggerTool(BaseTool):
             - error(message): Critical failures.
             - warning(message): Non-critical alerts.
             - add_sink(callback): Connect external observability (e.g. to EventBus).
+                Sink signature: callback(level: str, message: str, timestamp: str, identity: str)
+                'identity' is the current plugin/tool context (from current_identity_var).
+                Use it to attribute errors to specific plugins for health tracking.
         """
 
     def _broadcast_to_sinks(self, level: str, message: str):
         """Sends the log to all registered observers."""
         timestamp = datetime.datetime.now().isoformat()
+        identity = current_identity_var.get()
         for sink in self._sinks:
             try:
-                sink(level, message, timestamp)
+                sink(level, message, timestamp, identity)
             except Exception as e:
                 # We use print here to avoid recursion if a sink fails
                 print(f"[Logger] Sink Failure: {e}")
 
     def info(self, message: str):
-        print(f"[{datetime.datetime.now()}] [INFO] {message}")
+        identity = current_identity_var.get()
+        print(f"[{datetime.datetime.now()}] [INFO] [{identity}] {message}")
         self._broadcast_to_sinks("INFO", message)
 
     def error(self, message: str):
-        print(f"[{datetime.datetime.now()}] [ERROR] {message}")
+        identity = current_identity_var.get()
+        print(f"[{datetime.datetime.now()}] [ERROR] [{identity}] {message}")
         self._broadcast_to_sinks("ERROR", message)
 
     def warning(self, message: str):
-        print(f"[{datetime.datetime.now()}] [WARN] {message}")
+        identity = current_identity_var.get()
+        print(f"[{datetime.datetime.now()}] [WARN] [{identity}] {message}")
         self._broadcast_to_sinks("WARN", message)
