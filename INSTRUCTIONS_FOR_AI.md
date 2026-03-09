@@ -204,4 +204,22 @@ async def test_example():
 - **Auth flow**: [login_plugin.py](domains/users/plugins/login_plugin.py)
 
 ---
+
+## 🗄️ Swapping the Database Engine
+
+The `db` injection key is the contract. Whichever tool has `name = "db"` is the active database — plugins never change.
+
+**Today (SQLite, development):**
+- `tools/sqlite/sqlite_tool.py` → `name = "db"` ← active
+- `tools/postgresql/postgresql_tool.py` → `name = "postgresql"` ← inactive
+
+**To migrate to PostgreSQL:**
+1. In `sqlite_tool.py`: change `name` to `"sqlite"`
+2. In `postgresql_tool.py`: change `name` to `"db"`
+3. Rewrite migration files — DDL is engine-specific (`SERIAL` vs `INTEGER PRIMARY KEY AUTOINCREMENT`, `TIMESTAMPTZ` vs `TEXT`, etc.). Migration SQL is cheap to regenerate.
+4. Plugins do not change.
+
+Both tools share the identical public contract (`query`, `query_one`, `execute`, `execute_many`, `transaction`, `health_check`) and use `$1, $2...` placeholders. SQLite converts them internally to `?`.
+
+---
 *`AI_CONTEXT.md` is auto-generated on every boot by the `context_manager` tool. It contains the live inventory of tools and domain models.*

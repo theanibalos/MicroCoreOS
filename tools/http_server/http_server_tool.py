@@ -241,9 +241,6 @@ class HttpServerTool(BaseTool):
             allow_headers=["*"],
         )
 
-        @self.app.get("/health", tags=["System"])
-        async def health():
-            return {"status": "ok", "engine": "fastapi"}
 
     async def on_boot_complete(self, container) -> None:
         """
