@@ -81,6 +81,24 @@ Key tension: the event bus is intentionally decoupled. Adding event schemas intr
 
 ---
 
+## Optional / Exploratory
+
+**Issue 10 — Migrate HttpServerTool from FastAPI to pure Starlette**
+
+FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_tool.py` are Starlette classes re-exported by FastAPI (`Request`, `WebSocket`, `JSONResponse`, `StreamingResponse`, `StaticFiles`, `CORSMiddleware`, `run_in_threadpool`). What is exclusively FastAPI is minimal: the app object, `Depends()` for GET query params, `response_model`/`tags` in `add_api_route`, and the auto-generated docs at `/docs`.
+
+**Motivation:** simplify the tool by removing the `__signature__` hack in `_register_endpoint` (which exists solely to make FastAPI generate correct OpenAPI docs), and align the framework with its long-term identity.
+
+**Trade-off:** auto-generated docs at `/docs` are lost.
+
+**Mitigation — Issue 10b — Optional `OpenApiPlugin`:**
+
+A plugin that lazily generates the OpenAPI 3.0 spec on the first request to `/openapi.json` and serves Swagger UI at `/docs` pointing to that endpoint. `HttpServerTool` exposes `get_registered_routes()` with the metadata accumulated in `_pending_endpoints`. The plugin is fully optional — if absent, no docs are served. Can be excluded in production without any other changes.
+
+Follows the 1 file = 1 feature principle.
+
+---
+
 ## Low Priority
 
 **Issue 6 — Proactive tool health check**

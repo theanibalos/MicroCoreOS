@@ -210,8 +210,8 @@ Async SQLite Persistence Tool (sqlite):
 ### `users`
 - **Tables**: user
 - **Endpoints**: none
-- **Events emitted**: user.created, user.deleted
+- **Events emitted**: user.created, user.deleted, welcome.notify.sent
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger
-- **Plugins**: CreateUserPlugin, DeleteUserPlugin, GetMePlugin, GetUserByIdPlugin, GetUsersPlugin, LoginPlugin, LogoutPlugin, UpdateUserPlugin, WelcomeServicePlugin
+- **Plugins**: CreateUserPlugin, DeleteUserPlugin, GetMePlugin, GetUserByIdPlugin, ListUsersPlugin, LoginPlugin, LogoutPlugin, UpdateUserPlugin, WelcomeServicePlugin
 

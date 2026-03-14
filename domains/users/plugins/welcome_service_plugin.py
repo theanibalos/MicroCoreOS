@@ -23,3 +23,4 @@ class WelcomeServicePlugin(BasePlugin):
         email = data.get("email")
         user_id = data.get("id")
         self.logger.info(f"[WelcomeService] Sending welcome email to {email} (User ID: {user_id})")
+        await self.bus.publish("welcome.notify.sent", {"user_id": user_id, "email": email})

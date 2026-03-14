@@ -1,7 +1,11 @@
+import os
+import re
 from typing import Optional
 from pydantic import BaseModel
 from core.base_plugin import BasePlugin
 
+
+# ── Modelos de Datos ─────────────────────────────────────────────────────────
 
 class EventEntry(BaseModel):
     event: str
@@ -9,20 +13,8 @@ class EventEntry(BaseModel):
     last_emitters: list[str]
     times_fired: int
 
-
-class TraceEntry(BaseModel):
-    id: str
-    event: str
-    emitter: str
-    subscribers: list[str]
-    payload_keys: list[str]
-    timestamp: float
-
-
 class SystemEventsData(BaseModel):
     events: list[EventEntry]
-    recent_trace: list[TraceEntry]
-
 
 class SystemEventsResponse(BaseModel):
     success: bool
@@ -30,7 +22,15 @@ class SystemEventsResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Plugin ───────────────────────────────────────────────────────────────────
+
 class SystemEventsPlugin(BasePlugin):
+    """
+    Exposes the system's event topology and execution statistics.
+    Returns a map of all known events, who subscribes to them, 
+    who emitted them last, and how many times they fired.
+    """
+
     def __init__(self, http, event_bus):
         self.http = http
         self.event_bus = event_bus
@@ -42,6 +42,26 @@ class SystemEventsPlugin(BasePlugin):
             response_model=SystemEventsResponse
         )
 
+    def _scan_all_published_events(self) -> set[str]:
+        events: set[str] = set()
+        domains_dir = os.path.abspath("domains")
+        if not os.path.exists(domains_dir):
+            return events
+        for domain in os.listdir(domains_dir):
+            plugins_dir = os.path.join(domains_dir, domain, "plugins")
+            if not os.path.isdir(plugins_dir):
+                continue
+            for filename in os.listdir(plugins_dir):
+                if not filename.endswith(".py"):
+                    continue
+                try:
+                    with open(os.path.join(plugins_dir, filename), "r", encoding="utf-8") as f:
+                        content = f.read()
+                    events.update(re.findall(r'\.publish\(\s*["\']([^"\']+)["\']', content))
+                except Exception:
+                    pass
+        return events
+
     async def execute(self, data: dict, context=None):
         try:
             subscribers = self.event_bus.get_subscribers()
@@ -51,15 +71,19 @@ class SystemEventsPlugin(BasePlugin):
             stats: dict[str, dict] = {}
             for record in trace:
                 name = record["event"]
+                # Skip internal RPC reply channels
                 if name.startswith("_reply."):
                     continue
+
                 if name not in stats:
                     stats[name] = {"emitters": set(), "count": 0}
+
                 stats[name]["emitters"].add(record["emitter"])
                 stats[name]["count"] += 1
 
-            # Merge subscribers map with trace stats
-            all_events = set(subscribers.keys()) | set(stats.keys())
+            # Merge: static scan + runtime subscribers + trace history
+            all_events = self._scan_all_published_events() | set(subscribers.keys()) | set(stats.keys())
+            
             events = [
                 EventEntry(
                     event=event,
@@ -71,12 +95,7 @@ class SystemEventsPlugin(BasePlugin):
                 if not event.startswith("_reply.")
             ]
 
-            recent_trace = [
-                TraceEntry(**r)
-                for r in reversed(trace)
-                if not r["event"].startswith("_reply.")
-            ][:50]
-
-            return {"success": True, "data": {"events": events, "recent_trace": recent_trace}}
+            return {"success": True, "data": {"events": events}}
+            
         except Exception as e:
             return {"success": False, "error": str(e)}
