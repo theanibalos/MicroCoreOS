@@ -1,122 +1,15 @@
-# MicroCoreOS: Atomic Microkernel Architecture optimized for AI-Driven Development
+# MicroCoreOS: The Architecture That Makes AI-Generated Code Actually Work
 
-> Every time I asked my AI to add a CRUD endpoint,  
-> it tried to create 6-8 files. I got tired of it.
+> Every time I asked my AI to add an endpoint, it created 6-8 files.
+> I got tired of correcting it. So I built an architecture where it can't put code in the wrong place.
 
-**1 file = 1 feature.** That's the entire idea.
+**MicroCoreOS** is a Python framework built on one principle: **1 file = 1 feature.**
+
+The AI reads 2 files (the auto-generated system manifest + the plugin it's working on), follows one pattern, and produces clean, isolated code. No conventions to guess, no layers to navigate.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-
----
-
-## The Problem
-
-AI assistants need to understand your architecture to add features.
-
-In traditional layered architectures, that means explaining:
-- Where to put the entity
-- How to wire the repository
-- Which factory creates the use case
-- How the controller maps to the route
-- What DTOs to create
-
-**That's 6-8 files and 200+ lines of code for one endpoint.**
-
-## The Solution: Atomic Microkernel
-
-```python
-# domains/products/plugins/create_product_plugin.py
-from pydantic import BaseModel
-from core.base_plugin import BasePlugin
-
-class CreateProductRequest(BaseModel):  # schema lives in the plugin, not in models/
-    name: str
-    price: float
-
-class CreateProductPlugin(BasePlugin):
-    def __init__(self, http, db, event_bus, logger):
-        self.http = http
-        self.db = db
-        self.bus = event_bus
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint("/products", "POST", self.execute, tags=["Products"],
-                               request_model=CreateProductRequest)
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = CreateProductRequest(**data)
-            product_id = await self.db.execute(
-                "INSERT INTO products (name, price) VALUES ($1, $2) RETURNING id",
-                [req.name, req.price]
-            )
-            await self.bus.publish("product.created", {"id": product_id})
-            return {"success": True, "data": {"id": product_id, "name": req.name}}
-        except Exception as e:
-            self.logger.error(f"Failed to create product: {e}")
-            return {"success": False, "error": str(e)}
-```
-
-**30 lines. One file. Complete feature.**
-
-- ✅ Endpoint registration
-- ✅ Database operation
-- ✅ Event publishing
-- ✅ Auto-discovered by the kernel
-- ✅ Dependencies injected automatically
-
----
-
-## For AI-Driven Development
-
-The architecture generates `AI_CONTEXT.md` automatically—a manifest with all available tools and their exact method signatures. Your AI assistant always knows what's available without exploring the codebase. This allows for near-zero explanation when asking an AI to implement new features.
-
-**Measured token usage per feature:**
-
-The architecture minimizes "Context Noise". Every extra file in a traditional architecture is extra surface area for AI hallucinations and context saturation.
-
-| Architecture | Files | Lines | Est. Tokens |
-|--------------|-------|-------|-------------|
-| **MicroCoreOS** | 1 | ~50 | ~1,000 |
-| Vertical Slice | 2-3 | ~100 | ~1,500 |
-| N-Layer | 4-5 | ~150 | ~2,500 |
-| Hexagonal | 5-7 | ~200 | ~3,500 |
-| Clean Architecture | 6-8 | ~250 | ~4,000 |
-
-### How the AI Documentation Works
-
-The documentation is designed for **minimal reads, zero redundancy**:
-
-| File | What it does | When it's read |
-|------|-------------|----------------|
-| `AI_CONTEXT.md` | Live inventory of tools + method signatures | **Auto-generated** on every boot |
-| `CLAUDE.md` / `SKILL.md` | Rules + plugin template | **Auto-loaded** by the AI agent at start |
-| `INSTRUCTIONS_FOR_AI.md` | Deep reference (lifecycle, tools, edge cases) | **On demand** — rare tasks only |
-| `.agent/workflows/` | Step-by-step recipes (e.g. `/new-domain`) | **On demand** — triggered by the user |
-
-**To write a plugin**, the AI reads exactly 2 files:
-1. `AI_CONTEXT.md` → what tools exist and their signatures
-2. `domains/{domain}/models/{entity}.py` → the DB table structure
-
-That's it. No `main.py`, no core files, no framework docs. The fewer files the AI reads, the fewer it hallucinates.
-
-### Building with MicroCoreOS
-
-MicroCoreOS is designed for AI-assisted development. Copy these prompts directly into Claude, Cursor, or any AI agent.
-
-**Add a feature to an existing domain:**
-> Add a plugin to the `{domain}` domain that `{describe what it does}`.
-> Read `AI_CONTEXT.md` for available tools and `domains/{domain}/models/` for the data structure.
-
-**Create a new domain from scratch:**
-> Use the `/new-domain` workflow to create a `{name}` domain with these fields: `{list fields}`.
-> Read `AI_CONTEXT.md` first.
-
-**Create a new infrastructure Tool:**
-> Create a new Tool called `{name}` that wraps `{technology/library}`.
-> Read `AI_CONTEXT.md` and `INSTRUCTIONS_FOR_AI.md` for the Tool template.
+[![CI](https://github.com/theanibalos/MicroCoreOS/actions/workflows/ci.yml/badge.svg)](https://github.com/theanibalos/MicroCoreOS/actions)
 
 ---
 
@@ -129,269 +22,214 @@ uv run main.py
 # Visit http://localhost:5000/docs
 ```
 
+No configuration needed. SQLite is the default (zero setup). The Kernel discovers all plugins, injects dependencies, runs migrations, and starts the server.
+
 ---
 
-## Project Structure
+## One File = One Feature
+
+This is a complete feature — schema, registration, logic, event publishing:
+
+```python
+# domains/products/plugins/create_product_plugin.py
+
+from pydantic import BaseModel, Field
+from core.base_plugin import BasePlugin
+
+class CreateProductRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    price: float = Field(gt=0)
+
+class CreateProductPlugin(BasePlugin):
+    def __init__(self, http, db, event_bus, logger):
+        self.http = http
+        self.db = db
+        self.bus = event_bus
+        self.logger = logger
+
+    async def on_boot(self):
+        self.http.add_endpoint("/products", "POST", self.execute,
+                               tags=["Products"], request_model=CreateProductRequest)
+
+    async def execute(self, data: dict, context=None):
+        try:
+            req = CreateProductRequest(**data)
+            product_id = await self.db.execute(
+                "INSERT INTO products (name, price) VALUES ($1, $2) RETURNING id",
+                [req.name, req.price]
+            )
+            await self.bus.publish("product.created", {"id": product_id})
+            return {"success": True, "data": {"id": product_id, "name": req.name}}
+        except Exception as e:
+            self.logger.error(f"Failed: {e}")
+            return {"success": False, "error": str(e)}
+```
+
+Drop this file in `domains/products/plugins/`, restart, and it works. No `main.py` edits, no route registration, no wiring.
+
+---
+
+## What Makes It Different
+
+### ~340-line kernel. Pure stdlib. No external dependencies in core.
+
+The entire orchestration engine — DI, plugin discovery, tool lifecycle, fault tolerance — uses only Python's standard library.
+
+### DI by parameter name.
+
+```python
+def __init__(self, db, http, logger):  # These ARE the injected tools
+```
+
+No decorators, no configuration, no container setup. The Kernel inspects your constructor, matches names to tools, done.
+
+### AI_CONTEXT.md regenerates on every boot.
+
+The system scans all tools, plugins, domains, events, and models — then writes a manifest with exact method signatures. Your AI always has current context, regardless of project size.
+
+### Tools are swappable. Plugins don't change.
+
+A Tool is identified by its `name` property. The SQLite tool and the PostgreSQL tool both expose the same API (`query`, `execute`, `transaction`, `health_check`) and both use `$1, $2` placeholders. To switch databases:
+
+1. Change `name = "db"` in the SQLite tool to `name = "sqlite"`
+2. Change `name = "postgresql"` in the PostgreSQL tool to `name = "db"`
+3. Plugins don't change a single line.
+
+This pattern works for any infrastructure: swap the event bus backend, the HTTP server, the auth mechanism — as long as the new tool has the same `name` and API, plugins keep working.
+
+### Fault tolerance is automatic.
+
+Every tool call passes through `ToolProxy`, which catches exceptions, marks failed tools as `DEAD` in the registry, auto-recovers when a subsequent call succeeds, and records timing metrics. If your logging service goes down, your payment processing keeps running.
+
+---
+
+## Built-in Observability (Zero Config)
+
+**Causal Event Tracing** — Every event on the bus carries a `parent_id`. `GET /system/traces/tree` reconstructs the full causal chain. `GET /system/traces/stream` streams it live via SSE.
+
+**Tool Call Metrics** — Every tool method call is automatically timed by ToolProxy. Access via `registry.get_metrics()` or attach a real-time sink.
+
+**OpenTelemetry** (optional) — Set `OTEL_ENABLED=true`. Every tool call gets a span. Export to Jaeger, Grafana Tempo, Datadog. Zero changes to plugins.
+
+---
+
+## Architecture
 
 ```
 MicroCoreOS/
-├── core/                    # The micro-kernel (~340 lines total)
-│   ├── kernel.py           # Orchestrator with autodiscovery
-│   ├── container.py        # DI container + ToolProxy monitoring
-│   ├── registry.py         # Sharded-lock architecture browser
-│   ├── context.py          # ContextVars for causality tracking
+├── core/                    # ~340 lines total, zero external deps
+│   ├── kernel.py           # Discovery, DI, lifecycle
+│   ├── container.py        # DI container + ToolProxy
+│   ├── registry.py         # Thread-safe runtime state
+│   ├── context.py          # ContextVars for causality
 │   ├── base_plugin.py      # Plugin contract (15 lines)
 │   └── base_tool.py        # Tool contract (23 lines)
-├── tools/                   # Infrastructure (stateless, drop-in)
-│   ├── http_server/        # FastAPI-powered REST + WebSocket gateway
-│   ├── sqlite/             # Async SQLite (default, zero-config)
-│   ├── postgresql/         # Async PostgreSQL (production)
-│   ├── event_bus/          # Pub/Sub + Async RPC with tracing
-│   ├── auth/               # JWT + bcrypt authentication
-│   ├── logger/             # Structured logging with Sink support
-│   ├── state/              # Sharded in-memory key-value store
-│   ├── config/             # Environment configuration for plugins
-│   ├── context/            # AI_CONTEXT.md auto-generator
-│   └── ...                 # chaos, system, registry tools
+├── tools/                   # Stateless, swappable infrastructure
+│   ├── http_server/        # FastAPI (REST + WebSocket + SSE)
+│   ├── sqlite/             # Default DB — zero config
+│   ├── event_bus/          # Pub/Sub + async RPC + causal tracing
+│   ├── auth/               # JWT + bcrypt
+│   ├── scheduler/          # Cron + one-shot background jobs
+│   ├── telemetry/          # OpenTelemetry (optional)
+│   └── ...                 # logger, state, config, registry
 ├── domains/                 # Business logic
-│   └── {domain}/
-│       ├── plugins/        # Use cases (1 file = 1 feature)
-│       ├── models/         # Domain models (Pydantic)
-│       └── migrations/     # SQL migration scripts
-└── AI_CONTEXT.md           # Auto-generated manifest for AI assistants
+│   ├── users/              # Full CRUD + auth + JWT + events
+│   ├── system/             # Observability endpoints
+│   └── {your_domain}/
+└── AI_CONTEXT.md           # Auto-generated on every boot
 ```
 
 ---
 
-## Core Principles
+## Problems It Addresses
 
-| Principle | Description |
-|-----------|-------------|
-| **Blind Kernel** | The kernel knows nothing about business logic |
-| **Tool = Stateless** | Tools provide technical capabilities |
-| **Plugin = Stateful** | Plugins contain business logic |
-| **Event-Driven** | Plugins communicate via EventBus only |
-| **Declarative DI** | Declare deps in constructor, kernel delivers |
-| **Hybrid Async** | Supports `async` and `sync`; kernel offloads sync to threads automatically |
-| **Traceable** | Every event has a parent ID and an owner identity via `ContextVars` |
-| **Observable** | No silent background failures (ToolProxy + Event Watchdog) |
-| **AI-Native** | `AI_CONTEXT.md` auto-generated on every boot for AI assistants |
+| Problem                                 | Approach                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------ |
+| **AI needs too many files for context** | 2 files: `AI_CONTEXT.md` + the plugin.                                         |
+| **Coupling between modules**            | Domains communicate via EventBus only, never direct imports.                   |
+| **Architecture erodes under pressure**  | Conventions are explicit and easy to spot in review. CI linter on the roadmap. |
+| **Merge conflicts on shared files**     | Each feature is its own file. No shared business logic files.                  |
+| **One dependency failure cascades**     | ToolProxy contains failures per-tool automatically.                            |
+| **Changing databases takes weeks**      | Swap the tool file. Same API, same placeholders.                               |
+| **Background errors disappear**         | EventBus watchdog + causality engine.                                          |
+| **Slow developer onboarding**           | Read `AI_CONTEXT.md` + one plugin.                                             |
+| **Sync/async mixing bugs**              | Kernel auto-detects `def` vs `async def`, offloads sync to thread pool.        |
+
+→ Deep dive: [docs.microcoreos.com/guide/problems](https://docs.microcoreos.com/guide/problems)
 
 ---
 
 ## Available Tools
 
-| Tool | Description |
-|------|-------------|
-| `http` | FastAPI-powered REST + WebSocket + SSE gateway with auto-generated OpenAPI |
-| `db` | Database persistence — **SQLite** (default, zero-config) or **PostgreSQL** (production). Drop-in swap, zero plugin changes. |
-| `event_bus` | Pub/sub and async RPC with built-in causal tracing |
-| `auth` | JWT token lifecycle + bcrypt password hashing |
-| `logger` | Structured logging with Sink support |
-| `state` | Sharded in-memory key-value store |
-| `registry` | Architecture introspection + runtime metrics (`get_metrics()`, `add_metrics_sink()`) |
-| `config` | Environment configuration for plugins |
-| `telemetry` | OpenTelemetry distributed tracing — auto-instruments all tool calls via ToolProxy. Zero config for plugins. |
-| `context_manager` | Auto-generates `AI_CONTEXT.md` from live system state |
-| `chaos` | Chaos engineering — intentional boot failures for fault tolerance testing |
+| Tool        | Description                                                    |
+| ----------- | -------------------------------------------------------------- |
+| `http`      | FastAPI gateway — REST, WebSocket, SSE, auto-generated OpenAPI |
+| `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap        |
+| `event_bus` | Pub/sub + async RPC + causal tracing + failure monitoring      |
+| `auth`      | JWT lifecycle + bcrypt password hashing                        |
+| `scheduler` | Cron jobs + one-shot tasks (APScheduler)                       |
+| `logger`    | Structured logging with sink pattern                           |
+| `state`     | Thread-safe in-memory key-value store                          |
+| `registry`  | Runtime introspection + metrics + health status                |
+| `telemetry` | OpenTelemetry — auto-instruments all tool calls                |
+| `config`    | Environment variable validation for plugins                    |
 
 ---
 
-## Advanced Design Decisions
+## Working with AI
 
-### Tool vs Plugin: How to Decide?
-
-```text
-Is it a Tool or a Plugin?
-├── Does it have domain state?              → Plugin
-├── Is it reusable across domains?         → Tool  
-└── Does it implement business rules?      → Plugin
+```
+> Read AI_CONTEXT.md for available tools.
+> Create a plugin in the orders domain that creates an order and publishes order.created.
 ```
 
-**Example - Authentication:**  
-- Verifying token signature (crypto) → **Tool** (technical, stateless)  
-- Managing users and permissions → **Plugin** (domain state, business rules)
+The AI uses `$1, $2` placeholders, registers via `http`, publishes via `event_bus`, places everything in one file.
 
-### Events: Sync vs Async
+For full domains: follow `.agent/workflows/new-domain.md`.
 
-| Method | When to use | Example |
-|--------|-------------|---------|
-| `publish(event, data)` | Fire and forget (no confirmation needed) | Notifications, logs, side-effects |
-| `request(event, data)` | Need a response to continue (RPC) | Cross-domain validations, queries |
+---
 
-### Observability: Three Layers
+## Testing
 
-**1 — Causal event tracing (built-in)**
-Every event carries a `parent_id`. `GET /system/traces/tree` reconstructs the full causal chain. `GET /system/traces/stream` streams it live via SSE.
+Constructor injection makes mocking straightforward:
 
-**2 — Tool call metrics (built-in)**
-`ToolProxy` measures the duration of every tool call automatically. Access via `registry.get_metrics()` or hook a real-time sink:
 ```python
-# In any plugin's on_boot():
-self.registry.add_metrics_sink(lambda record: ...)
-# record = {tool, method, duration_ms, success, timestamp}
-```
-
-**3 — OpenTelemetry (optional, zero plugin changes)**
-Set `OTEL_ENABLED=true` and all tool calls get OTel spans automatically via ToolProxy. Export to Jaeger, Grafana Tempo, or Datadog:
-```bash
-OTEL_ENABLED=true
-OTEL_SERVICE_NAME=my-service
-OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-```
-For custom spans inside a plugin:
-```python
-def __init__(self, telemetry, ...):
-    self.telemetry = telemetry
-
-async def execute(self, data, context=None):
-    tracer = self.telemetry.get_tracer("orders")
-    with tracer.start_as_current_span("process_payment"):
-        ...
-```
-
-> [!WARNING]
-> Abuse of `request()` reintroduces coupling. If a Plugin makes too many requests to another, they probably belong in the same domain.
-
-### Boot Lifecycle
-
-```text
-Boot Sequence:
-1. Tool.setup()            → Internal initialization
-2. Plugin.__init__()       → Dependency injection  
-3. Plugin.on_boot()        → Register endpoints, subscriptions
-4. Tool.on_boot_complete() → Actions requiring the full system
-5. System Online           → Ready for requests
-6. Tool.shutdown()         → Graceful resource cleanup
+@pytest.mark.anyio
+async def test_create_user():
+    plugin = CreateUserPlugin(
+        http=MagicMock(),
+        db=AsyncMock(execute=AsyncMock(return_value=42)),
+        event_bus=AsyncMock(),
+        logger=MagicMock(),
+        auth=MagicMock(hash_password=MagicMock(return_value="hashed"))
+    )
+    result = await plugin.execute({"name": "Test", "email": "a@b.com", "password": "p"})
+    assert result["success"] is True
+    assert result["data"]["id"] == 42
 ```
 
 ---
 
-## Anti-Patterns (The "Don'ts")
+## Documentation
 
-| ❌ Anti-Pattern | ✅ Solution |
-|----------------|------------|
-| Plugin imports another Plugin | Communicate via EventBus |
-| Plugin accesses Container directly | Declare dependency in `__init__` |
-| Tool containing business logic | Move to a Plugin in the appropriate domain |
-| Shared state without a Tool | Use the `state` Tool with namespaces |
-
----
-
-## Performance Characteristics
-
-MicroCoreOS is designed for **developer velocity**, not raw throughput. That said, the architecture includes several performance-conscious decisions:
-
-- **Hybrid Async Engine**: The Kernel automatically offloads synchronous plugin methods to threads via `asyncio.to_thread`, ensuring the event loop is never blocked.
-- **Sharded Registry Locks**: The `Registry` uses per-category locks (`tools`, `plugins`, `domains`) to reduce contention during concurrent boot and runtime updates.
-- **ToolProxy Monitoring**: Tool calls are wrapped in a transparent proxy that detects failures, measures latency, and updates the Registry in real-time.
-- **Parallel Boot**: All tools are initialized concurrently via `asyncio.gather`. Plugins boot in parallel after tool setup.
+Full docs at **[docs.microcoreos.com](https://docs.microcoreos.com)**:
+Quick Start · First Plugin Tutorial · Plugin Reference · Tools Reference · Observability · Philosophy
 
 ---
 
 ## Roadmap
 
-MicroCoreOS is moving towards a fully decentralized, marketplace-driven ecosystem:
-
-- 🏗️ **Atomic Tool Marketplace**: A drop-in ecosystem where tools (Redis, LLMs, Stripe) are self-contained folders with their own manifests, default configs, and AI instructions.
-- 🔍 **Visual Tracer**: Integrated mapping of which plugins react to which events for full observability.
-- 🌐 **Polyglot Kernels**: Support for sidecar plugins via gRPC or WASM for language-agnostic development.
-- 📦 **One-Click Distribution**: Install new capabilities via `uv` or simply by copying a folder into `/tools`.
-- 🦀 **Language Ports**: The architecture is language-agnostic by design. Future ports to Go and Rust can leverage static dispatch and zero-copy patterns for extreme-latency use cases.
-
----
-
-## Why "Not Invented Here"?
-
-MicroCoreOS implements its own DI and orchestration deliberately:
-* **Why not FastAPI/Flask directly?**: To reduce the API surface an AI needs to learn. The "Framework" is the code you see in `/core`—100% auditable.
-* **Why not external Injectors?**: To maintain transparency. The Kernel is an orchestrator you can read in one minute and understand exactly how your tools are wired.
-
----
-
-## For Teams
-
-In traditional architectures, a single feature requires coordination:
-- Someone owns the domain layer
-- Someone owns the infrastructure
-- Someone wires the dependency injection
-- Someone reviews cross-layer changes
-
-**In MicroCoreOS: 1 person, 1 file, 1 PR.**
-
-### Why Tools are Stateless
-
-Tools don't hold business state—they're pure infrastructure. This means:
-
-- **Zero-Friction Quickstart**: The default `db` Tool uses SQLite (a local file), and the `event_bus` uses memory. Anyone can clone and run the project immediately without Docker or external dependencies.
-- **Infinite Horizontal Scaling**: Need to scale to 10 servers? Drop in a `redis_event_bus` Tool or a `rabbitmq_tool`. Need a robust database? Swap the SQLite `db` folder for the PostgreSQL `db` folder. **Your Plugins won't change a single line.** Both tools register as `"db"`, accept the same `$1, $2...` placeholders, and expose the identical API. The SQLite tool converts placeholders internally.
-- **Honest about swapping**: Not every tool swap is zero-change. Some engines are fundamentally different (SQL vs NoSQL, REST vs GraphQL). But even in the worst case, the delta is cheap—your AI rewrites a plugin in seconds. The architecture ensures the blast radius is always **one file**.
-- **In the age of cheap code**: The SQL is the cheapest part of your feature. Your AI rewrites it instantly. Why over-abstract it?
-
-### Same Isolation, Less Ceremony
-
-
-| Traditional Benefit | MicroCoreOS Equivalent |
-|--------------------|-----------------------|
-| "Change DB without touching logic" | Change the Tool, not the Plugin |
-| "Test layers in isolation" | Mock Tools in plugin tests |
-| "Clear ownership boundaries" | 1 plugin = 1 owner |
-| "Onboarding new devs" | Read AI_CONTEXT.md in 5 minutes |
-| "High Concurrency" | Sharded Registry Locks |
-| "End-to-end Traceability" | Native Context Engine |
-
-### Testing without Gymnastics
-
-Because dependencies are injected via the constructor, you mock them directly using standard tools. We use **AnyIO** for seamless async/sync testing:
-
-```python
-import pytest
-from unittest.mock import AsyncMock, MagicMock
-from domains.users.plugins.create_user_plugin import CreateUserPlugin
-
-@pytest.mark.anyio  # Hybrid async/sync testing
-async def test_create_user_success():
-    mock_db = AsyncMock()
-    mock_db.execute.return_value = 42  # Simulates RETURNING id
-    
-    plugin = CreateUserPlugin(
-        http=MagicMock(),       # Tools injected by name
-        db=mock_db,
-        event_bus=AsyncMock(),
-        logger=MagicMock(),
-        auth=MagicMock()
-    )
-
-    result = await plugin.execute({"name": "Test", "email": "a@b.com"})
-    assert result["success"] is True
-    assert result["data"]["id"] == 42
-    mock_db.execute.assert_called_once()  # Verify DB was called
-```
-
-
-
-
-
----
-
-## Translations
-
-- [Español](docs/translations/es/README.md)
+- `uv add microcoreos` — Core as an installable package
+- Domain isolation linter — CI enforcement of import rules
+- Event contract linter — Static validation of pub/sub schemas
+- Official tool packages — `microcoreos-redis`, `microcoreos-postgres`
 
 ---
 
 ## License
 
-[MIT](LICENSE) - Simple and permissive.
-
-For commercial consulting or support: theanibalos@gmail.com
+[MIT](LICENSE)
 
 ---
 
-## Author
-
-**AnibalOS** ([@theanibalos](https://github.com/theanibalos))
-
-Built because I was tired of explaining my architecture to IA.
-
----
+**Anibal Fernandez** ([@theanibalos](https://github.com/theanibalos))
