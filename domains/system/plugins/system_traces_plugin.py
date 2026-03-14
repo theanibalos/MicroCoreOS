@@ -79,7 +79,8 @@ class SystemTracesPlugin(BasePlugin):
             flat_list = sorted(records, key=lambda x: x["timestamp"], reverse=True)
             return {"success": True, "data": flat_list}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"[SystemTraces] Error: {e}")
+            return {"success": False, "error": "Internal error"}
 
     async def get_tree(self, data: dict, context=None):
         """Returns records nested as a parent → child causal tree."""
@@ -114,4 +115,5 @@ class SystemTracesPlugin(BasePlugin):
 
             return {"success": True, "data": roots}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"[SystemTraces] Error: {e}")
+            return {"success": False, "error": "Internal error"}

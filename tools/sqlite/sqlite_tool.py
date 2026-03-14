@@ -34,6 +34,7 @@ PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
 
 import os
 import re
+import uuid
 import aiosqlite
 from core.base_tool import BaseTool
 
@@ -128,8 +129,7 @@ class Transaction:
     async def __aenter__(self) -> "Transaction":
         try:
             # Use SAVEPOINTs to support nested transactions
-            import random
-            self._savepoint_name = f"sp_{random.randint(100000, 999999)}"
+            self._savepoint_name = f"sp_{uuid.uuid4().hex}"
             await self._db.execute(f"SAVEPOINT {self._savepoint_name}")
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to start transaction: {e}") from e

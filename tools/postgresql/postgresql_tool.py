@@ -156,6 +156,7 @@ def _parse_affected_rows(status: str) -> int:
         parts = status.split()
         return int(parts[-1])
     except (ValueError, IndexError):
+        print(f"[PostgresqlTool] Warning: could not parse affected rows from status: {status!r}")
         return 0
 
 

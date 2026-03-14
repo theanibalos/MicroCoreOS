@@ -62,4 +62,5 @@ class SystemStatusPlugin(BasePlugin):
 
             return {"success": True, "data": {"tools": tools, "plugins": plugins}}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"[SystemStatus] Error: {e}")
+            return {"success": False, "error": "Internal error"}

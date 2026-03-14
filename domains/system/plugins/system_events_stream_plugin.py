@@ -28,12 +28,15 @@ class SystemEventsStreamPlugin(BasePlugin):
         try:
             loop = asyncio.get_running_loop()
             for q in list(self._queues):
-                loop.call_soon_threadsafe(q.put_nowait, record)
+                try:
+                    loop.call_soon_threadsafe(q.put_nowait, record)
+                except asyncio.QueueFull:
+                    pass  # slow consumer — drop event rather than grow unbounded
         except RuntimeError:
             pass
 
     async def _stream(self, data: dict):
-        queue = asyncio.Queue()
+        queue = asyncio.Queue(maxsize=200)
         self._queues.add(queue)
         try:
             while True:

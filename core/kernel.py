@@ -160,6 +160,11 @@ class Kernel:
 
     async def shutdown(self):
         print("\n--- [Kernel] Shutting down ---")
+        for name, instance in self.plugins.items():
+            try:
+                await self._call_maybe_async(instance.shutdown)
+            except Exception as e:
+                print(f"[Kernel] Error shutting down plugin '{name}': {e}")
         for name in self.container.list_tools():
             try:
                 await self._call_maybe_async(self.container.get(name).shutdown)

@@ -96,7 +96,8 @@ class EventBusTool(BaseTool):
         self._subscribers: dict[str, list] = {}
         self._lock = asyncio.Lock()
         self._trace_log: collections.deque = collections.deque(maxlen=500)
-        self._listeners: list = []  # sink pattern — called with full trace record on every event
+        self._listeners: list = []          # sink: called with trace record on every event
+        self._failure_listeners: list = []  # sink: called when a subscriber raises
 
     @property
     def name(self) -> str:
@@ -122,6 +123,9 @@ class EventBusTool(BaseTool):
             - add_listener(callback): Sink pattern — called with full trace record on every event.
                 Signature: callback(record: dict) — record has: id, event, emitter, subscribers, payload_keys, timestamp.
                 Use for real-time observability (e.g. WebSocket broadcast). Non-blocking.
+            - add_failure_listener(callback): Sink called when a subscriber raises during dispatch.
+                Signature: callback(record: dict) — record has: event, event_id, subscriber, error.
+                Use to implement dead-letter alerting. Non-blocking — keep it fast.
         """
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -214,6 +218,16 @@ class EventBusTool(BaseTool):
         if callback not in self._listeners:
             self._listeners.append(callback)
 
+    def add_failure_listener(self, callback) -> None:
+        """
+        Registers a sink called when a subscriber raises an exception during dispatch.
+        Signature: callback(record: dict) where record = {event, subscriber, error, event_id}.
+        Use to implement dead-letter alerting or delivery guarantees.
+        Non-blocking — keep the callback fast.
+        """
+        if callback not in self._failure_listeners:
+            self._failure_listeners.append(callback)
+
     def get_subscribers(self) -> dict:
         """Returns the current subscriber map: {event_name: [subscriber_names]}."""
         return {
@@ -258,6 +272,17 @@ class EventBusTool(BaseTool):
 
         except Exception as e:
             print(f"[EventBus] ⚠️  '{subscriber_name}' failed handling '{event_name}': {e}")
+            failure_record = {
+                "event": event_name,
+                "event_id": event_id,
+                "subscriber": subscriber_name,
+                "error": str(e),
+            }
+            for fl in self._failure_listeners:
+                try:
+                    fl(failure_record)
+                except Exception as fe:
+                    print(f"[EventBus] Failure listener error: {fe}")
         finally:
             current_event_id_var.reset(id_token)
             current_identity_var.reset(ident_token)

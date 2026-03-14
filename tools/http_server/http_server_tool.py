@@ -64,6 +64,9 @@ RESPONSE CONTRACT:
     # {"success": False, "error": "Missing authorization token"}
     # {"success": False, "error": "Invalid or expired token"}
 
+    # Validation failure — handled automatically (HTTP 422, envelope format)
+    # {"success": False, "error": "<first validation message>", "details": [...]}
+
     # Unhandled exception — caught by the tool (HTTP 500, envelope format)
     # {"success": False, "error": "Internal server error"}
     # (exception details are logged server-side, NOT exposed to clients)
@@ -120,6 +123,7 @@ import inspect
 import uvicorn
 from typing import Optional, Any, Callable
 from pydantic import BaseModel
+from fastapi.exceptions import RequestValidationError
 
 
 def _serialize(obj):
@@ -227,6 +231,19 @@ class HttpServerTool(BaseTool):
     async def setup(self) -> None:
         print(f"[HttpServer] Configuring FastAPI on port {self._port}...")
 
+        @self.app.exception_handler(RequestValidationError)
+        async def validation_error_handler(request: Request, exc: RequestValidationError):
+            first_error = exc.errors()[0] if exc.errors() else {}
+            message = first_error.get("msg", "Validation error")
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "success": False,
+                    "error": message,
+                    "details": exc.errors(),
+                },
+            )
+
         @self.app.middleware("http")
         async def add_security_headers(request: Request, call_next):
             response = await call_next(request)
@@ -234,9 +251,11 @@ class HttpServerTool(BaseTool):
             response.headers["X-Frame-Options"] = "DENY"
             return response
 
+        cors_origins_raw = os.getenv("HTTP_CORS_ORIGINS", "*")
+        cors_origins = [o.strip() for o in cors_origins_raw.split(",")] if cors_origins_raw != "*" else ["*"]
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=cors_origins,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -249,7 +268,9 @@ class HttpServerTool(BaseTool):
         FastAPI to sort static paths before parameterized paths, preventing routing conflicts.
         """
         self._register_all_endpoints()
-        config = uvicorn.Config(self.app, host="0.0.0.0", port=self._port, log_level="warning")
+        host = os.getenv("HTTP_HOST", "127.0.0.1")
+        log_level = os.getenv("HTTP_LOG_LEVEL", "warning")
+        config = uvicorn.Config(self.app, host=host, port=self._port, log_level=log_level)
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve())
         print(f"[HttpServer] Server active → http://localhost:{self._port}/docs")
@@ -352,6 +373,14 @@ class HttpServerTool(BaseTool):
                         await run_in_threadpool(on_disconnect, websocket)
             except Exception as e:
                 print(f"[HttpServer] WebSocket error on {path}: {e}")
+                if on_disconnect:
+                    try:
+                        if inspect.iscoroutinefunction(on_disconnect):
+                            await on_disconnect(websocket)
+                        else:
+                            await run_in_threadpool(on_disconnect, websocket)
+                    except Exception:
+                        pass
 
     def add_sse_endpoint(
         self,
@@ -530,7 +559,10 @@ class HttpServerTool(BaseTool):
                 pass
 
         # ── Phase 2: Causality Context Seeding ────────────────────────────────
-        request_id = str(uuid.uuid4())
+        # Honor X-Request-ID from an upstream MicroCoreOS service if present,
+        # so the entire cross-service call chain shares the same root event ID.
+        # If absent (first hop or external client), generate a fresh UUID.
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         identity = (
             f"{handler.__self__.__class__.__name__}.{handler.__name__}"
             if hasattr(handler, "__self__")

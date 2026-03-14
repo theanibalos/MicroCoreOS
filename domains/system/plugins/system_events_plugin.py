@@ -98,4 +98,5 @@ class SystemEventsPlugin(BasePlugin):
             return {"success": True, "data": {"events": events}}
             
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"[SystemEvents] Error: {e}")
+            return {"success": False, "error": "Internal error"}

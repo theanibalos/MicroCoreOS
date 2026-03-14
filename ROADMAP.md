@@ -23,6 +23,15 @@ This eliminates the need to read code to understand a domain. The AI reads this 
 
 ## Medium Priority
 
+**Issue 11 — ✅ Normalize 422 validation errors to standard envelope**
+
+FastAPI's default 422 response uses its own format instead of `{"success": bool, "error": ..., "details": ...}`.
+Fixed by registering a `RequestValidationError` exception handler in `HttpServerTool.setup()`.
+The handler returns the first validation message as `error` and the full Pydantic error list as `details`.
+All HTTP responses are now guaranteed to use the same envelope regardless of error type.
+
+---
+
 **Issue 2 — ✅ Standardized validation pattern**
 
 `pydantic.Field` with explicit constraints is the only accepted pattern for request schemas.
@@ -37,6 +46,34 @@ A plugin can publish `user.created` with `{id, email}` while the subscriber expe
 Deferred because adding schema validation inside the bus or the core would introduce coupling that goes against the decoupled-by-design philosophy. The right approach is a static linter that runs outside the runtime — a separate tool that cross-references `publish()` call signatures vs subscriber expectations from source code, with zero runtime overhead.
 
 Tackle when a linting/CI layer is added to the project.
+
+---
+
+**Issue 12 — Scheduler tool**
+
+A background job tool that lets plugins register cron-style or one-off tasks without polling loops.
+
+Proposed design:
+- `tools/scheduler/scheduler_tool.py` — name = `"scheduler"`
+- Backend-agnostic: default impl wraps APScheduler (zero infra required); swappable to Celery beat via the same replacement standard (same `name`, same API, plugins unaffected)
+- Public API: `add_job(cron_expr, callback)`, `add_one_shot(run_at, callback)`, `remove_job(job_id)`
+- Follows the same swap pattern as `db`: change the tool file, nothing else changes
+
+Deferred: no immediate use case in the current domain set. Tackle when the first background job requirement appears.
+
+---
+
+**Issue 13 — Rate limiter tool**
+
+A stateless rate limiting tool backed by Redis (sliding window algorithm). In-memory fallback for single-process deploys.
+
+Proposed design:
+- `tools/rate_limiter/rate_limiter_tool.py` — name = `"rate_limiter"`
+- Public API: `check(key: str, limit: int, window_seconds: int) -> bool`
+- Plugins decide which endpoints call it and what the limits are — rate limiting policy is business logic, the tool is infrastructure
+- Requires Redis tool to be available for distributed deployments; degrades to in-memory for single-process
+
+Deferred: depends on Redis tool being added first. Tackle together.
 
 ---
 

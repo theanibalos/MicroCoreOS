@@ -1,0 +1,23 @@
+# Dependencies and virtual environments
+.venv/
+
+# Secrets — never bake into the image
+.env
+
+# Local database files
+*.db
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Dev tooling
+.github/
+dev_infra/
+tests/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

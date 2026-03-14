@@ -19,8 +19,12 @@ class ToolProxy:
         self._registry = registry
         self._emit_metric = emit_metric
         self._make_span = make_span  # callable(tool, method) -> context manager
+        self._wrapper_cache = {}
 
     def __getattr__(self, name):
+        if name in self._wrapper_cache:
+            return self._wrapper_cache[name]
+
         attr = getattr(self._tool, name)
 
         if not callable(attr):
@@ -38,6 +42,8 @@ class ToolProxy:
                 with span_cm:
                     try:
                         result = await attr(*args, **kwargs)
+                        if registry.get_tool_status(tool_name) == "DEAD":
+                            registry.update_tool_status(tool_name, "OK", "Recovered from transient failure")
                         if emit:
                             emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                         return result
@@ -64,6 +70,8 @@ class ToolProxy:
                         with span_cm:
                             try:
                                 r = await result
+                                if registry.get_tool_status(tool_name) == "DEAD":
+                                    registry.update_tool_status(tool_name, "OK", "Recovered from transient failure")
                                 if emit:
                                     emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, True)
                                 return r
@@ -74,10 +82,13 @@ class ToolProxy:
                                 raise
                     return _monitored()
 
+                if registry.get_tool_status(tool_name) == "DEAD":
+                    registry.update_tool_status(tool_name, "OK", "Recovered from transient failure")
                 if emit:
                     emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                 return result
 
+        self._wrapper_cache[name] = wrapper
         return wrapper
 
 
@@ -122,8 +133,8 @@ class Container:
         for sink in self._metrics_sinks:
             try:
                 sink(record)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Container] Metrics sink error: {e}")
 
     # ── Spans (OTel) ──────────────────────────────────────────────────────────
 

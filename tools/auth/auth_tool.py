@@ -1,13 +1,12 @@
 import os
+import bcrypt
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from core.base_tool import BaseTool
-from passlib.context import CryptContext
 
 class AuthTool(BaseTool):
     def __init__(self):
-        self._pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         self._secret_key = os.getenv("AUTH_SECRET_KEY")
         if not self._secret_key:
             raise EnvironmentError("AUTH_SECRET_KEY is required. Set it in your .env file.")
@@ -40,17 +39,17 @@ class AuthTool(BaseTool):
         """
 
     def hash_password(self, password: str) -> str:
-        return self._pwd_context.hash(password)
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     def verify_password(self, password: str, hashed_password: str) -> bool:
-        return self._pwd_context.verify(password, hashed_password)
+        return bcrypt.checkpw(password.encode(), hashed_password.encode())
 
     def create_token(self, data: dict, expires_delta: Optional[int] = None) -> str:
         to_encode = data.copy()
         if expires_delta:
-            expire = datetime.utcnow() + timedelta(minutes=expires_delta)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=expires_delta)
         else:
-            expire = datetime.utcnow() + timedelta(minutes=self._access_token_expire_minutes)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=self._access_token_expire_minutes)
         
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, self._secret_key, algorithm=self._algorithm)
@@ -64,8 +63,8 @@ class AuthTool(BaseTool):
             raise Exception("Token has expired")
         except jwt.InvalidTokenError:
             raise Exception("Invalid token")
-        except Exception as e:
-            raise Exception(f"Could not validate credentials: {str(e)}")
+        except Exception:
+            raise Exception("Could not validate credentials")
 
     def validate_token(self, token: str) -> dict | None:
         try:

@@ -24,6 +24,10 @@ class Registry:
             if name in self._data["tools"]:
                 self._data["tools"][name].update({"status": status, "message": message})
 
+    def get_tool_status(self, name: str) -> str | None:
+        with self._locks["tools"]:
+            return self._data["tools"].get(name, {}).get("status")
+
     def register_domain_metadata(self, domain: str, key: str, val: any):
         with self._locks["domains"]:
             if domain not in self._data["domains"]:

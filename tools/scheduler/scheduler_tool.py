@@ -1,0 +1,236 @@
+"""
+Scheduler Tool — Background Job Scheduling for MicroCoreOS
+===========================================================
+
+Wraps APScheduler (AsyncIOScheduler) to provide cron-style and one-shot
+background jobs. Zero infrastructure required out of the box.
+
+PUBLIC CONTRACT (what plugins use):
+─────────────────────────────────────────────────────────────────────────
+
+    # Recurring job — standard 5-field cron expression
+    job_id = scheduler.add_job("0 * * * *", self.on_every_hour)
+    job_id = scheduler.add_job("*/5 * * * *", self.send_digest, job_id="digest")
+
+    # One-shot job — runs once at a specific datetime
+    from datetime import datetime, timedelta, timezone
+    run_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    job_id = scheduler.add_one_shot(run_at, self.send_welcome_email)
+
+    # Remove a job (returns True if removed, False if not found)
+    removed = scheduler.remove_job("digest")
+
+    # Inspect scheduled jobs
+    jobs = scheduler.list_jobs()
+    # [{"id": "digest", "next_run": "2026-03-14 15:00:00+00:00", "trigger": "cron[...]"}]
+
+
+CALLBACK SIGNATURES:
+─────────────────────────────────────────────────────────────────────────
+
+    # Sync callback — runs in APScheduler's executor
+    def on_every_hour(self):
+        ...
+
+    # Async callback — runs in the asyncio event loop
+    async def on_every_hour(self):
+        await self.db.execute(...)
+
+
+CRON EXPRESSION QUICK REFERENCE:
+─────────────────────────────────────────────────────────────────────────
+
+    "* * * * *"         — every minute
+    "*/5 * * * *"       — every 5 minutes
+    "0 * * * *"         — every hour (on the hour)
+    "0 9 * * 1-5"       — 09:00 on weekdays
+    "0 0 * * *"         — midnight every day
+    "0 0 1 * *"         — midnight on the 1st of every month
+
+
+REPLACEMENT STANDARD (swap without changing plugins):
+─────────────────────────────────────────────────────────────────────────
+
+    To replace with Celery beat or any other scheduler:
+    1. Create tools/{name}/{name}_tool.py
+    2. Set name = "scheduler"                    ← same injection key
+    3. Implement the 4 public methods:
+         add_job(cron_expr, callback, job_id?) → str
+         add_one_shot(run_at, callback, job_id?) → str
+         remove_job(job_id) → bool
+         list_jobs() → list[dict]
+    Plugins do not change.
+"""
+
+import uuid
+from datetime import datetime
+from typing import Callable, Optional
+from core.base_tool import BaseTool
+
+
+class SchedulerTool(BaseTool):
+    """
+    Background job scheduler for MicroCoreOS.
+
+    Uses APScheduler's AsyncIOScheduler as the default backend,
+    which runs jobs directly in the asyncio event loop — no threads,
+    no external processes, no infrastructure dependencies.
+
+    Supports both async and sync callbacks transparently.
+    """
+
+    @property
+    def name(self) -> str:
+        return "scheduler"
+
+    # ─── LIFECYCLE ──────────────────────────────────────────────
+
+    def __init__(self) -> None:
+        self._scheduler = None
+
+    def setup(self) -> None:
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            self._scheduler = AsyncIOScheduler()
+            print("[Scheduler] APScheduler initialized.")
+        except ImportError:
+            raise RuntimeError(
+                "[Scheduler] APScheduler is required. "
+                "Install with: uv add 'apscheduler>=3.10,<4'"
+            )
+
+    def on_boot_complete(self, container) -> None:
+        """Start the scheduler after all plugins have registered their jobs."""
+        self._scheduler.start()
+        job_count = len(self._scheduler.get_jobs())
+        print(f"[Scheduler] Started — {job_count} job(s) registered.")
+
+    def shutdown(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+            print("[Scheduler] Stopped.")
+
+    # ─── PUBLIC API ─────────────────────────────────────────────
+
+    def add_job(
+        self,
+        cron_expr: str,
+        callback: Callable,
+        job_id: Optional[str] = None,
+    ) -> str:
+        """
+        Schedule a recurring job using a standard 5-field cron expression.
+
+        Parameters:
+            cron_expr:  Standard cron string, e.g. "0 * * * *" (every hour).
+            callback:   Sync or async callable. Called with no arguments.
+            job_id:     Optional stable ID. Auto-generated if omitted.
+                        Providing a stable ID allows the job to be removed by name
+                        and prevents duplicates on hot-reload.
+
+        Returns: the job_id string.
+
+        Examples:
+            scheduler.add_job("*/5 * * * *", self.flush_cache)
+            scheduler.add_job("0 9 * * 1-5", self.send_digest, job_id="morning_digest")
+        """
+        from apscheduler.triggers.cron import CronTrigger
+
+        job_id = job_id or uuid.uuid4().hex
+        self._scheduler.add_job(
+            callback,
+            trigger=CronTrigger.from_crontab(cron_expr),
+            id=job_id,
+            replace_existing=True,
+        )
+        print(f"[Scheduler] Job registered — id={job_id!r} cron={cron_expr!r}")
+        return job_id
+
+    def add_one_shot(
+        self,
+        run_at: datetime,
+        callback: Callable,
+        job_id: Optional[str] = None,
+    ) -> str:
+        """
+        Schedule a one-time job to run at a specific datetime.
+
+        Parameters:
+            run_at:    datetime (timezone-aware recommended) when the job should run.
+            callback:  Sync or async callable. Called with no arguments.
+            job_id:    Optional stable ID. Auto-generated if omitted.
+
+        Returns: the job_id string.
+
+        Example:
+            from datetime import datetime, timedelta, timezone
+            run_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            scheduler.add_one_shot(run_at, self.send_welcome_email)
+        """
+        from apscheduler.triggers.date import DateTrigger
+
+        job_id = job_id or uuid.uuid4().hex
+        self._scheduler.add_job(
+            callback,
+            trigger=DateTrigger(run_date=run_at),
+            id=job_id,
+            replace_existing=True,
+        )
+        print(f"[Scheduler] One-shot job registered — id={job_id!r} run_at={run_at}")
+        return job_id
+
+    def remove_job(self, job_id: str) -> bool:
+        """
+        Remove a scheduled job by ID.
+
+        Returns True if the job was found and removed, False otherwise.
+        Safe to call even if the job has already run or never existed.
+        """
+        try:
+            self._scheduler.remove_job(job_id)
+            print(f"[Scheduler] Job removed — id={job_id!r}")
+            return True
+        except Exception:
+            return False
+
+    def list_jobs(self) -> list:
+        """
+        Return a snapshot of all currently scheduled jobs.
+
+        Each entry: {"id": str, "next_run": str | None, "trigger": str}
+        """
+        return [
+            {
+                "id": job.id,
+                "next_run": str(job.next_run_time) if job.next_run_time else None,
+                "trigger": str(job.trigger),
+            }
+            for job in self._scheduler.get_jobs()
+        ]
+
+    # ─── INTERFACE DESCRIPTION ──────────────────────────────────
+
+    def get_interface_description(self) -> str:
+        return """
+        Scheduler Tool (scheduler):
+        - PURPOSE: Background job scheduling — cron-style recurring jobs and one-shot timed jobs.
+          Backed by APScheduler AsyncIOScheduler. Zero infrastructure required.
+          Supports both async and sync callbacks transparently.
+        - CAPABILITIES:
+            - add_job(cron_expr: str, callback, job_id?: str) -> str:
+                Schedule a recurring job with a 5-field cron expression.
+                e.g. "*/5 * * * *" = every 5 min, "0 9 * * 1-5" = weekdays at 09:00.
+                Returns job_id (auto-generated if not provided).
+                Providing a stable job_id prevents duplicates on restart.
+            - add_one_shot(run_at: datetime, callback, job_id?: str) -> str:
+                Schedule a one-time job at a specific datetime (timezone-aware).
+                Returns job_id.
+            - remove_job(job_id: str) -> bool:
+                Remove a job by ID. Returns True if removed, False if not found.
+            - list_jobs() -> list[dict]:
+                Snapshot of all scheduled jobs: [{id, next_run, trigger}].
+        - REGISTER IN on_boot(): jobs are collected during on_boot(), scheduler starts
+          in on_boot_complete() after all plugins have registered.
+        - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
+          and the same 4-method API. Plugins do not change.
+        """
