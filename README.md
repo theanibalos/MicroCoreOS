@@ -97,6 +97,8 @@ A Tool is identified by its `name` property. The SQLite tool and the PostgreSQL 
 
 This pattern works for any infrastructure: swap the event bus backend, the HTTP server, the auth mechanism — as long as the new tool has the same `name` and API, plugins keep working.
 
+Additional tools (PostgreSQL, chaos testing) are available in extras/available_tools/. To activate, move them into tools/.
+
 ### Fault tolerance is automatic.
 
 Every tool call passes through `ToolProxy`, which catches exceptions, marks failed tools as `DEAD` in the registry, auto-recovers when a subsequent call succeeds, and records timing metrics. If your logging service goes down, your payment processing keeps running.
