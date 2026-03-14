@@ -183,14 +183,15 @@ MicroCoreOS/
 
 | Tool | Description |
 |------|-------------|
-| `http` | FastAPI-powered REST + WebSocket gateway with auto-generated OpenAPI |
+| `http` | FastAPI-powered REST + WebSocket + SSE gateway with auto-generated OpenAPI |
 | `db` | Database persistence — **SQLite** (default, zero-config) or **PostgreSQL** (production). Drop-in swap, zero plugin changes. |
-| `event_bus` | Pub/sub and async RPC with built-in tracing |
+| `event_bus` | Pub/sub and async RPC with built-in causal tracing |
 | `auth` | JWT token lifecycle + bcrypt password hashing |
 | `logger` | Structured logging with Sink support |
 | `state` | Sharded in-memory key-value store |
-| `registry` | Sharded-lock architecture introspection |
+| `registry` | Architecture introspection + runtime metrics (`get_metrics()`, `add_metrics_sink()`) |
 | `config` | Environment configuration for plugins |
+| `telemetry` | OpenTelemetry distributed tracing — auto-instruments all tool calls via ToolProxy. Zero config for plugins. |
 | `context_manager` | Auto-generates `AI_CONTEXT.md` from live system state |
 | `chaos` | Chaos engineering — intentional boot failures for fault tolerance testing |
 
@@ -218,10 +219,36 @@ Is it a Tool or a Plugin?
 | `publish(event, data)` | Fire and forget (no confirmation needed) | Notifications, logs, side-effects |
 | `request(event, data)` | Need a response to continue (RPC) | Cross-domain validations, queries |
 
-### Observability: The Watchdog
-In most async architectures, background tasks die quietly. MicroCoreOS includes a **Monitoring Callback** native to the EventBus:
-- **Zero Silent Failures**: Every task spawned by an event is watched. If an async subscriber crashes, the system captures and logs it immediately.
-- **Causality Engine**: Using `ContextVars` in a neutral `core/context.py`, the system tracks the "Identity Chain". You know exactly which HTTP Request caused which background event.
+### Observability: Three Layers
+
+**1 — Causal event tracing (built-in)**
+Every event carries a `parent_id`. `GET /system/traces/tree` reconstructs the full causal chain. `GET /system/traces/stream` streams it live via SSE.
+
+**2 — Tool call metrics (built-in)**
+`ToolProxy` measures the duration of every tool call automatically. Access via `registry.get_metrics()` or hook a real-time sink:
+```python
+# In any plugin's on_boot():
+self.registry.add_metrics_sink(lambda record: ...)
+# record = {tool, method, duration_ms, success, timestamp}
+```
+
+**3 — OpenTelemetry (optional, zero plugin changes)**
+Set `OTEL_ENABLED=true` and all tool calls get OTel spans automatically via ToolProxy. Export to Jaeger, Grafana Tempo, or Datadog:
+```bash
+OTEL_ENABLED=true
+OTEL_SERVICE_NAME=my-service
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+```
+For custom spans inside a plugin:
+```python
+def __init__(self, telemetry, ...):
+    self.telemetry = telemetry
+
+async def execute(self, data, context=None):
+    tracer = self.telemetry.get_tracer("orders")
+    with tracer.start_as_current_span("process_payment"):
+        ...
+```
 
 > [!WARNING]
 > Abuse of `request()` reintroduces coupling. If a Plugin makes too many requests to another, they probably belong in the same domain.
@@ -257,7 +284,7 @@ MicroCoreOS is designed for **developer velocity**, not raw throughput. That sai
 
 - **Hybrid Async Engine**: The Kernel automatically offloads synchronous plugin methods to threads via `asyncio.to_thread`, ensuring the event loop is never blocked.
 - **Sharded Registry Locks**: The `Registry` uses per-category locks (`tools`, `plugins`, `domains`) to reduce contention during concurrent boot and runtime updates.
-- **ToolProxy Monitoring**: Tool calls are wrapped in a transparent proxy that detects failures and updates the Registry in real-time — zero overhead on the happy path.
+- **ToolProxy Monitoring**: Tool calls are wrapped in a transparent proxy that detects failures, measures latency, and updates the Registry in real-time.
 - **Parallel Boot**: All tools are initialized concurrently via `asyncio.gather`. Plugins boot in parallel after tool setup.
 
 ---

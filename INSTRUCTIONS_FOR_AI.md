@@ -66,18 +66,36 @@ domains/{name}/
 
 ## ⚡ New Plugin
 
-**Location**: `domains/{domain}/plugins/{feature}_plugin.py`  
+**Location**: `domains/{domain}/plugins/{feature}_plugin.py`
 **Rule**: 1 File = 1 Feature. Schema defined inline.
+
+### Validation standard — always use `Field`
+
+All request schemas MUST use `pydantic.Field` for constraints. This is the only accepted pattern:
+
+```python
+from pydantic import BaseModel, Field, EmailStr
+
+class CreateProductRequest(BaseModel):
+    name: str        = Field(min_length=1, max_length=100)
+    price: float     = Field(gt=0)
+    sku: str | None  = Field(default=None, pattern=r"^[A-Z0-9\-]+$")
+```
+
+FastAPI validates automatically and returns 422 with a clear error — no try/except needed for input validation.
+Never use bare `str`, `int`, or `float` fields without constraints in a request schema.
+
+---
 
 ```python
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field, EmailStr
 from core.base_plugin import BasePlugin
 
 # ── Request schema lives HERE, not in models/ ──────────────
 class CreateProductRequest(BaseModel):
-    name: str
-    price: float
+    name: str   = Field(min_length=1, max_length=100)
+    price: float = Field(gt=0)
 
 # ── Response schema lives HERE — define only what you return ─
 class ProductData(BaseModel):
@@ -193,6 +211,69 @@ async def test_example():
     )
     result = await plugin.execute({"key": "value"})
     assert result["success"] is True
+```
+
+---
+
+## 📡 Observability Capabilities
+
+### Tool call metrics via `registry`
+
+Every tool call is automatically timed by ToolProxy. Access in any plugin:
+
+```python
+class MyMetricsPlugin(BasePlugin):
+    def __init__(self, registry, event_bus):
+        self.registry = registry
+        self.bus = event_bus
+
+    async def on_boot(self):
+        # Real-time sink — called synchronously on every tool call, keep it fast
+        self.registry.add_metrics_sink(self._on_metric)
+
+    def _on_metric(self, record: dict):
+        # record = {tool, method, duration_ms, success, timestamp}
+        if record["duration_ms"] > 500:
+            # fire-and-forget — don't await inside a sync sink
+            import asyncio
+            asyncio.create_task(self.bus.publish("alert.slow_tool", record))
+
+    async def execute(self, data: dict, context=None):
+        # Snapshot of last 1000 records
+        records = self.registry.get_metrics()
+        return {"success": True, "data": records}
+```
+
+### OpenTelemetry via `telemetry`
+
+All tool calls get spans automatically when `OTEL_ENABLED=true` — no plugin changes needed.
+
+For **custom spans** inside a plugin:
+
+```python
+class OrderPlugin(BasePlugin):
+    def __init__(self, telemetry, db, http):
+        self.telemetry = telemetry  # inject by name
+        self.db = db
+        self.http = http
+
+    async def on_boot(self):
+        self.http.add_endpoint("/orders", "POST", self.execute, tags=["Orders"])
+
+    async def execute(self, data: dict, context=None):
+        tracer = self.telemetry.get_tracer("orders")
+        with tracer.start_as_current_span("process_order"):
+            result = await self.db.execute("INSERT INTO orders ...")
+            return {"success": True, "data": {"id": result}}
+```
+
+`get_tracer()` returns a **no-op tracer** when OTel is disabled — safe to use unconditionally.
+
+### Proactive health check
+
+To monitor tools that may fail silently (e.g. network databases), use the `ToolHealthPlugin` pattern already available in `domains/system/plugins/tool_health_plugin.py`. Configure the interval:
+```bash
+HEALTH_CHECK_INTERVAL=30  # seconds, default: 30
 ```
 
 ---

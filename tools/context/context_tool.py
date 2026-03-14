@@ -64,10 +64,14 @@ class ContextTool(BaseTool):
         for name in container.list_tools():
             try:
                 tool = container.get(name)
+                description = str(tool.get_interface_description()).strip()
+                if not description:
+                    print(f"[ContextTool] WARNING: Tool '{name}' has no interface description. "
+                          f"Update get_interface_description() in its class.")
                 status_emoji = "✅" if tool else "❌"
                 manifest += f"### 🔧 Tool: `{name}` (Status: {status_emoji})\n"
                 manifest += "```text\n"
-                manifest += str(tool.get_interface_description()).strip()
+                manifest += description
                 manifest += "\n```\n\n"
             except Exception as e:
                 manifest += f"### 🔧 Tool: `{name}` (Status: ❌)\n"

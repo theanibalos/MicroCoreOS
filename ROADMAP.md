@@ -23,61 +23,20 @@ This eliminates the need to read code to understand a domain. The AI reads this 
 
 ## Medium Priority
 
-**Issue 2 — Standardized validation pattern**
+**Issue 2 — ✅ Standardized validation pattern**
 
-Currently each plugin validates differently. Pydantic with Field validators should be the official standard across all plugins:
-
-```python
-from pydantic import BaseModel, Field
-
-class CreateProfileRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=30, pattern="^[a-z0-9_]+$")
-    display_name: str = Field(min_length=1, max_length=100)
-    bio: str | None = Field(default=None, max_length=500)
-```
-
-Document this in `INSTRUCTIONS_FOR_AI.md` as the only accepted pattern. Prevents inconsistencies across plugins and makes validation errors automatic via FastAPI.
+`pydantic.Field` with explicit constraints is the only accepted pattern for request schemas.
+Documented in `INSTRUCTIONS_FOR_AI.md` under the "Validation standard" section.
 
 ---
 
-**Issue 3 — Unified error response format**
+**Issue 5 — Event contract validation (deferred — needs dedicated linter)**
 
-Currently each plugin returns errors differently. Standardize across all plugins:
+A plugin can publish `user.created` with `{id, email}` while the subscriber expects `{user_id, email}` — silent failure at runtime.
 
-```python
-context.set_status(404)
-return {"success": False, "error": "Profile not found", "code": "PROFILE_NOT_FOUND"}
-```
+Deferred because adding schema validation inside the bus or the core would introduce coupling that goes against the decoupled-by-design philosophy. The right approach is a static linter that runs outside the runtime — a separate tool that cross-references `publish()` call signatures vs subscriber expectations from source code, with zero runtime overhead.
 
-Optionally add a helper to the http tool:
-```python
-return self.http.error(404, "PROFILE_NOT_FOUND", "Profile not found")
-```
-
-Document the standard error codes per domain in `AI_CONTEXT.md`.
-
----
-
-**Issue 4 — Separate administration port**
-
-Expose the `system` domain (observability) on a separate port (e.g. 8001) isolated from the public API port. The admin port never reaches the outside in production — only accessible from internal network or VPN.
-
-Reference: Spring Boot Actuator pattern. The HTTP tool would need to support a second internal server instance.
-
-Affected endpoints: `GET /system/status`, `GET /system/traces`, `GET /system/events`, `GET /system/events/stream` (SSE), `GET /system/logs/stream` (SSE).
-
----
-
-**Issue 5 — Event contract validation / linter**
-
-Currently there is no contract between event publishers and subscribers. A plugin can publish `user.created` with `{id, email}` while the subscriber expects `{user_id, email}` — the system boots without errors and fails silently at runtime.
-
-Options to explore:
-- **Static linter**: analyzes plugin code before boot and cross-references published vs subscribed event schemas. No runtime overhead.
-- **Registry-based declaration**: plugins declare in `on_boot` what events they emit and with what schema. The registry cross-references on boot and raises early if there is a mismatch.
-- **Bus-level validation**: `subscribe()` accepts an optional Pydantic model; the bus validates the payload before dispatching.
-
-Key tension: the event bus is intentionally decoupled. Adding event schemas introduces coupling between publisher and subscriber — exactly what the bus is designed to avoid. The right balance needs to be found.
+Tackle when a linting/CI layer is added to the project.
 
 ---
 
@@ -101,7 +60,7 @@ Follows the 1 file = 1 feature principle.
 
 ## Low Priority
 
-**Issue 6 — Proactive tool health check**
+**Issue 6 — ✅ Proactive tool health check**
 
 `ToolProxy` detects failures reactively (when an operation raises an exception). Tools that fail silently (e.g. DB stops responding without raising) remain in `OK` state indefinitely.
 
@@ -111,7 +70,7 @@ Note: keep outside the core to preserve the blind-kernel principle.
 
 ---
 
-**Issue 7 — Tool call duration tracking via ToolProxy**
+**Issue 7 — ✅ Tool call duration tracking via ToolProxy**
 
 `ToolProxy` already intercepts every tool method call. Adding timing there gives duration metrics for every `db.execute()`, `event_bus.publish()`, and any other tool call automatically — zero changes to plugins or tools.
 
@@ -139,7 +98,7 @@ On connect sends a `snapshot` with the full current tree. Each new event emits a
 
 ---
 
-**Issue 9 — OpenTelemetry integration**
+**Issue 9 — ✅ OpenTelemetry integration**
 
 Add distributed tracing via OpenTelemetry without coupling the core to any specific library.
 
@@ -152,6 +111,7 @@ Agreed design:
 - **`HttpServerTool.on_instrument`** — calls `FastAPIInstrumentor.instrument_app(self.app)`. If the HTTP tool is swapped for Flask/Django, only this method changes.
 
 What is gained over the existing causality system (`/system/traces`):
+
 - Real HTTP span with method, path, status code, and latency as the trace root
 - Tool call durations via the proxy
 - Export to external platforms: Jaeger, Grafana Tempo, Datadog, etc.

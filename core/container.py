@@ -1,71 +1,162 @@
+import time
 import inspect
+import contextlib
 import threading
+from collections import deque
 from core.registry import Registry
+
 
 class ToolProxy:
     """
-    Transparent Proxy that wraps a Tool.
-    Intercepts method calls to automatically report health status (DEAD)
-    to the Registry if the underlying Tool raises an Exception.
-    Correctly handles both sync and async methods.
+    Transparent proxy that wraps a Tool.
+    Intercepts method calls to:
+    - Report DEAD status to the Registry on unhandled exceptions.
+    - Measure and emit call duration to a metrics sink.
+    - Create OpenTelemetry spans when a span factory is registered.
     """
-    def __init__(self, tool, registry: Registry):
+    def __init__(self, tool, registry: Registry, emit_metric=None, make_span=None):
         self._tool = tool
         self._registry = registry
+        self._emit_metric = emit_metric
+        self._make_span = make_span  # callable(tool, method) -> context manager
 
     def __getattr__(self, name):
         attr = getattr(self._tool, name)
-        
-        # We only want to intercept callable methods, not properties like 'name'
+
         if not callable(attr):
             return attr
 
+        emit = self._emit_metric
+        make_span = self._make_span
+        registry = self._registry
+        tool_name = self._tool.name
+
         if inspect.iscoroutinefunction(attr):
             async def wrapper(*args, **kwargs):
-                try:
-                    return await attr(*args, **kwargs)
-                except Exception as e:
-                    self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
-                    raise
+                start = time.perf_counter()
+                span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
+                with span_cm:
+                    try:
+                        result = await attr(*args, **kwargs)
+                        if emit:
+                            emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
+                        return result
+                    except Exception as e:
+                        if emit:
+                            emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                        registry.update_tool_status(tool_name, "DEAD", str(e))
+                        raise
         else:
             def wrapper(*args, **kwargs):
+                start = time.perf_counter()
                 try:
                     result = attr(*args, **kwargs)
                 except Exception as e:
-                    self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
+                    if emit:
+                        emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                    registry.update_tool_status(tool_name, "DEAD", str(e))
                     raise
 
                 if inspect.isawaitable(result):
                     async def _monitored():
-                        try:
-                            return await result
-                        except Exception as e:
-                            self._registry.update_tool_status(self._tool.name, "DEAD", str(e))
-                            raise
+                        inner_start = time.perf_counter()
+                        span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
+                        with span_cm:
+                            try:
+                                r = await result
+                                if emit:
+                                    emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, True)
+                                return r
+                            except Exception as e:
+                                if emit:
+                                    emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, False)
+                                registry.update_tool_status(tool_name, "DEAD", str(e))
+                                raise
                     return _monitored()
 
+                if emit:
+                    emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                 return result
+
         return wrapper
+
 
 class Container:
     """
     Service Locator for Tools.
     Single responsibility: register, get, and list tools.
     Health/metadata tracking is handled by Registry via ToolProxy.
+    Metrics collection is handled by an internal ring buffer + sink list.
+    OTel spans are injected via a registrable span factory.
     """
 
     def __init__(self):
         self._tools = {}
         self._lock = threading.RLock()
         self.registry = Registry()
+        self._metrics_sinks = []
+        self._metrics_buffer = deque(maxlen=1000)
+        self._span_factory = None
+
+    # ── Metrics ───────────────────────────────────────────────────────────────
+
+    def add_metrics_sink(self, callback):
+        """Register a sink to receive metric records on every tool call.
+        Signature: callback(record: dict) — record has: tool, method, duration_ms, success, timestamp.
+        """
+        self._metrics_sinks.append(callback)
+
+    def get_metrics(self) -> list:
+        """Return the last 1000 metric records (chronological order)."""
+        return list(self._metrics_buffer)
+
+    def _emit_metric(self, tool: str, method: str, duration_ms: float, success: bool):
+        record = {
+            "tool": tool,
+            "method": method,
+            "duration_ms": round(duration_ms, 3),
+            "success": success,
+            "timestamp": time.time(),
+        }
+        self._metrics_buffer.append(record)
+        for sink in self._metrics_sinks:
+            try:
+                sink(record)
+            except Exception:
+                pass
+
+    # ── Spans (OTel) ──────────────────────────────────────────────────────────
+
+    def register_span_factory(self, factory):
+        """Register a span factory for OpenTelemetry instrumentation.
+        Signature: factory(tool: str, method: str) -> context manager.
+        Safe to call after proxies are created — takes effect on the next tool call.
+        """
+        self._span_factory = factory
+
+    def _get_span_cm(self, tool: str, method: str):
+        if self._span_factory:
+            return self._span_factory(tool, method)
+        return contextlib.nullcontext()
+
+    def get_raw_tools(self) -> list:
+        """Return raw tool instances bypassing proxies.
+        Used by TelemetryTool to call on_instrument() without risking DEAD status.
+        """
+        with self._lock:
+            return [proxy._tool for proxy in self._tools.values()]
+
+    # ── Registration ──────────────────────────────────────────────────────────
 
     def register(self, tool):
         with self._lock:
-            # Give the tool a direct reference to the registry if it needs it
-            # (e.g. RegistryTool), making it available before on_boot_complete.
             if hasattr(tool, '_set_core_registry'):
                 tool._set_core_registry(self.registry)
-            self._tools[tool.name] = ToolProxy(tool, self.registry)
+            if hasattr(tool, '_set_container'):
+                tool._set_container(self)
+            self._tools[tool.name] = ToolProxy(
+                tool, self.registry, self._emit_metric, self._get_span_cm
+            )
         print(f"[Container] Tool registered (Proxied): {tool.name}")
 
     def get(self, name: str):

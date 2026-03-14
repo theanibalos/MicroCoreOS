@@ -254,6 +254,19 @@ class HttpServerTool(BaseTool):
         self._server_task = asyncio.create_task(self._server.serve())
         print(f"[HttpServer] Server active → http://localhost:{self._port}/docs")
 
+    async def on_instrument(self, tracer_provider) -> None:
+        """Driver-level OTel instrumentation for FastAPI.
+        Adds HTTP span attributes: method, route, status code, latency.
+        Called by TelemetryTool after boot, bypassing ToolProxy.
+        """
+        try:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+            FastAPIInstrumentor.instrument_app(self.app)
+            print("[HttpServerTool] FastAPI instrumented for OTel.")
+        except ImportError:
+            print("[HttpServerTool] opentelemetry-instrumentation-fastapi not installed — "
+                  "HTTP driver spans unavailable. ToolProxy spans still active.")
+
     async def shutdown(self) -> None:
         if self._server:
             self._server.should_exit = True
