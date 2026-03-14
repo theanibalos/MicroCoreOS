@@ -1,11 +1,11 @@
-# MicroCoreOS: The Architecture That Makes AI-Generated Code Actually Work
+# MicroCoreOS: The Architecture That Makes AI-Generated Code Maintainable
 
-> Every time I asked my AI to add an endpoint, it created 6-8 files.
-> I got tired of correcting it. So I built an architecture where it can't put code in the wrong place.
+> The current solution to AI coding mistakes is more context — .cursorrules, CLAUDE.md, skills, system prompts.
+> The result: context windows full of instructions instead of code.
+>
+> MicroCoreOS takes the opposite approach: an architecture where there's only one place to put things.
 
-**MicroCoreOS** is a Python framework built on one principle: **1 file = 1 feature.**
-
-The AI reads 2 files (the auto-generated system manifest + the plugin it's working on), follows one pattern, and produces clean, isolated code. No conventions to guess, no layers to navigate.
+**1 file = 1 feature.** When AI makes a mistake, you find it in 30 seconds — not 30 minutes reviewing 8 files. The AI reads 2 files (the auto-generated system manifest + the plugin it's working on), follows one pattern, and produces clean, isolated code.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -18,6 +18,7 @@ The AI reads 2 files (the auto-generated system manifest + the plugin it's worki
 ```bash
 git clone https://github.com/theanibalos/MicroCoreOS.git
 cd MicroCoreOS
+cp .env.example .env
 uv run main.py
 # Visit http://localhost:5000/docs
 ```
