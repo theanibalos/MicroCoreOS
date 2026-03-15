@@ -41,6 +41,9 @@ Async Event Bus Tool (event_bus):
             - add_listener(callback): Sink pattern — called with full trace record on every event.
                 Signature: callback(record: dict) — record has: id, event, emitter, subscribers, payload_keys, timestamp.
                 Use for real-time observability (e.g. WebSocket broadcast). Non-blocking.
+            - add_failure_listener(callback): Sink called when a subscriber raises during dispatch.
+                Signature: callback(record: dict) — record has: event, event_id, subscriber, error.
+                Use to implement dead-letter alerting. Non-blocking — keep it fast.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
@@ -72,12 +75,30 @@ HTTP Server Tool (http):
           .model_dump() before nesting them: MyModel(...).model_dump()
 ```
 
-### 🔧 Tool: `chaos` (Status: ✅)
+### 🔧 Tool: `telemetry` (Status: ✅)
 ```text
-Chaos Engineering Tool (chaos):
-        - PURPOSE: Intentionally fails during boot to verify Kernel fault tolerance.
-        - Enabled by setting CHAOS_ENABLED=true in the environment.
-        - No capabilities exposed to plugins.
+Telemetry Tool (telemetry):
+        - PURPOSE: OpenTelemetry distributed tracing. Auto-instruments all tool calls via ToolProxy.
+          No changes needed in plugins or existing tools to get basic spans.
+        - ACTIVATION: Set OTEL_ENABLED=true. Degrades gracefully if disabled or packages missing.
+        - ENV VARS:
+            - OTEL_ENABLED: "true" to activate (default: "false").
+            - OTEL_SERVICE_NAME: Service name in traces (default: "microcoreos").
+            - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP/gRPC endpoint (e.g. "http://jaeger:4317").
+              If not set, traces are printed to console (development mode).
+        - CAPABILITIES:
+            - get_tracer(scope: str) -> Tracer: Named tracer for custom spans inside a plugin.
+                Usage: tracer = self.telemetry.get_tracer("my_plugin")
+                       with tracer.start_as_current_span("my_operation"): ...
+                Returns a no-op tracer if OTel is disabled — safe to use unconditionally.
+        - AUTO-INSTRUMENTATION (zero config):
+            Every tool call (db.execute, event_bus.publish, auth.create_token, etc.)
+            gets a span automatically via ToolProxy. No plugin changes needed.
+        - DRIVER-LEVEL INSTRUMENTATION (optional, per tool):
+            Tools can implement on_instrument(tracer_provider) in BaseTool to add
+            framework-specific spans (SQL query text, HTTP route, etc.).
+        - INSTALL:
+            uv add opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
 ### 🔧 Tool: `context_manager` (Status: ✅)
@@ -141,6 +162,15 @@ Systems Registry Tool (registry):
                 NOTE: status is updated REACTIVELY (on exception via ToolProxy).
                 A tool that silently stopped responding may still show "OK".
             - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
+            - get_metrics() -> list[dict]: Last 1000 tool call records.
+                Each record: {tool, method, duration_ms, success, timestamp}.
+                Use to build /system/metrics or feed into an observability sink.
+            - add_metrics_sink(callback): Register a sink for real-time metric records.
+                Signature: callback(record: dict).
+                Called synchronously on every tool method call — keep it fast.
+            - update_tool_status(name, status, message=None): Manually override a tool's health status.
+                status: "OK" | "FAIL" | "DEAD".
+                Intended for health-check plugins that verify tools proactively.
 ```
 
 ### 🔧 Tool: `auth` (Status: ✅)
@@ -159,6 +189,31 @@ Authentication Tool (auth):
             - validate_token(token: str) -> dict | None:
                 Safe, non-throwing token validation. Returns the decoded payload
                 if valid, or None if expired/invalid. Ideal for middleware guards.
+```
+
+### 🔧 Tool: `scheduler` (Status: ✅)
+```text
+Scheduler Tool (scheduler):
+        - PURPOSE: Background job scheduling — cron-style recurring jobs and one-shot timed jobs.
+          Backed by APScheduler AsyncIOScheduler. Zero infrastructure required.
+          Supports both async and sync callbacks transparently.
+        - CAPABILITIES:
+            - add_job(cron_expr: str, callback, job_id?: str) -> str:
+                Schedule a recurring job with a 5-field cron expression.
+                e.g. "*/5 * * * *" = every 5 min, "0 9 * * 1-5" = weekdays at 09:00.
+                Returns job_id (auto-generated if not provided).
+                Providing a stable job_id prevents duplicates on restart.
+            - add_one_shot(run_at: datetime, callback, job_id?: str) -> str:
+                Schedule a one-time job at a specific datetime (timezone-aware).
+                Returns job_id.
+            - remove_job(job_id: str) -> bool:
+                Remove a job by ID. Returns True if removed, False if not found.
+            - list_jobs() -> list[dict]:
+                Snapshot of all scheduled jobs: [{id, next_run, trigger}].
+        - REGISTER IN on_boot(): jobs are collected during on_boot(), scheduler starts
+          in on_boot_complete() after all plugins have registered.
+        - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
+          and the same 4-method API. Plugins do not change.
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
@@ -183,17 +238,9 @@ Async SQLite Persistence Tool (sqlite):
 
 ## 📦 Domains
 
-### `chaos`
-- **Tables**: none
-- **Endpoints**: none
-- **Events emitted**: none
-- **Events consumed**: none
-- **Dependencies**: http, logger
-- **Plugins**: BlockingBootPlugin, FailingPlugin, StressPlugin
-
 ### `ping`
 - **Tables**: none
-- **Endpoints**: none
+- **Endpoints**: GET /ping
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: http, logger
@@ -201,15 +248,15 @@ Async SQLite Persistence Tool (sqlite):
 
 ### `system`
 - **Tables**: none
-- **Endpoints**: none
-- **Events emitted**: none
+- **Endpoints**: GET /system/events, GET /system/status, GET /system/traces/flat, GET /system/traces/tree
+- **Events emitted**: event.delivery.failed
 - **Events consumed**: none
-- **Dependencies**: event_bus, http, logger, registry
-- **Plugins**: SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin
+- **Dependencies**: config, db, event_bus, http, logger, registry
+- **Plugins**: EventDeliveryMonitorPlugin, SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin, ToolHealthPlugin
 
 ### `users`
 - **Tables**: user
-- **Endpoints**: none
+- **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
 - **Events emitted**: user.created, user.deleted, welcome.notify.sent
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger

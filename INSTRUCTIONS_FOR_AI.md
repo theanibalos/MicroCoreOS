@@ -2,6 +2,25 @@
 
 > **Reading order**: `AI_CONTEXT.md` (live inventory) → this file (rules + templates) → `workflows/` (step-by-step tasks).
 
+## ❌ Anti-Patterns (Common AI Mistakes)
+
+These are the most frequent errors. Check these first before writing any code.
+
+| Wrong | Correct | Why |
+|-------|---------|-----|
+| `from domains.users.models.user import UserEntity` inside `orders` plugin | Define `OrderData` inline | No cross-domain imports |
+| `class CreateUserRequest(BaseModel): name: str` (bare field) | `name: str = Field(min_length=1)` | FastAPI won't validate without constraints |
+| `add_endpoint("/users", "POST", self.execute, ...)` without `response_model=` | Always pass `response_model=CreateUserResponse` | No OpenAPI docs generated |
+| Logic inside `__init__` | Move to `on_boot()` or `execute()` | `__init__` is DI only |
+| `import asyncio; asyncio.run(...)` inside a plugin | `await` or schedule via `scheduler` | Already inside an event loop |
+| `?` placeholders in SQL | `$1, $2, $3...` | PostgreSQL-style; SQLite converts automatically |
+| Returning the full Entity object (including `password_hash`) | Define a response schema with only the fields you expose | Leaks sensitive data |
+| `from tools.http_server.http_server_tool import HttpServerTool` | Use DI: `def __init__(self, http)` | Hardcoded imports break tool swapping |
+| Inside a tool's `on_boot_complete`: `container.get("event_bus")` | Add a new lifecycle hook to the Kernel instead | `container.get()` inside a tool is a hidden cross-tool import — same violation, different syntax. The only exception is `context_manager`, whose explicit purpose is system introspection. |
+| Creating a service class or router | Use a plugin directly | No framework patterns |
+
+---
+
 ## ⚠️ CRITICAL RULES (DO NOT IGNORE)
 
 1. **`main.py` is sacred** — Never modify. It only boots the Kernel.

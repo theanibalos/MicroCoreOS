@@ -130,3 +130,39 @@ Check that:
 - Migration ran successfully (look for `[Migration] ✅` in logs)
 - Endpoints appear in the Swagger UI at `http://localhost:8000/docs`
 - `AI_CONTEXT.md` was regenerated with the new domain
+
+### 6. Generate tests
+
+Create `tests/test_{name}_plugin.py` with one test per plugin. Mock all tools:
+
+```python
+import pytest
+from unittest.mock import MagicMock, AsyncMock
+from domains.{name}.plugins.create_{name}_plugin import Create{Name}Plugin
+
+@pytest.mark.anyio
+async def test_create_{name}_success():
+    plugin = Create{Name}Plugin(
+        http=MagicMock(),
+        db=AsyncMock(return_value=1),
+        event_bus=AsyncMock(),
+        logger=MagicMock(),
+    )
+    result = await plugin.execute({"field1": "value", "field2": 42})
+    assert result["success"] is True
+    assert result["data"]["id"] == 1
+
+@pytest.mark.anyio
+async def test_create_{name}_db_error():
+    plugin = Create{Name}Plugin(
+        http=MagicMock(),
+        db=AsyncMock(side_effect=Exception("DB down")),
+        event_bus=AsyncMock(),
+        logger=MagicMock(),
+    )
+    result = await plugin.execute({"field1": "value", "field2": 42})
+    assert result["success"] is False
+    assert "DB down" in result["error"]
+```
+
+Run with `uv run pytest tests/test_{name}_plugin.py`.

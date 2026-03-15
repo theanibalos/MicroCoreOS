@@ -99,7 +99,7 @@ class SchedulerTool(BaseTool):
                 "Install with: uv add 'apscheduler>=3.10,<4'"
             )
 
-    def on_boot_complete(self, container) -> None:
+    async def on_boot_complete(self, container) -> None:
         """Start the scheduler after all plugins have registered their jobs."""
         self._scheduler.start()
         job_count = len(self._scheduler.get_jobs())

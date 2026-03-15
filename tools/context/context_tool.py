@@ -94,7 +94,7 @@ class ContextTool(BaseTool):
             for _, info in plugins:
                 all_deps.update(info.get("dependencies", []))
 
-            endpoints = self._get_domain_endpoints(domain, container)
+            endpoints = self._get_domain_endpoints(domain)
             emitted = self._scan_published_events(domain)
             consumed = self._get_consumed_events(plugin_names, container)
             tables = self._get_domain_tables(domain)
@@ -116,18 +116,37 @@ class ContextTool(BaseTool):
         except Exception as e:
             print(f"[ContextTool] Error writing AI_CONTEXT.md: {e}")
 
-    def _get_domain_endpoints(self, domain: str, container) -> list[str]:
-        try:
-            http = container.get("http")
-            tag = domain.capitalize()
-            routes = []
-            for route in http.app.routes:
-                if hasattr(route, "tags") and tag in (route.tags or []):
-                    methods = "/".join(sorted(route.methods - {"HEAD"} if route.methods else set()))
-                    routes.append(f"{methods} {route.path}")
-            return sorted(routes)
-        except Exception:
+    def _get_domain_endpoints(self, domain: str) -> list[str]:
+        """
+        Static analysis of plugin source files — same approach as _scan_published_events.
+        Handles both call styles:
+          positional: add_endpoint("/path", "METHOD", ...)
+          keyword:    add_endpoint(path="/path", method="METHOD", ...)
+        """
+        endpoints: set[str] = set()
+        plugins_dir = os.path.join("domains", domain, "plugins")
+        if not os.path.isdir(plugins_dir):
             return []
+        for filename in os.listdir(plugins_dir):
+            if not filename.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(plugins_dir, filename), "r", encoding="utf-8") as f:
+                    content = f.read()
+                # Positional: add_endpoint("/path", "METHOD", ...)
+                for m in re.finditer(
+                    r'add_endpoint\(\s*["\']([^"\']+)["\'],\s*["\']([A-Z]+)["\']', content
+                ):
+                    endpoints.add(f"{m.group(2)} {m.group(1)}")
+                # Keyword: add_endpoint(path="/path", ..., method="METHOD", ...)
+                for call in re.findall(r'add_endpoint\(([^)]+)\)', content, re.DOTALL):
+                    path_m = re.search(r'path\s*=\s*["\']([^"\']+)["\']', call)
+                    method_m = re.search(r'method\s*=\s*["\']([A-Z]+)["\']', call)
+                    if path_m and method_m:
+                        endpoints.add(f"{method_m.group(1)} {path_m.group(1)}")
+            except Exception:
+                pass
+        return sorted(endpoints)
 
     def _get_consumed_events(self, plugin_names: list[str], container) -> set[str]:
         try:

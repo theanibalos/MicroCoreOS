@@ -92,12 +92,15 @@ from core.context import current_event_id_var, current_identity_var
 
 class EventBusTool(BaseTool):
 
+    _MAX_CONSECUTIVE_FAILURES = 5
+
     def __init__(self):
         self._subscribers: dict[str, list] = {}
         self._lock = asyncio.Lock()
         self._trace_log: collections.deque = collections.deque(maxlen=500)
         self._listeners: list = []          # sink: called with trace record on every event
         self._failure_listeners: list = []  # sink: called when a subscriber raises
+        self._consecutive_failures: dict[str, int] = {}  # subscriber_name → consecutive failure count
 
     @property
     def name(self) -> str:
@@ -270,8 +273,17 @@ class EventBusTool(BaseTool):
             if reply_channel is not None and result is not None:
                 await self._dispatch_reply(reply_channel, result, subscriber_name)
 
+            # Reset consecutive failure count on success
+            self._consecutive_failures.pop(subscriber_name, None)
+
         except Exception as e:
-            print(f"[EventBus] ⚠️  '{subscriber_name}' failed handling '{event_name}': {e}")
+            count = self._consecutive_failures.get(subscriber_name, 0) + 1
+            self._consecutive_failures[subscriber_name] = count
+            print(f"[EventBus] ⚠️  '{subscriber_name}' failed handling '{event_name}': {e} (failure {count}/{self._MAX_CONSECUTIVE_FAILURES})")
+
+            if count >= self._MAX_CONSECUTIVE_FAILURES:
+                asyncio.create_task(self._auto_unsubscribe_dead(callback, subscriber_name))
+
             failure_record = {
                 "event": event_name,
                 "event_id": event_id,
@@ -330,6 +342,20 @@ class EventBusTool(BaseTool):
             f"  parent={str(parent_id)[:8] if parent_id else 'root'}"
             f"  from={emitter}"
         )
+
+    async def _auto_unsubscribe_dead(self, callback, subscriber_name: str) -> None:
+        """Removes a consistently-failing handler from all events it is subscribed to."""
+        async with self._lock:
+            affected = [
+                event for event, cbs in self._subscribers.items()
+                if callback in cbs
+            ]
+            for event in affected:
+                self._subscribers[event] = [cb for cb in self._subscribers[event] if cb is not callback]
+                if not self._subscribers[event]:
+                    del self._subscribers[event]
+        self._consecutive_failures.pop(subscriber_name, None)
+        print(f"[EventBus] 🔇 Auto-unsubscribed dead handler '{subscriber_name}' from: {affected}")
 
     def _monitor_task(self, task: asyncio.Task, event_name: str, callback) -> None:
         """Attaches a done-callback to report unhandled Task failures to stdout."""

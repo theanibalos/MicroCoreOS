@@ -27,44 +27,4 @@ docker compose -f dev_infra/docker-compose.yml up -d  # Dev infra
 6. **Return format**: `{"success": bool, "data": ..., "error": ...}`.
 7. **Runner**: Always `uv run`.
 
-## Plugin Pattern
-
-```python
-from typing import Optional
-from pydantic import BaseModel
-from core.base_plugin import BasePlugin
-
-class CreateThingRequest(BaseModel):  # request schema lives HERE
-    name: str
-
-class ThingData(BaseModel):           # response data shape lives HERE
-    id: int
-    name: str
-
-class CreateThingResponse(BaseModel): # never import UserEntity — define only what you return
-    success: bool
-    data: Optional[ThingData] = None
-    error: Optional[str] = None
-
-class CreateThingPlugin(BasePlugin):
-    def __init__(self, http, db, logger):
-        self.http = http
-        self.db = db
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint("/things", "POST", self.execute,
-                               tags=["Things"], request_model=CreateThingRequest,
-                               response_model=CreateThingResponse)
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = CreateThingRequest(**data)
-            new_id = await self.db.execute(
-                "INSERT INTO things (name) VALUES ($1) RETURNING id", [req.name]
-            )
-            return {"success": True, "data": {"id": new_id, "name": req.name}}
-        except Exception as e:
-            self.logger.error(f"Failed: {e}")
-            return {"success": False, "error": str(e)}
-```
+> Templates, anti-patterns, and detailed rules: `INSTRUCTIONS_FOR_AI.md`.
