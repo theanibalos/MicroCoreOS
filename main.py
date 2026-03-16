@@ -1,3 +1,4 @@
+import sys
 import signal
 import asyncio
 from dotenv import load_dotenv
@@ -12,14 +13,19 @@ async def _main():
         stop_event.set()
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_signal_handler)
+    if sys.platform != "win32":
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop_signal_handler)
 
-    await app.boot()
-    print("\n🚀 [MicroCoreOS] System Online. (Ctrl+C to exit)")
-    await stop_event.wait()
-    await app.shutdown()
-    print("[MicroCoreOS] Shutdown complete. See you soon!")
+    try:
+        await app.boot()
+        print("\n🚀 [MicroCoreOS] System Online. (Ctrl+C to exit)")
+        await stop_event.wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        await app.shutdown()
+        print("[MicroCoreOS] Shutdown complete. See you soon!")
 
 def main():
     try:
