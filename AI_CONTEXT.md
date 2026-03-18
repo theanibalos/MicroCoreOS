@@ -101,6 +101,24 @@ Telemetry Tool (telemetry):
             uv add opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
+### 🔧 Tool: `auth` (Status: ✅)
+```text
+Authentication Tool (auth):
+        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
+        - CAPABILITIES:
+            - hash_password(password: str) -> str: Securely hashes a plain-text password using bcrypt.
+            - verify_password(password: str, hashed_password: str) -> bool: Verifies if a password matches its hash.
+            - create_token(data: dict, expires_delta: Optional[int] = None) -> str: 
+                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}). 
+                'expires_delta' is optional minutes until expiration.
+            - decode_token(token: str) -> dict: 
+                Verifies and decodes a JWT token. Returns the payload dictionary. 
+                Raises Exception if token is expired or invalid.
+            - validate_token(token: str) -> dict | None:
+                Safe, non-throwing token validation. Returns the decoded payload
+                if valid, or None if expired/invalid. Ideal for middleware guards.
+```
+
 ### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
 Context Manager Tool (context_manager):
@@ -173,22 +191,21 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
-### 🔧 Tool: `auth` (Status: ✅)
+### 🔧 Tool: `db` (Status: ✅)
 ```text
-Authentication Tool (auth):
-        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
+Async PostgreSQL Persistence Tool (db):
+        - PURPOSE: Production-grade relational data storage using PostgreSQL with connection pooling.
+        - PLACEHOLDERS: Use $1, $2, $3... (NOT '?' like SQLite).
         - CAPABILITIES:
-            - hash_password(password: str) -> str: Securely hashes a plain-text password using bcrypt.
-            - verify_password(password: str, hashed_password: str) -> bool: Verifies if a password matches its hash.
-            - create_token(data: dict, expires_delta: Optional[int] = None) -> str: 
-                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}). 
-                'expires_delta' is optional minutes until expiration.
-            - decode_token(token: str) -> dict: 
-                Verifies and decodes a JWT token. Returns the payload dictionary. 
-                Raises Exception if token is expired or invalid.
-            - validate_token(token: str) -> dict | None:
-                Safe, non-throwing token validation. Returns the decoded payload
-                if valid, or None if expired/invalid. Ideal for middleware guards.
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING: returns the first column value. Without: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes with optimized pipeline.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)
@@ -214,26 +231,6 @@ Scheduler Tool (scheduler):
           in on_boot_complete() after all plugins have registered.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
-```
-
-### 🔧 Tool: `db` (Status: ✅)
-```text
-Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
-        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
-        - CAPABILITIES:
-            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
-            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
-            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING (SQLite 3.35+): returns the first column value.
-              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes.
-            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
-              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
-            - await health_check() → bool: Verify database connectivity.
-        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
 ## 📦 Domains

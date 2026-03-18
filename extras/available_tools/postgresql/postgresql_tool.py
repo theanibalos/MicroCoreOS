@@ -24,6 +24,7 @@ PLACEHOLDERS: PostgreSQL uses $1, $2, $3... (NOT '?' like SQLite).
 """
 
 import os
+import asyncio
 import asyncpg
 from core.base_tool import BaseTool
 
@@ -193,6 +194,8 @@ class PostgresqlTool(BaseTool):
         self._database: str = os.getenv("PG_DATABASE", "postgres")
         self._min_pool: int = int(os.getenv("PG_MIN_POOL", "1"))
         self._max_pool: int = int(os.getenv("PG_MAX_POOL", "10"))
+        self._connect_timeout: float = float(os.getenv("PG_CONNECT_TIMEOUT", "5"))
+        self._command_timeout: float = float(os.getenv("PG_COMMAND_TIMEOUT", "30"))
         self._pool: asyncpg.Pool | None = None
 
     # ─── LIFECYCLE: setup() ───────────────────────────────
@@ -207,14 +210,24 @@ class PostgresqlTool(BaseTool):
         print(f"[System] PostgresqlTool: Connecting to {self._host}:{self._port}/{self._database}...")
 
         try:
-            self._pool = await asyncpg.create_pool(
-                host=self._host,
-                port=self._port,
-                user=self._user,
-                password=self._password,
-                database=self._database,
-                min_size=self._min_pool,
-                max_size=self._max_pool,
+            self._pool = await asyncio.wait_for(
+                asyncpg.create_pool(
+                    host=self._host,
+                    port=self._port,
+                    user=self._user,
+                    password=self._password,
+                    database=self._database,
+                    min_size=self._min_pool,
+                    max_size=self._max_pool,
+                    timeout=self._connect_timeout,
+                    command_timeout=self._command_timeout,
+                ),
+                timeout=self._connect_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise DatabaseConnectionError(
+                f"Timeout connecting to PostgreSQL at {self._host}:{self._port}/{self._database} "
+                f"(>{self._connect_timeout}s)"
             )
         except (asyncpg.PostgresError, OSError, ConnectionRefusedError) as e:
             raise DatabaseConnectionError(

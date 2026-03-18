@@ -173,8 +173,50 @@ class CreateProductPlugin(BasePlugin):
 
 ## 🔧 New Tool
 
-**Location**: `tools/{name}/{name}_tool.py`  
+**Location**: `tools/{name}/{name}_tool.py`
 **Rule**: Stateless, isolated, self-documented.
+
+### Tool availability contract — `setup()` decides the failure model
+
+The tool is the only one that knows whether its unavailability is recoverable. This determines how `setup()` must behave:
+
+| Type | `setup()` behavior | Example |
+|------|--------------------|---------|
+| **Critical infrastructure** | Raises exception if unavailable → kernel marks FAIL → dependent plugins marked DEAD | PostgreSQL, Redis |
+| **External / eventually available** | Never raises → kernel marks READY → plugins load → each call handles unavailability gracefully | Government APIs, third-party services |
+
+**Critical tool** — `setup()` must fail fast with a timeout:
+```python
+async def setup(self) -> None:
+    try:
+        self._client = await asyncio.wait_for(self._connect(), timeout=5)
+    except asyncio.TimeoutError:
+        raise ConnectionError("Service unavailable after 5s")
+    except Exception as e:
+        raise ConnectionError(f"Cannot connect: {e}") from e
+```
+
+**External / eventually available tool** — `setup()` never raises, each method retries:
+```python
+async def setup(self) -> None:
+    try:
+        await asyncio.wait_for(self._ping(), timeout=5)
+        self._available = True
+    except Exception:
+        self._available = False
+        print("[MyTool] ⚠️ Not available at startup. Will connect when ready.")
+
+async def call(self, params):
+    if not self._available:
+        await self._try_reconnect()
+    if not self._available:
+        raise ServiceUnavailableError("Service not available")
+    # ... real call
+```
+
+The plugin handles `ServiceUnavailableError` like any other exception and returns `{"success": false, "error": "..."}`. No special kernel support needed.
+
+**Never add a global timeout in the kernel or HTTP layer** — long operations (video processing, bulk exports) are legitimate. Each tool is responsible for its own timeouts.
 
 ```python
 from core.base_tool import BaseTool
