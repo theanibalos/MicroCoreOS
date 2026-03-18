@@ -1,8 +1,85 @@
 # 📜 SYSTEM MANIFEST
 
-> **NOTICE:** This is a LIVE inventory. For implementation guides, read [INSTRUCTIONS_FOR_AI.md](INSTRUCTIONS_FOR_AI.md).
+> This file is ALL you need to build a plugin. For advanced topics (testing, observability, creating tools), see [INSTRUCTIONS_FOR_AI.md](INSTRUCTIONS_FOR_AI.md).
 
-## 🏗️ Quick Architecture Ref
+## ⚡ Plugin Quick Start
+
+**Location**: `domains/{domain}/plugins/{feature}_plugin.py` — 1 file = 1 feature.
+
+### Template
+
+```python
+from typing import Optional
+from pydantic import BaseModel, Field
+from core.base_plugin import BasePlugin
+
+# Request/Response schemas live HERE, not in models/
+class CreateThingRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+class ThingData(BaseModel):
+    id: int
+    name: str
+
+class CreateThingResponse(BaseModel):
+    success: bool
+    data: Optional[ThingData] = None
+    error: Optional[str] = None
+
+class CreateThingPlugin(BasePlugin):
+    def __init__(self, http, db, event_bus, logger):
+        self.http = http
+        self.db = db
+        self.bus = event_bus
+        self.logger = logger
+
+    async def on_boot(self):
+        self.http.add_endpoint(
+            "/things", "POST", self.execute,
+            tags=["Things"],
+            request_model=CreateThingRequest,
+            response_model=CreateThingResponse,
+        )
+
+    async def execute(self, data: dict, context=None):
+        try:
+            req = CreateThingRequest(**data)
+            thing_id = await self.db.execute(
+                "INSERT INTO things (name) VALUES ($1) RETURNING id", [req.name]
+            )
+            await self.bus.publish("thing.created", {"id": thing_id})
+            return {"success": True, "data": {"id": thing_id, "name": req.name}}
+        except Exception as e:
+            self.logger.error(f"Failed: {e}")
+            return {"success": False, "error": str(e)}
+```
+
+### New Domain Structure
+
+```
+domains/{name}/
+  __init__.py
+  models/{name}.py        <- Entity: DB mirror only (Pydantic BaseModel)
+  migrations/001_xxx.sql  <- Raw SQL, auto-executed on boot
+  plugins/                <- 1 file = 1 feature
+```
+
+### Critical Rules
+
+1. **Never modify `main.py`** — Kernel auto-discovers everything.
+2. **DI by name** — `__init__` param names must match tool `name` properties.
+3. **Schemas inline** — Request AND response schemas go in the plugin file, not in `models/`.
+4. **No cross-domain imports** — Use `event_bus` for inter-domain communication.
+5. **Return format** — Always `{"success": bool, "data": ..., "error": ...}`.
+6. **Use `Field`** — Never bare `str`/`int` in request schemas. Use `Field(min_length=1)` etc.
+7. **SQL placeholders** — Always `$1, $2, $3...` (never `?`).
+8. **Always pass `response_model=`** to `add_endpoint` — generates OpenAPI docs.
+9. **Never expose sensitive fields** — Define response schema with only safe fields.
+10. **No hardcoded imports** — Never `from tools.x import X`. Use DI.
+
+---
+
+## 🛠️ Quick Architecture Ref
 - **Pattern**: `__init__` (DI) -> `on_boot` (Register) -> handler methods (Action).
 - **Injection**: Tools are injected by name in the constructor.
 
@@ -193,15 +270,18 @@ Systems Registry Tool (registry):
 
 ### 🔧 Tool: `db` (Status: ✅)
 ```text
-Async PostgreSQL Persistence Tool (db):
-        - PURPOSE: Production-grade relational data storage using PostgreSQL with connection pooling.
-        - PLACEHOLDERS: Use $1, $2, $3... (NOT '?' like SQLite).
+Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
         - CAPABILITIES:
             - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
             - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
             - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING: returns the first column value. Without: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes with optimized pipeline.
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
             - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
               Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
             - await health_check() → bool: Verify database connectivity.

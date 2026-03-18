@@ -4,9 +4,8 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Reading Path (minimize token usage)
 
-**To write a plugin**: Read `AI_CONTEXT.md` + the entity model in `domains/{domain}/models/`. Nothing else.
-**To create a full domain**: Use the `/new-domain` workflow.
-**For edge cases only**: Read `INSTRUCTIONS_FOR_AI.md`.
+**To write a plugin or domain**: Read `AI_CONTEXT.md` + the entity model in `domains/{domain}/models/`. Nothing else.
+**For testing, observability, or creating tools**: Read `INSTRUCTIONS_FOR_AI.md`.
 
 ## Commands
 
@@ -27,4 +26,4 @@ docker compose -f dev_infra/docker-compose.yml up -d  # Dev infra
 6. **Return format**: `{"success": bool, "data": ..., "error": ...}`.
 7. **Runner**: Always `uv run`.
 
-> Templates, anti-patterns, and detailed rules: `INSTRUCTIONS_FOR_AI.md`.
+> Advanced topics (testing, observability, creating tools): `INSTRUCTIONS_FOR_AI.md`.
