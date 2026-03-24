@@ -220,18 +220,6 @@ Logging Tool (logger):
                 Use it to attribute errors to specific plugins for health tracking.
 ```
 
-### 🔧 Tool: `state` (Status: ✅)
-```text
-In-Memory State Tool (state):
-        - PURPOSE: Share volatile global data between plugins safely.
-        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
-        - CAPABILITIES:
-            - set(key, value, namespace='default'): Store a value.
-            - get(key, default=None, namespace='default'): Retrieve a value.
-            - increment(key, amount=1, namespace='default'): Atomic increment.
-            - delete(key, namespace='default'): Delete a key.
-```
-
 ### 🔧 Tool: `registry` (Status: ✅)
 ```text
 Systems Registry Tool (registry):
@@ -268,24 +256,16 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
-### 🔧 Tool: `db` (Status: ✅)
+### 🔧 Tool: `state` (Status: ✅)
 ```text
-Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
-        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+In-Memory State Tool (state):
+        - PURPOSE: Share volatile global data between plugins safely.
+        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
         - CAPABILITIES:
-            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
-            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
-            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING (SQLite 3.35+): returns the first column value.
-              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes.
-            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
-              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
-            - await health_check() → bool: Verify database connectivity.
-        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+            - set(key, value, namespace='default'): Store a value.
+            - get(key, default=None, namespace='default'): Retrieve a value.
+            - increment(key, amount=1, namespace='default'): Atomic increment.
+            - delete(key, namespace='default'): Delete a key.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)
@@ -311,6 +291,26 @@ Scheduler Tool (scheduler):
           in on_boot_complete() after all plugins have registered.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
+```
+
+### 🔧 Tool: `db` (Status: ✅)
+```text
+Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+        - CAPABILITIES:
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
 ## 📦 Domains
