@@ -126,30 +126,32 @@ Async Event Bus Tool (event_bus):
 ### 🔧 Tool: `http` (Status: ✅)
 ```text
 HTTP Server Tool (http):
-        - PURPOSE: FastAPI-powered HTTP gateway. Supports REST, static files, and WebSockets.
+        - PURPOSE: FastAPI-powered HTTP gateway. Supports REST, static files, WebSockets and SSE.
         - HANDLER SIGNATURE: async def execute(self, data: dict, context: HttpContext) -> dict
-          'data' = flat merge of path params + query params + body.
-          'context' = HttpContext for set_status(), set_cookie(), set_header().
+          'data' = flat merge of [path params] + [query params] + [body/form fields].
+          Special keys in 'data':
+            - data["_auth"]: contains the payload from auth_validator if successful.
+            - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
         - CAPABILITIES:
             - add_endpoint(path, method, handler, tags=None, request_model=None,
-                           response_model=None, auth_validator=None):
-                Buffers a route for registration. Supports Pydantic models for validation
-                and OpenAPI schema generation.
-                auth_validator: async fn(token: str) -> dict | None
-                  → returned payload is injected into data["_auth"].
-            - mount_static(path, directory_path): Serve static files.
-            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket endpoint.
-            - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
-                Server-Sent Events endpoint (GET, text/event-stream).
-                generator: async generator callable(data: dict) → yields "data: ...
-
-" strings.
-                Client disconnect is detected automatically; generator's finally block runs on cleanup.
-        - RESPONSE CONTRACT: return {"success": bool, "data": ..., "error": ...}
-          Use context.set_status(N) to override HTTP status code (default: 200).
-          WARNING: All values in the returned dict must be JSON-serializable (plain dicts,
-          lists, str, int, etc.). Pydantic model instances are NOT serializable — always call
-          .model_dump() before nesting them: MyModel(...).model_dump()
+                           response_model=None, auth_validator=None, has_files=False):
+                - has_files: if True, enables multipart/form-data. Request model fields 
+                  become Form fields. To use a file: file = data["_files"][0]; 
+                  await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
+            - mount_static(path, directory_path): Serve static files from a directory.
+            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
+            - add_sse_endpoint(path, generator, tags=None, auth_validator=None): 
+                Server-Sent Events. generator yields formatted strings: "data: {...}\n\n".
+        - HttpContext CAPABILITIES (inside handler):
+            - context.set_status(code: int): Override HTTP status (default: 200).
+            - context.redirect(url: str, status=302): Redirect to another URL.
+            - context.set_cookie(key, value, max_age=3600, httponly=True, samesite='lax'): Set cookie.
+            - context.set_header(key, value): Add custom response header.
+            - context.set_binary_response(content: bytes, media_type: str): Return raw file.
+        - RESPONSE CONTRACT:
+            - Standard: return {"success": bool, "data": ..., "error": ...}
+            - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 
+              instances are NOT serializable — always call .model_dump() before returning.
 ```
 
 ### 🔧 Tool: `telemetry` (Status: ✅)
@@ -220,6 +222,22 @@ Logging Tool (logger):
                 Use it to attribute errors to specific plugins for health tracking.
 ```
 
+### 🔧 Tool: `state` (Status: ✅)
+```text
+In-Memory State Tool (state):
+        - PURPOSE: Share volatile global data between plugins safely.
+        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
+        - CAPABILITIES:
+            - set(key, value, namespace='default'): Store a value.
+            - get(key, default=None, namespace='default'): Retrieve a value (None if missing).
+            - has(key, namespace='default'): Returns True if key exists.
+            - keys(namespace='default'): Returns list of all keys in the namespace.
+            - get_all(namespace='default'): Returns a shallow copy of all key-value pairs.
+            - increment(key, amount=1, namespace='default'): Atomic increment. Starts at 0.
+            - delete(key, namespace='default'): Delete a key (no-op if missing).
+            - clear(namespace='default'): Remove all keys in the namespace.
+```
+
 ### 🔧 Tool: `registry` (Status: ✅)
 ```text
 Systems Registry Tool (registry):
@@ -254,18 +272,6 @@ Systems Registry Tool (registry):
             - update_tool_status(name, status, message=None): Manually override a tool's health status.
                 status: "OK" | "FAIL" | "DEAD".
                 Intended for health-check plugins that verify tools proactively.
-```
-
-### 🔧 Tool: `state` (Status: ✅)
-```text
-In-Memory State Tool (state):
-        - PURPOSE: Share volatile global data between plugins safely.
-        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
-        - CAPABILITIES:
-            - set(key, value, namespace='default'): Store a value.
-            - get(key, default=None, namespace='default'): Retrieve a value.
-            - increment(key, amount=1, namespace='default'): Atomic increment.
-            - delete(key, namespace='default'): Delete a key.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)
@@ -313,6 +319,45 @@ Async SQLite Persistence Tool (sqlite):
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
+### 🔧 Tool: `s3` (Status: ✅)
+```text
+S3 Storage Tool (s3):
+        - PURPOSE: AWS S3 object storage. Private bucket + presigned URLs pattern.
+          Compatible with LocalStack and MinIO via AWS_S3_ENDPOINT_URL.
+          External tool — setup() never raises; methods fail gracefully if unavailable.
+        - SIZE LIMITS:
+            Controlled by env vars (AWS_S3_SIZE_LIMIT_ENABLED, AWS_S3_MAX_FILE_SIZE_MB).
+            Override per call with max_size_bytes=N. Raises S3FileSizeError if exceeded.
+            If size limit is disabled globally, max_size_bytes is also ignored.
+        - All methods accept an optional bucket= param. If omitted, uses AWS_S3_DEFAULT_BUCKET.
+        - CAPABILITIES:
+            - await upload_fileobj(key, fileobj, bucket?, content_type?, metadata?) -> str:
+                Upload a file-like object (e.g. FastAPI UploadFile). Streams to S3.
+            - await upload_file(key, file_path, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
+                Upload a file from disk. Returns the key.
+            - await upload_bytes(key, data: bytes, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
+                Upload bytes from memory. Returns the key.
+            - await download_file(key, destination_path, bucket?) -> bool:
+                Download an object to a local path.
+            - await download_bytes(key, bucket?) -> bytes:
+                Download an object into memory.
+            - await get_presigned_url(key, bucket?, expires_in=3600, operation='get'|'put') -> str:
+                Generate a temporary signed URL. Use for serving private media to clients.
+            - await delete_object(key, bucket?) -> bool:
+                Delete an object.
+            - await list_objects(prefix='', bucket?, max_keys=1000) -> list[dict]:
+                List objects. Each dict: {key, size, last_modified, etag}.
+            - await object_exists(key, bucket?) -> bool:
+                Check existence without downloading.
+            - await copy_object(src_key, dst_key, src_bucket?, dst_bucket?) -> bool:
+                Copy between keys or buckets.
+            - await get_object_metadata(key, bucket?) -> dict:
+                Returns {size, content_type, last_modified, etag, metadata}.
+            - await health_check() -> bool:
+                Verify S3 connectivity.
+        - EXCEPTIONS: S3Error, S3UnavailableError, S3FileSizeError.
+```
+
 ## 📦 Domains
 
 ### `ping`
@@ -325,16 +370,16 @@ Async SQLite Persistence Tool (sqlite):
 
 ### `system`
 - **Tables**: none
-- **Endpoints**: GET /system/events, GET /system/status, GET /system/traces/flat, GET /system/traces/tree
-- **Events emitted**: event.delivery.failed
+- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree
+- **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: config, db, event_bus, http, logger, registry
-- **Plugins**: EventDeliveryMonitorPlugin, SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin, ToolHealthPlugin
+- **Plugins**: EventDeliveryMonitorPlugin, SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemMetricsPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin, ToolHealthPlugin
 
 ### `users`
-- **Tables**: user
+- **Table `user`**: RULE (This file contains ONE thing), name (str), email (EmailStr), password_hash (str | None)
 - **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
-- **Events emitted**: user.created, user.deleted, welcome.notify.sent
+- **Events emitted**: `user.created` (email, id), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger
 - **Plugins**: CreateUserPlugin, DeleteUserPlugin, GetMePlugin, GetUserByIdPlugin, ListUsersPlugin, LoginPlugin, LogoutPlugin, UpdateUserPlugin, WelcomeServicePlugin
