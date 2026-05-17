@@ -361,4 +361,65 @@ The `db` injection key is the contract. Whichever tool has `name = "db"` is the 
 Both tools share the identical public contract (`query`, `query_one`, `execute`, `execute_many`, `transaction`, `health_check`) and use `$1, $2...` placeholders. SQLite converts them internally to `?`.
 
 ---
+
+## 📦 Available Extras
+
+Pre-built tools and domains stored in `extras/` — not active by default, ready to drop in.
+
+### Extra Tools (`extras/available_tools/`)
+
+#### `postgresql` — Production PostgreSQL tool
+**File**: `extras/available_tools/postgresql/postgresql_tool.py`
+**Activates as**: `db` (swap with the SQLite tool — same public API, zero plugin changes)
+
+Uses `asyncpg` with a connection pool. Identical contract to the SQLite tool.
+
+**ENV VARS** (all optional, with defaults):
+```
+PG_HOST=localhost
+PG_PORT=5432
+PG_USER=postgres
+PG_PASSWORD=
+PG_DATABASE=postgres
+PG_MIN_POOL=1
+PG_MAX_POOL=10
+PG_CONNECT_TIMEOUT=5
+PG_COMMAND_TIMEOUT=30
+```
+
+**Migrations**: Auto-applies `.sql` files from `domains/*/migrations/` in topological order.
+Declare dependencies in the file header with `-- depends: domain/filename`.
+Tracks applied migrations in `_migrations_history` table.
+
+**Exceptions**: `DatabaseError`, `DatabaseConnectionError`.
+
+> **CI**: Add a `services.postgres` block to the GitHub Actions workflow when using this tool. See `.github/workflows/ci.yml` for the reference configuration.
+
+---
+
+#### `chaos` — Chaos engineering tool
+**File**: `extras/available_tools/chaos/chaos_tool.py`
+**Activates as**: `chaos`
+**Purpose**: Intentionally fails during `setup()` to verify the Kernel survives tool boot failures gracefully.
+
+Enable with `CHAOS_ENABLED=true`. Silent no-op by default — safe to register in any environment.
+
+No capabilities exposed to plugins. Test fixture only.
+
+---
+
+### Extra Domains (`extras/available_domains/`)
+
+#### `chaos` — Kernel resilience test suite
+**Files**: `extras/available_domains/chaos/plugins/`
+**Purpose**: Exercises edge cases in the Kernel and HTTP server. Copy the folder to `domains/` to activate.
+
+| Plugin | What it tests |
+|--------|---------------|
+| `BlockingBootPlugin` | Heavy sync task in `on_boot()` — verifies Kernel's `asyncio.to_thread` guard does not freeze the system |
+| `FailingPlugin` | Crashes on `GET /chaos/fail` — verifies HTTP server and other plugins stay online |
+| `StressPlugin` | Exposes `/stress/sync` and `/stress/async` — demonstrates hybrid sync/async architecture under load |
+
+---
+
 *`AI_CONTEXT.md` is auto-generated on every boot by the `context_manager` tool. It contains the live inventory of tools and domain models.*
