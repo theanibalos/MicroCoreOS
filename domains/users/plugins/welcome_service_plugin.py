@@ -3,8 +3,7 @@ from core.base_plugin import BasePlugin
 
 class WelcomeServicePlugin(BasePlugin):
     """
-    Event-driven plugin: listens for 'user.created' and performs side-effects.
-    Demonstrates the pure event subscriber pattern — no HTTP endpoint needed.
+    Listens for 'user.created' events and performs side-effects like sending welcome emails.
     """
 
     def __init__(self, event_bus, logger):
@@ -15,11 +14,11 @@ class WelcomeServicePlugin(BasePlugin):
         await self.bus.subscribe("user.created", self.on_user_created)
         self.logger.info("[WelcomeService] Listening for new users...")
 
-    async def on_user_created(self, data: dict) -> None:
+    async def on_user_created(self, event) -> None:
         """
-        Triggered by EventBus when 'user.created' is published.
-        The bus calls this with a single argument: data dict.
+        Processes a new user creation event.
         """
+        data = event.payload
         email = data.get("email")
         user_id = data.get("id")
         self.logger.info(f"[WelcomeService] Sending welcome email to {email} (User ID: {user_id})")

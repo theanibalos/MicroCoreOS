@@ -101,9 +101,10 @@ async def test_boot_success(kernel, monkeypatch):
     assert kernel.container.registry.get_tool_status("dummy") == "OK"
     
     # Verificamos plugin
-    assert "DummyPlugin" in kernel.plugins
-    assert kernel.plugins["DummyPlugin"].booted is True
-    assert kernel.container.registry.get_system_dump()["plugins"]["DummyPlugin"]["status"] == "READY"
+    p_name = "dummy_domain.DummyPlugin"
+    assert p_name in kernel.plugins
+    assert kernel.plugins[p_name].booted is True
+    assert kernel.container.registry.get_system_dump()["plugins"][p_name]["status"] == "READY"
 
 async def test_boot_missing_dependencies(kernel, monkeypatch):
     """Prueba que si falta un tool requerido por un plugin, este último se marca DEAD y no bloquea el boot."""
@@ -120,10 +121,11 @@ async def test_boot_missing_dependencies(kernel, monkeypatch):
     
     await kernel.boot()
     
-    assert "DummyPlugin" not in kernel.plugins
-    status = kernel.container.registry.get_system_dump()["plugins"]["DummyPlugin"]["status"]
+    p_name = "dummy_domain.DummyPlugin"
+    assert p_name not in kernel.plugins
+    status = kernel.container.registry.get_system_dump()["plugins"][p_name]["status"]
     assert status == "DEAD"
     
     # Debería haber un error registrado en el registry
     dump = kernel.container.registry.get_system_dump()
-    assert "Missing tools: dummy" in dump["plugins"]["DummyPlugin"]["error"]
+    assert "Missing tools: dummy" in dump["plugins"][p_name]["error"]

@@ -62,8 +62,9 @@ class CreateProductPlugin(BasePlugin):
             await self.bus.publish("product.created", {"id": product_id})
             return {"success": True, "data": {"id": product_id, "name": req.name}}
         except Exception as e:
-            self.logger.error(f"Failed: {e}")
-            return {"success": False, "error": str(e)}
+            # Safe Error Reporting: log technically, respond safely.
+            self.logger.error(f"Failed to create product: {e}")
+            return {"success": False, "error": "Database operation failed"}
 ```
 
 Drop this file in `domains/products/plugins/`, restart, and it works. No `main.py` edits, no route registration, no wiring.
@@ -72,7 +73,7 @@ Drop this file in `domains/products/plugins/`, restart, and it works. No `main.p
 
 ## What Makes It Different
 
-### ~340-line kernel. Pure stdlib. No external dependencies in core.
+### ~378-line kernel. Pure stdlib. No external dependencies in core.
 
 The entire orchestration engine — DI, plugin discovery, tool lifecycle, fault tolerance — uses only Python's standard library.
 
@@ -100,9 +101,9 @@ This pattern works for any infrastructure: swap the event bus backend, the HTTP 
 
 Additional tools (PostgreSQL, chaos testing) are available in extras/available_tools/. To activate, move them into tools/.
 
-### Fault tolerance is automatic.
+### Honest Kernel & Smart Infrastructure.
 
-Every tool call passes through `ToolProxy`, which catches exceptions, marks failed tools as `DEAD` in the registry, auto-recovers when a subsequent call succeeds, and records timing metrics. If your logging service goes down, your payment processing keeps running.
+The Kernel is "logic-free." `ToolProxy` observes and reports health but **never retries automatically**, ensuring data integrity. Resilience is handled where the knowledge is: in the Tools (e.g., SQLite lock retries) or the Plugins (explicit logic).
 
 ---
 
@@ -120,17 +121,17 @@ Every tool call passes through `ToolProxy`, which catches exceptions, marks fail
 
 ```
 MicroCoreOS/
-├── core/                    # ~340 lines total, zero external deps
+├── core/                    # ~378 lines total, zero external deps
 │   ├── kernel.py           # Discovery, DI, lifecycle
-│   ├── container.py        # DI container + ToolProxy
-│   ├── registry.py         # Thread-safe runtime state
-│   ├── context.py          # ContextVars for causality
-│   ├── base_plugin.py      # Plugin contract (15 lines)
-│   └── base_tool.py        # Tool contract (23 lines)
+│   ├── container.py        # DI container + ToolProxy (Health/Metrics)
+│   ├── registry.py         # Thread-safe system state
+│   ├── context.py          # causality & Identity context
+│   ├── base_plugin.py      # Plugin contract (11 lines)
+│   └── base_tool.py        # Tool contract (24 lines)
 ├── tools/                   # Stateless, swappable infrastructure
 │   ├── http_server/        # FastAPI (REST + WebSocket + SSE)
-│   ├── sqlite/             # Default DB — zero config
-│   ├── event_bus/          # Pub/Sub + async RPC + causal tracing
+│   ├── sqlite/             # Relational DB — isolation + smart retries
+│   ├── event_bus/          # TTL + Retries + DLQ + Causal tracing
 │   ├── auth/               # JWT + bcrypt
 │   ├── scheduler/          # Cron + one-shot background jobs
 │   ├── telemetry/          # OpenTelemetry (optional)
@@ -150,11 +151,11 @@ MicroCoreOS/
 | --------------------------------------- | ------------------------------------------------------------------------------ |
 | **AI needs too many files for context** | 2 files: `AI_CONTEXT.md` + the plugin.                                         |
 | **Coupling between modules**            | Domains communicate via EventBus only, never direct imports.                   |
-| **Architecture erodes under pressure**  | Conventions are explicit and easy to spot in review. CI linter on the roadmap. |
+| **Architecture erodes under pressure**  | Conventions are explicit and enforced by GEMINI.md.                            |
 | **Merge conflicts on shared files**     | Each feature is its own file. No shared business logic files.                  |
 | **One dependency failure cascades**     | ToolProxy contains failures per-tool automatically.                            |
 | **Changing databases takes weeks**      | Swap the tool file. Same API, same placeholders.                               |
-| **Background errors disappear**         | EventBus watchdog + causality engine.                                          |
+| **Background errors disappear**         | EventBus watchdog + DLQ + causality engine.                                    |
 | **Slow developer onboarding**           | Read `AI_CONTEXT.md` + one plugin.                                             |
 | **Sync/async mixing bugs**              | Kernel auto-detects `def` vs `async def`, offloads sync to thread pool.        |
 
@@ -167,15 +168,16 @@ MicroCoreOS/
 | Tool        | Description                                                    |
 | ----------- | -------------------------------------------------------------- |
 | `http`      | FastAPI gateway — REST, WebSocket, SSE, auto-generated OpenAPI |
-| `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap        |
-| `event_bus` | Pub/sub + async RPC + causal tracing + failure monitoring      |
-| `auth`      | JWT lifecycle + bcrypt password hashing                        |
-| `scheduler` | Cron jobs + one-shot tasks (APScheduler)                       |
-| `logger`    | Structured logging with sink pattern                           |
-| `state`     | Thread-safe in-memory key-value store                          |
-| `registry`  | Runtime introspection + metrics + health status                |
-| `telemetry` | OpenTelemetry — auto-instruments all tool calls                |
-| `config`    | Environment variable validation for plugins                    |
+| `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap           |
+| `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing              |
+| `auth`      | JWT lifecycle + bcrypt password hashing                           |
+| `scheduler` | Cron jobs + one-shot tasks (APScheduler)                          |
+| `logger`    | Structured logging with sink pattern                              |
+| `state`     | Thread-safe in-memory key-value store                             |
+| `registry`  | Runtime introspection + metrics + health status                   |
+| `telemetry` | OpenTelemetry — auto-instruments all tool calls                   |
+| `config`    | Environment variable validation for plugins                       |
+| `s3`        | AWS S3 object storage — private bucket + presigned URLs           |
 
 ---
 

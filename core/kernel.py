@@ -107,14 +107,15 @@ class Kernel:
         # 2. Boot Plugins
         boot_tasks = []
         for plugin_cls, domain in self._load_modules_from_dir("domains", BasePlugin):
-            p_name = plugin_cls.__name__
+            class_name = plugin_cls.__name__
+            p_name = f"{domain}.{class_name}" if domain else class_name
             try:
                 deps, missing = self._resolve_plugin_dependencies(plugin_cls)
                 
                 self.container.registry.register_plugin(p_name, {
                     "dependencies": list(deps.keys()),
                     "domain": domain,
-                    "class": p_name
+                    "class": class_name
                 })
 
                 if missing:

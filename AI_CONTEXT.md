@@ -50,8 +50,9 @@ class CreateThingPlugin(BasePlugin):
             await self.bus.publish("thing.created", {"id": thing_id})
             return {"success": True, "data": {"id": thing_id, "name": req.name}}
         except Exception as e:
-            self.logger.error(f"Failed: {e}")
-            return {"success": False, "error": str(e)}
+            # Technical error logged server-side, safe message for client
+            self.logger.error(f"Failed to create thing: {e}")
+            return {"success": False, "error": "Database error"}
 ```
 
 ### New Domain Structure
@@ -103,24 +104,38 @@ Configuration Tool (config):
 
 ### 🔧 Tool: `event_bus` (Status: ✅)
 ```text
-Async Event Bus Tool (event_bus):
-        - PURPOSE: Non-blocking communication between plugins. Pub/Sub and Async RPC.
-        - SUBSCRIBER SIGNATURE: async def handler(self, data: dict)
-        - CAPABILITIES:
-            - await publish(event_name, data): Fire-and-forget broadcast.
-            - await subscribe(event_name, callback): Register a subscriber.
-                Use event_name='*' for wildcard (observability only, no RPC).
-            - await unsubscribe(event_name, callback): Remove a subscriber.
-            - await request(event_name, data, timeout=5): Async RPC.
-                The subscriber must return a non-None dict.
-            - get_trace_history() -> list: Last 500 event records with causality data.
-            - get_subscribers() -> dict: Current subscriber map {event_name: [subscriber_names]}.
-            - add_listener(callback): Sink pattern — called with full trace record on every event.
-                Signature: callback(record: dict) — record has: id, event, emitter, subscribers, payload_keys, timestamp.
-                Use for real-time observability (e.g. WebSocket broadcast). Non-blocking.
-            - add_failure_listener(callback): Sink called when a subscriber raises during dispatch.
-                Signature: callback(record: dict) — record has: event, event_id, subscriber, error.
-                Use to implement dead-letter alerting. Non-blocking — keep it fast.
+Universal Event Bus (event_bus):
+        - publish(event_name, data, **kwargs): Broadcast an event.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5): Listen for events.
+        - request(event_name, data, timeout=5): Async RPC (returns dict).
+        - unsubscribe(event_name, callback): Stop listening.
+        - get_trace_history() -> List[TraceNode]: Last 500 event records.
+        - get_subscribers() -> dict: Current subscriber map.
+        - add_listener(callback): Sink for all events (record: dict).
+        - add_failure_listener(callback): Sink for errors (record: dict).
+        
+        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
+        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
+        
+        RETRIES & IDEMPOTENCY:
+        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
+        - Ensure handlers are idempotent as they may run multiple times.
+
+        DEAD-LETTER QUEUE (DLQ):
+        - Final failures are published to '_dlq.<original_event>'.
+        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
+        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
+        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
+
+        UNIVERSAL CAPABILITIES (kwargs):
+        - key: String. For strict ordering (Kafka/SQS).
+        - priority: Integer (1-10). Importance (RabbitMQ).
+        - delay: Integer (seconds). Delivery schedule.
+        - ttl: Float (seconds). Message expiration hint.
+        - correlation_id: String. Cross-reference for RPC.
+
+        RESILIENCE:
+        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
@@ -132,6 +147,9 @@ HTTP Server Tool (http):
           Special keys in 'data':
             - data["_auth"]: contains the payload from auth_validator if successful.
             - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
+        - SECURITY DEFAULTS:
+            - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
+            - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
         - CAPABILITIES:
             - add_endpoint(path, method, handler, tags=None, request_model=None,
                            response_model=None, auth_validator=None, has_files=False):
@@ -145,7 +163,7 @@ HTTP Server Tool (http):
         - HttpContext CAPABILITIES (inside handler):
             - context.set_status(code: int): Override HTTP status (default: 200).
             - context.redirect(url: str, status=302): Redirect to another URL.
-            - context.set_cookie(key, value, max_age=3600, httponly=True, samesite='lax'): Set cookie.
+            - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
         - RESPONSE CONTRACT:
@@ -205,7 +223,7 @@ Context Manager Tool (context_manager):
         - CAPABILITIES:
             - Reads the system registry.
             - Exports active tools, health status, and domain models to AI_CONTEXT.md.
-            - Generates per-domain AI_CONTEXT.md files inside each domain folder.
+            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅)
@@ -232,7 +250,7 @@ In-Memory State Tool (state):
             - get(key, default=None, namespace='default'): Retrieve a value (None if missing).
             - has(key, namespace='default'): Returns True if key exists.
             - keys(namespace='default'): Returns list of all keys in the namespace.
-            - get_all(namespace='default'): Returns a shallow copy of all key-value pairs.
+            - get_all(namespace='default'): Returns a deep copy of all key-value pairs (thread-safe).
             - increment(key, amount=1, namespace='default'): Atomic increment. Starts at 0.
             - delete(key, namespace='default'): Delete a key (no-op if missing).
             - clear(namespace='default'): Remove all keys in the namespace.
@@ -274,6 +292,31 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
+### 🔧 Tool: `db` (Status: ✅)
+```text
+Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+        - CAPABILITIES:
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
+          topological sort (alphabetical by default). To declare that one migration must
+          run before another, add as the first comment line:
+            "-- depends: other_domain/001_file.sql"
+          Works for same-domain or cross-domain dependencies. .sql extension is optional.
+```
+
 ### 🔧 Tool: `scheduler` (Status: ✅)
 ```text
 Scheduler Tool (scheduler):
@@ -297,26 +340,6 @@ Scheduler Tool (scheduler):
           in on_boot_complete() after all plugins have registered.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
-```
-
-### 🔧 Tool: `db` (Status: ✅)
-```text
-Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
-        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
-        - CAPABILITIES:
-            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
-            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
-            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING (SQLite 3.35+): returns the first column value.
-              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes.
-            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
-              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
-            - await health_check() → bool: Verify database connectivity.
-        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
 ```
 
 ### 🔧 Tool: `s3` (Status: ✅)
@@ -366,21 +389,21 @@ S3 Storage Tool (s3):
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: http, logger
-- **Plugins**: PingPlugin
+- **Plugins**: ping.PingPlugin
 
 ### `system`
 - **Tables**: none
-- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree
-- **Events emitted**: none
+- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
+- **Events emitted**: `event.delivery.failed` ()
 - **Events consumed**: none
-- **Dependencies**: config, db, event_bus, http, logger, registry
-- **Plugins**: EventDeliveryMonitorPlugin, SystemEventsPlugin, SystemEventsStreamPlugin, SystemLogsStreamPlugin, SystemMetricsPlugin, SystemStatusPlugin, SystemTracesPlugin, SystemTracesStreamPlugin, ToolHealthPlugin
+- **Dependencies**: config, container, event_bus, http, logger, registry
+- **Plugins**: system.ArchitectureLinterPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
-- **Table `user`**: RULE (This file contains ONE thing), name (str), email (EmailStr), password_hash (str | None)
+- **Table `user`**: name (str), email (EmailStr), password_hash (any)
 - **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
 - **Events emitted**: `user.created` (email, id), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger
-- **Plugins**: CreateUserPlugin, DeleteUserPlugin, GetMePlugin, GetUserByIdPlugin, ListUsersPlugin, LoginPlugin, LogoutPlugin, UpdateUserPlugin, WelcomeServicePlugin
+- **Plugins**: users.CreateUserPlugin, users.DeleteUserPlugin, users.GetMePlugin, users.GetUserByIdPlugin, users.ListUsersPlugin, users.LoginPlugin, users.LogoutPlugin, users.UpdateUserPlugin, users.WelcomeServicePlugin
 

@@ -22,4 +22,5 @@ Pre-built tools and domains not active by default. See the **Available Extras** 
 |-------|------|---------|
 | `extras/available_tools/postgresql/` | Tool | Production PostgreSQL — drop-in swap for the default SQLite `db` tool |
 | `extras/available_tools/chaos/` | Tool | Chaos engineering — intentional boot failure to test Kernel fault tolerance |
+| `tools/s3/` | Tool | AWS S3 storage — private bucket + presigned URLs pattern |
 | `extras/available_domains/chaos/` | Domain | Kernel resilience plugins — blocking boot, crashing endpoint, stress tests |

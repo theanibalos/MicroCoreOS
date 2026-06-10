@@ -188,10 +188,17 @@ class HttpContext:
         max_age: int = 3600,
         httponly: bool = True,
         samesite: str = "lax",
-        secure: bool = False,
+        secure: bool = True,
         path: str = "/",
     ) -> None:
-        """Set a cookie on the HTTP response."""
+        """
+        Set a cookie on the HTTP response.
+        
+        Defaults:
+            httponly=True: Prevents JavaScript access (XSS protection).
+            samesite="lax": Prevents most CSRF attacks.
+            secure=True: Cookie only sent over HTTPS. Set to False for local HTTP development.
+        """
         self._cookies.append({
             "key": key,
             "value": value,
@@ -268,6 +275,18 @@ class HttpServerTool(BaseTool):
     # ── Lifecycle ────────────────────────────────────────────────────────────────
 
     async def setup(self) -> None:
+        host = os.getenv("HTTP_HOST", "127.0.0.1")
+        cors_origins_raw = os.getenv("HTTP_CORS_ORIGINS", "*")
+        
+        if host == "0.0.0.0" and cors_origins_raw == "*":
+            print("[HttpServer] ⚠️  SECURITY WARNING: Server is exposed to 0.0.0.0 with CORS '*'. "
+                  "This is insecure for production.")
+
+        # Fail-fast for weak auth key if auth is present
+        secret = os.getenv("AUTH_SECRET_KEY", "")
+        if secret and len(secret) < 32:
+            print("[HttpServer] ⚠️  SECURITY WARNING: AUTH_SECRET_KEY is too short (< 32 chars).")
+
         print(f"[HttpServer] Configuring FastAPI on port {self._port}...")
 
         @self.app.exception_handler(RequestValidationError)
@@ -345,6 +364,9 @@ class HttpServerTool(BaseTool):
           Special keys in 'data':
             - data["_auth"]: contains the payload from auth_validator if successful.
             - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
+        - SECURITY DEFAULTS:
+            - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
+            - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
         - CAPABILITIES:
             - add_endpoint(path, method, handler, tags=None, request_model=None,
                            response_model=None, auth_validator=None, has_files=False):
@@ -358,7 +380,7 @@ class HttpServerTool(BaseTool):
         - HttpContext CAPABILITIES (inside handler):
             - context.set_status(code: int): Override HTTP status (default: 200).
             - context.redirect(url: str, status=302): Redirect to another URL.
-            - context.set_cookie(key, value, max_age=3600, httponly=True, samesite='lax'): Set cookie.
+            - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
         - RESPONSE CONTRACT:
@@ -619,8 +641,11 @@ class HttpServerTool(BaseTool):
         # 1. Query parameters always come from the request object
         data.update(request.query_params)
 
-        # 2. Path & Body/Form data
-        # If body_data is provided (from FastAPI DI), it contains path params and/or body/form fields
+        # 2. Path parameters always included
+        data.update(request.path_params)
+
+        # 3. Body/Form data
+        # If body_data is provided (from FastAPI DI), it contains body/form fields
         if body_data is not None:
             if hasattr(body_data, "model_dump"):
                 data.update(body_data.model_dump())
@@ -630,8 +655,6 @@ class HttpServerTool(BaseTool):
                 data.update(body_data)
         else:
             # Fallback: manual extraction if no DI model was used
-            data.update(request.path_params)
-            
             content_type = request.headers.get("Content-Type", "")
             if "application/json" in content_type:
                 try:
@@ -741,9 +764,26 @@ class HttpServerTool(BaseTool):
     def _extract_bearer_token(self, request: Request) -> Optional[str]:
         """
         Extracts the Bearer token from the request.
-        Priority: Authorization header > access_token cookie.
+        Priority: 
+          1. Authorization header (Bearer) -> Preferred for Apps/CLI, immune to CSRF.
+          2. access_token cookie -> Subject to CSRF, requires X-Requested-With guard.
         """
+        # 1. Bearer Token (Highest security, default for non-browser clients)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             return auth_header[7:]
-        return request.cookies.get("access_token")
+
+        # 2. Cookie Auth (Web clients)
+        token = request.cookies.get("access_token")
+        if token:
+            # CSRF Guard: If it's a mutation method (POST/PUT/DELETE) and we are 
+            # using cookies, we MUST verify the request was initiated by our own 
+            # JavaScript. An attacker-controlled form cannot add custom headers.
+            if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+                if not request.headers.get("X-Requested-With"):
+                    print(f"[HttpServer] 🛡️ CSRF block: Mutation {request.method} "
+                          f"via cookie missing X-Requested-With header.")
+                    return None
+            return token
+
+        return None

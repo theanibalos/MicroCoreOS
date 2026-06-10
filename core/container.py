@@ -11,17 +11,16 @@ class ToolProxy:
     """
     Transparent proxy that wraps a Tool.
     Intercepts method calls to:
-    - Automatically retry failed calls (default: 2 retries).
-    - Report DEAD status to the Registry on unhandled exceptions after retries fail.
+    - Report DEAD status to the Registry on any unhandled exception.
+    - Automatically restore OK status on the first successful call after a failure.
     - Measure and emit call duration to a metrics sink.
     - Create OpenTelemetry spans when a span factory is registered.
     """
-    def __init__(self, tool, registry: Registry, emit_metric=None, make_span=None, retries: int = 2):
+    def __init__(self, tool, registry: Registry, emit_metric=None, make_span=None):
         self._tool = tool
         self._registry = registry
         self._emit_metric = emit_metric
         self._make_span = make_span  # callable(tool, method) -> context manager
-        self._retries = retries
         self._wrapper_cache = {}
 
     def __getattr__(self, name):
@@ -37,81 +36,62 @@ class ToolProxy:
         make_span = self._make_span
         registry = self._registry
         tool_name = self._tool.name
-        max_retries = self._retries
 
         if inspect.iscoroutinefunction(attr):
             async def wrapper(*args, **kwargs):
-                last_exception = None
-                for attempt in range(max_retries + 1):
-                    start = time.perf_counter()
-                    span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
-                    with span_cm:
-                        try:
-                            result = await attr(*args, **kwargs)
-                            if registry.get_tool_status(tool_name) == "DEAD":
-                                registry.update_tool_status(tool_name, "OK", "Recovered after retry")
-                            if emit:
-                                emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
-                            return result
-                        except Exception as e:
-                            last_exception = e
-                            if attempt < max_retries:
-                                # Small backoff could be added here
-                                await asyncio.sleep(0.05 * (attempt + 1))
-                                continue
-                            
-                            if emit:
-                                emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
-                            registry.update_tool_status(tool_name, "DEAD", str(e))
-                            raise last_exception
-        else:
-            def wrapper(*args, **kwargs):
-                last_exception = None
-                for attempt in range(max_retries + 1):
-                    start = time.perf_counter()
+                start = time.perf_counter()
+                span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
+                with span_cm:
                     try:
-                        result = attr(*args, **kwargs)
-                        
-                        # Handle sync function returning an awaitable (common in some patterns)
-                        if inspect.isawaitable(result):
-                            async def _monitored():
-                                inner_last_exc = None
-                                # For awaitables returned by sync funcs, we'd need another loop 
-                                # but usually these are already wrapped or thin. 
-                                # Keeping original behavior for the awaitable part for simplicity,
-                                # but applying the status logic.
-                                inner_start = time.perf_counter()
-                                span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
-                                with span_cm:
-                                    try:
-                                        r = await result
-                                        if registry.get_tool_status(tool_name) == "DEAD":
-                                            registry.update_tool_status(tool_name, "OK", "Recovered")
-                                        if emit:
-                                            emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, True)
-                                        return r
-                                    except Exception as e:
-                                        if emit:
-                                            emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, False)
-                                        registry.update_tool_status(tool_name, "DEAD", str(e))
-                                        raise
-                            return _monitored()
-
+                        result = await attr(*args, **kwargs)
+                        # Self-healing: if it was DEAD, mark as OK now
                         if registry.get_tool_status(tool_name) == "DEAD":
                             registry.update_tool_status(tool_name, "OK", "Recovered")
                         if emit:
                             emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                         return result
                     except Exception as e:
-                        last_exception = e
-                        if attempt < max_retries:
-                            time.sleep(0.05 * (attempt + 1))
-                            continue
-                        
                         if emit:
                             emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                        # Mark as DEAD on first failure
                         registry.update_tool_status(tool_name, "DEAD", str(e))
-                        raise last_exception
+                        raise e
+        else:
+            def wrapper(*args, **kwargs):
+                start = time.perf_counter()
+                try:
+                    result = attr(*args, **kwargs)
+                    
+                    # Handle sync function returning an awaitable
+                    if inspect.isawaitable(result):
+                        async def _monitored():
+                            inner_start = time.perf_counter()
+                            span_cm = make_span(tool_name, name) if make_span else contextlib.nullcontext()
+                            with span_cm:
+                                try:
+                                    r = await result
+                                    if registry.get_tool_status(tool_name) == "DEAD":
+                                        registry.update_tool_status(tool_name, "OK", "Recovered")
+                                    if emit:
+                                        emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, True)
+                                    return r
+                                except Exception as e:
+                                    if emit:
+                                        emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, False)
+                                    registry.update_tool_status(tool_name, "DEAD", str(e))
+                                    raise
+                        return _monitored()
+
+                    if registry.get_tool_status(tool_name) == "DEAD":
+                        registry.update_tool_status(tool_name, "OK", "Recovered")
+                    if emit:
+                        emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
+                    return result
+                except Exception as e:
+                    if emit:
+                        emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                    registry.update_tool_status(tool_name, "DEAD", str(e))
+                    raise e
 
         self._wrapper_cache[name] = wrapper
         return wrapper

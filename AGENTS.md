@@ -72,8 +72,8 @@ class CreateThingPlugin(BasePlugin):
             )
             return {"success": True, "data": {"id": new_id, "name": req.name}}
         except Exception as e:
-            self.logger.error(f"Failed: {e}")
-            return {"success": False, "error": str(e)}
+            self.logger.error(f"Failed to create thing: {e}")
+            return {"success": False, "error": "Database error"}
 ```
 
 ## Anti-Patterns (read before writing any code)

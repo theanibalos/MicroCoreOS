@@ -24,6 +24,8 @@ docker compose -f dev_infra/docker-compose.yml up -d  # Dev infra
 4. **Entity in models/ = DB mirror only** — Request AND response schemas go inline in the plugin.
 5. **No cross-domain imports** — Use `event_bus` for communication.
 6. **Return format**: `{"success": bool, "data": ..., "error": ...}`.
-7. **Runner**: Always `uv run`.
+7. **Safe Errors**: NEVER return `str(e)` to clients. Use generic messages.
+8. **No Magic**: Kernel (ToolProxy) NEVER retries tool calls automatically.
+9. **Runner**: Always `uv run`.
 
 > Advanced topics (testing, observability, creating tools): `INSTRUCTIONS_FOR_AI.md`.

@@ -128,7 +128,7 @@ uv run main.py
 
 Check that:
 - Migration ran successfully (look for `[Migration] ✅` in logs)
-- Endpoints appear in the Swagger UI at `http://localhost:8000/docs`
+- Endpoints appear in the Swagger UI at `http://localhost:5000/docs`
 - `AI_CONTEXT.md` was regenerated with the new domain
 
 ### 6. Generate tests

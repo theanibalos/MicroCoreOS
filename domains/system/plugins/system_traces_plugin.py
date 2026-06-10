@@ -3,8 +3,6 @@ from pydantic import BaseModel
 from core.base_plugin import BasePlugin
 
 
-# ── Modelos de Datos ─────────────────────────────────────────────────────────
-
 class TraceNode(BaseModel):
     id: str
     parent_id: Optional[str] = None
@@ -13,6 +11,9 @@ class TraceNode(BaseModel):
     subscribers: list[str]
     payload_keys: list[str]
     timestamp: float
+    key: Optional[str] = None
+    priority: Optional[int] = None
+    delay: Optional[int] = None
     children: list["TraceNode"] = []
 
 TraceNode.model_rebuild()
@@ -22,7 +23,6 @@ class SystemTracesTreeResponse(BaseModel):
     data: Optional[list[TraceNode]] = None
     error: Optional[str] = None
 
-# Modelo para la vista plana (sin la lista de children)
 class TraceFlatNode(BaseModel):
     id: str
     parent_id: Optional[str] = None
@@ -31,6 +31,9 @@ class TraceFlatNode(BaseModel):
     subscribers: list[str]
     payload_keys: list[str]
     timestamp: float
+    key: Optional[str] = None
+    priority: Optional[int] = None
+    delay: Optional[int] = None
 
 class SystemTracesFlatResponse(BaseModel):
     success: bool
@@ -38,13 +41,9 @@ class SystemTracesFlatResponse(BaseModel):
     error: Optional[str] = None
 
 
-# ── Plugin ───────────────────────────────────────────────────────────────────
-
 class SystemTracesPlugin(BasePlugin):
     """
-    Exposes the event bus trace log in two formats:
-    1. Flat list (chronological) for fast logging UI.
-    2. Causal tree (hierarchical) for debugging specific flows.
+    Exposes the event bus trace log in hierarchical and flat formats.
     """
 
     def __init__(self, http, event_bus):
@@ -52,14 +51,11 @@ class SystemTracesPlugin(BasePlugin):
         self.event_bus = event_bus
 
     async def on_boot(self):
-        # Tree endpoint
         self.http.add_endpoint(
             "/system/traces/tree", "GET", self.get_tree,
             tags=["System"],
             response_model=SystemTracesTreeResponse
         )
-        
-        # Flat list endpoint
         self.http.add_endpoint(
             "/system/traces/flat", "GET", self.get_flat,
             tags=["System"],
@@ -67,35 +63,25 @@ class SystemTracesPlugin(BasePlugin):
         )
 
     def _get_clean_history(self):
-        """Returns trace history with internal RPC reply channels filtered out."""
         history = self.event_bus.get_trace_history()
-        return [r for r in history if not r["event"].startswith("_reply.")]
+        return [r for r in history if not r.envelope.event.startswith("_reply.")]
 
     async def get_flat(self, data: dict, context=None):
-        """Returns records in reverse chronological order (newest first)."""
         try:
             records = self._get_clean_history()
-            # Sort by timestamp descending
-            flat_list = sorted(records, key=lambda x: x["timestamp"], reverse=True)
+            flat_list = [self._to_flat_node(r) for r in records]
+            flat_list.sort(key=lambda x: x["timestamp"], reverse=True)
             return {"success": True, "data": flat_list}
         except Exception as e:
             print(f"[SystemTraces] Error: {e}")
-            return {"success": False, "error": "Internal error"}
+            return {"success": False, "error": str(e)}
 
     async def get_tree(self, data: dict, context=None):
-        """Returns records nested as a parent → child causal tree."""
         try:
             records = self._get_clean_history()
-
             nodes = {
-                r["id"]: {
-                    "id": r["id"],
-                    "parent_id": r.get("parent_id"),
-                    "event": r["event"],
-                    "emitter": r["emitter"],
-                    "subscribers": r["subscribers"],
-                    "payload_keys": r["payload_keys"],
-                    "timestamp": r["timestamp"],
+                r.envelope.id: {
+                    **self._to_flat_node(r),
                     "children": []
                 }
                 for r in records
@@ -103,8 +89,8 @@ class SystemTracesPlugin(BasePlugin):
 
             roots = []
             for r in records:
-                node_dict = nodes[r["id"]]
-                parent_id = r.get("parent_id")
+                node_dict = nodes[r.envelope.id]
+                parent_id = r.envelope.parent_id
 
                 if parent_id and parent_id in nodes:
                     nodes[parent_id]["children"].append(node_dict)
@@ -112,8 +98,22 @@ class SystemTracesPlugin(BasePlugin):
                     roots.append(node_dict)
 
             roots.sort(key=lambda x: x["timestamp"], reverse=True)
-
             return {"success": True, "data": roots}
         except Exception as e:
             print(f"[SystemTraces] Error: {e}")
-            return {"success": False, "error": "Internal error"}
+            return {"success": False, "error": str(e)}
+
+    def _to_flat_node(self, r) -> dict:
+        env = r.envelope
+        return {
+            "id": env.id,
+            "parent_id": env.parent_id,
+            "event": env.event,
+            "emitter": env.emitter,
+            "subscribers": r.subscribers,
+            "payload_keys": list(env.payload.keys()),
+            "timestamp": float(env.timestamp.timestamp()),
+            "key": env.key,
+            "priority": env.priority,
+            "delay": env.delay
+        }

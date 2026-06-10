@@ -31,7 +31,7 @@ class StateTool(BaseTool):
             - get(key, default=None, namespace='default'): Retrieve a value (None if missing).
             - has(key, namespace='default'): Returns True if key exists.
             - keys(namespace='default'): Returns list of all keys in the namespace.
-            - get_all(namespace='default'): Returns a shallow copy of all key-value pairs.
+            - get_all(namespace='default'): Returns a deep copy of all key-value pairs (thread-safe).
             - increment(key, amount=1, namespace='default'): Atomic increment. Starts at 0.
             - delete(key, namespace='default'): Delete a key (no-op if missing).
             - clear(namespace='default'): Remove all keys in the namespace.

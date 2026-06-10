@@ -14,16 +14,17 @@ The Kernel auto-discovers and boots everything. `main.py` never changes — it o
 ### Boot sequence
 
 ```
-1. Tools registered manually in main.py → Container.register()
-2. Kernel.boot()
-   a. setup() called on each tool (connections, env vars)
-   b. Plugins discovered: domains/*/plugins/*.py
-   c. Plugin dependencies resolved by __init__ parameter names
-   d. on_boot() called on each plugin (register routes, subscribe to events)
-   e. on_boot_complete(container) called on each tool (all tools ready)
-   f. on_boot_complete() called on each plugin (post-boot tasks)
-3. Server is live
+1. Kernel.boot()
+   a. Tools auto-discovered: tools/**/*.py (any BaseTool subclass)
+   b. setup() called on all tools in parallel via asyncio.gather()
+   c. Plugins auto-discovered: domains/*/plugins/*.py
+   d. Plugin dependencies resolved by __init__ parameter names
+   e. on_boot() called on each plugin (register routes, subscribe to events)
+   f. on_boot_complete(container) called on each tool (all plugins ready)
+2. Server is live
 ```
+
+`main.py` only instantiates `Kernel()` and calls `await app.boot()`. It never registers tools manually — everything is auto-discovered by the Kernel.
 
 ### Plugin dependency resolution
 
@@ -94,11 +95,11 @@ The Container holds all tool instances wrapped in `ToolProxy`. It is the single 
 
 Every tool method call goes through `ToolProxy`, which adds three things automatically:
 
-1. **Timing**: `time.perf_counter()` measures `duration_ms` with microsecond precision
-2. **Status tracking**: on exception, the tool is marked `DEAD` in the Registry. On subsequent success, marked `OK` with message "Recovered from transient failure"
-3. **OTel span**: if a span factory is registered (TelemetryTool does this), a span wraps the call
+1. **Timing**: `time.perf_counter()` measures `duration_ms` with microsecond precision.
+2. **Status tracking**: on failure, the tool is marked `DEAD` in the Registry. On subsequent success after `DEAD`, marked `OK` with message "Recovered".
+3. **OTel span**: if a span factory is registered (TelemetryTool does this), a span wraps the call.
 
-None of this requires any code in the tool or plugin.
+**NOTE**: The Kernel (ToolProxy) **does NOT retry automatically**. Blind retries at the kernel level can lead to non-idempotent operation duplicates (e.g., double payments). Resilience must be explicitly handled in the Tool (infrastructure knowledge) or Plugin (business logic).
 
 ### Metrics buffer
 
@@ -165,9 +166,8 @@ For proactive detection, use `ToolHealthPlugin` — it calls `health_check()` on
 
 | Status | Meaning |
 |--------|---------|
-| `BOOTING` | `__init__` completed, `on_boot()` not yet called |
-| `RUNNING` | `on_boot()` completed successfully |
-| `READY` | `on_boot_complete()` completed successfully |
+| `RUNNING` | `__init__` completed, `on_boot()` not yet called |
+| `READY` | `on_boot()` completed successfully |
 | `DEAD` | Failed during boot or a required tool was unavailable |
 
 ### `get_system_dump()`
@@ -232,6 +232,10 @@ Both vars are **reset in the `finally` block** of each dispatch. They do not lea
 **Foreign keys**: `PRAGMA foreign_keys = ON` is set automatically. SQLite does not enforce foreign keys by default. This enables referential integrity constraints in migration files.
 
 **Placeholder normalization**: `$1, $2, $3...` (PostgreSQL style) are converted to `?` (SQLite native) transparently. This makes SQLite a drop-in replacement for the PostgreSQL tool — plugins never change.
+
+**Transaction Isolation**: uses an `asyncio.Lock` with `ContextVar` reentrancy tracking to ensure that concurrent write operations do not interfere with each other's atomic transactions, even during nested SAVEPOINTs.
+
+**Infrastructure Resilience**: automatically retries `database is locked` or `busy` errors up to 3 times with exponential backoff. This handles micro-concurrency blips transparently without risking duplicate data (as the operation hasn't executed yet).
 
 **Migration dependency ordering**: migration files can declare dependencies on other files:
 

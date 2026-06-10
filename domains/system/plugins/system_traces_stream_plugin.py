@@ -57,11 +57,24 @@ class SystemTracesStreamPlugin(BasePlugin):
         except RuntimeError:
             pass
 
+    def _to_dict(self, r) -> dict:
+        env = r.envelope
+        return {
+            "id": env.id,
+            "parent_id": env.parent_id,
+            "event": env.event,
+            "emitter": env.emitter,
+            "subscribers": r.subscribers,
+            "payload_keys": list(env.payload.keys()),
+            "timestamp": env.timestamp.timestamp(),
+        }
+
     async def _stream(self, data: dict):
         queue = asyncio.Queue(maxsize=200)
         self._queues.add(queue)
         try:
-            history = [r for r in self.event_bus.get_trace_history() if not r["event"].startswith("_reply.")]
+            history = [self._to_dict(r) for r in self.event_bus.get_trace_history()
+                       if not r.envelope.event.startswith("_reply.")]
             yield f"data: {json.dumps({'type': 'snapshot', 'tree': self._build_tree(history)})}\n\n"
 
             while True:

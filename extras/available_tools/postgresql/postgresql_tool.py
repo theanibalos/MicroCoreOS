@@ -337,15 +337,16 @@ class PostgresqlTool(BaseTool):
 
             # Each migration in its own transaction
             async with self.transaction() as tx:
-                statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-                for statement in statements:
-                    await tx.execute(statement)
-
-                # Register successful migration
-                await tx.execute(
-                    "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
-                    [domain, filename],
-                )
+                # asyncpg support multiple statements in execute() when no params are provided
+                try:
+                    await tx._conn.execute(sql_script)
+                    # Register successful migration
+                    await tx.execute(
+                        "INSERT INTO _migrations_history (domain, filename) VALUES ($1, $2)",
+                        [domain, filename],
+                    )
+                except Exception as e:
+                    raise DatabaseError(f"Migration failed for {key}: {e}") from e
 
             print(f"  [Migration] ✅ Applied {key}")
 
@@ -443,7 +444,7 @@ class PostgresqlTool(BaseTool):
         params = params or []
         try:
             async with self._pool.acquire() as conn:
-                if "RETURNING" in sql.upper():
+                if re.search(r"\bRETURNING\b", sql.upper()):
                     row = await conn.fetchrow(sql, *params)
                     if row is not None:
                         return row[0]
