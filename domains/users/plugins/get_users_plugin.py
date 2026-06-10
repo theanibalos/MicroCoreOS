@@ -9,9 +9,13 @@ class UserData(BaseModel):
     email: EmailStr
 
 
+class ListUsersData(BaseModel):
+    users: List[UserData]
+
+
 class ListUsersResponse(BaseModel):
     success: bool
-    data: Optional[dict] = None
+    data: Optional[ListUsersData] = None
     error: Optional[str] = None
 
 

@@ -23,9 +23,10 @@ class DeleteUserPlugin(BasePlugin):
 
     async def execute(self, data: dict, context=None):
         try:
-            user_id = int(data.get("user_id"))
-            if not user_id:
+            raw_id = data.get("user_id")
+            if not raw_id:
                 return {"success": False, "error": "Missing user_id"}
+            user_id = int(raw_id)
 
             affected = await self.db.execute("DELETE FROM users WHERE id = $1", [user_id])
             if affected == 0:
@@ -37,4 +38,4 @@ class DeleteUserPlugin(BasePlugin):
             return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to delete user: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not delete user"}

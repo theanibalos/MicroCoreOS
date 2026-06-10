@@ -30,12 +30,11 @@ These are the most frequent errors. Check these first before writing any code.
 4. **Safe Errors** — NEVER return `str(e)` to the client. Return safe, generic messages only.
 5. **Event Bus Power** — Leverage `ttl`, `retries`, and `backoff` in `subscribe()` and `publish()`.
 6. **DLQ Monitoring** — Final failures go to `_dlq.<event>`. Subscribe to it for error handling.
-
-4. **No framework patterns** — No Routers, Controllers, or Services. Only Tools (infrastructure) and Plugins (business logic).
-5. **No cross-domain imports** — Domains communicate exclusively via `event_bus`.
-6. **CSRF Guard** — HTTP mutations (POST/PUT/DELETE) via cookie auth REQUIRE `X-Requested-With` header.
-7. **Secure Cookies** — `context.set_cookie` defaults to `Secure=True`, `HttpOnly=True`, `SameSite=Lax`.
-8. **Return format**: Always `{"success": bool, "data": ..., "error": ...}`.
+7. **No framework patterns** — No Routers, Controllers, or Services. Only Tools (infrastructure) and Plugins (business logic).
+8. **No cross-domain imports** — Domains communicate exclusively via `event_bus`.
+9. **CSRF Guard** — HTTP mutations (POST/PUT/DELETE) via cookie auth REQUIRE `X-Requested-With` header.
+10. **Secure Cookies** — `context.set_cookie` defaults to `Secure=True`, `HttpOnly=True`, `SameSite=Lax`.
+11. **Return format**: Always `{"success": bool, "data": ..., "error": ...}`.
 
 ---
 
@@ -96,7 +95,8 @@ class CreateProductPlugin(BasePlugin):
             return {"success": True, "data": {"id": 123}}
         except Exception as e:
             # Kernel won't retry db.execute! Handle idempotency here.
-            return {"success": False, "error": str(e)}
+            self.logger.error(f"Failed to create product: {e}")
+            return {"success": False, "error": "Could not create product"}
 
     async def on_order_created(self, event) -> None:
         # event is an EventEnvelope

@@ -27,9 +27,10 @@ class GetUserByIdPlugin(BasePlugin):
 
     async def execute(self, data: dict, context=None):
         try:
-            user_id = int(data.get("user_id"))
-            if not user_id:
+            raw_id = data.get("user_id")
+            if not raw_id:
                 return {"success": False, "error": "Missing user_id"}
+            user_id = int(raw_id)
 
             row = await self.db.query_one("SELECT id, name, email FROM users WHERE id = $1", [user_id])
             if not row:
@@ -38,4 +39,4 @@ class GetUserByIdPlugin(BasePlugin):
             return {"success": True, "data": {"id": row["id"], "name": row["name"], "email": row["email"]}}
         except Exception as e:
             self.logger.error(f"Failed to fetch user {data.get('user_id')}: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not fetch user"}

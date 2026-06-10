@@ -21,7 +21,7 @@ class AuthTool(BaseTool):
     def name(self) -> str:
         return "auth"
 
-    def setup(self):
+    async def setup(self):
         print("[AuthTool] Initializing Security Infrastructure...")
 
     def get_interface_description(self) -> str:

@@ -1,13 +1,13 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
 
 
 # ── Request schema ───────────────────────────────────────────────────────────
 class UpdateUserRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
-    password: str | None = None  # plain-text; hashed before DB write if provided
+    password: str | None = Field(default=None, min_length=8)  # plain-text; hashed before DB write if provided
 
 
 # ── Response schema ──────────────────────────────────────────────────────────
@@ -47,15 +47,15 @@ class UpdateUserPlugin(BasePlugin):
             fields = []
             params = []
 
-            if req.name:
+            if req.name is not None:
                 fields.append(f"name = ${len(params) + 1}")
                 params.append(req.name)
 
-            if req.email:
+            if req.email is not None:
                 fields.append(f"email = ${len(params) + 1}")
                 params.append(str(req.email))
 
-            if req.password:
+            if req.password is not None:
                 fields.append(f"password_hash = ${len(params) + 1}")
                 params.append(self.auth.hash_password(req.password))
 
@@ -73,4 +73,4 @@ class UpdateUserPlugin(BasePlugin):
             return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not update user"}

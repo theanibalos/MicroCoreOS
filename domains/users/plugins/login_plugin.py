@@ -1,12 +1,12 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
 
 
 # ── Request schema ───────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1)
 
 
 # ── Response schema ──────────────────────────────────────────────────────────
@@ -49,10 +49,7 @@ class LoginPlugin(BasePlugin):
             if not row:
                 return {"success": False, "error": "Invalid email or password"}
 
-            if not row["password_hash"]:
-                return {"success": False, "error": "User has no password set"}
-
-            if not self.auth.verify_password(req.password, row["password_hash"]):
+            if not row["password_hash"] or not self.auth.verify_password(req.password, row["password_hash"]):
                 return {"success": False, "error": "Invalid email or password"}
 
             token = self.auth.create_token({"sub": str(row["id"]), "email": req.email})
@@ -65,4 +62,4 @@ class LoginPlugin(BasePlugin):
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Authentication failed"}

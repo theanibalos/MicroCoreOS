@@ -1,13 +1,13 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
 
 
 # ── Request schema ───────────────────────────────────────────────────────────
 class CreateUserRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
     email: EmailStr
-    password: str  # plain-text; hashed before DB write
+    password: str = Field(min_length=8)  # plain-text; hashed before DB write
 
 
 # ── Response schema ──────────────────────────────────────────────────────────
@@ -57,4 +57,4 @@ class CreateUserPlugin(BasePlugin):
             return {"success": True, "data": {"id": user_id, "name": req.name, "email": req.email}}
         except Exception as e:
             self.logger.error(f"Failed to create user: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not create user"}

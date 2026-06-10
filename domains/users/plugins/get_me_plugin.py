@@ -55,4 +55,4 @@ class GetMePlugin(BasePlugin):
             }
         except Exception as e:
             self.logger.error(f"Error in /users/me: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not fetch user"}

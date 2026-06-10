@@ -71,11 +71,13 @@ async def test_create_user_failure():
         auth=MagicMock()
     )
 
-    result = await plugin.execute({"name": "Fail", "email": "fail@test.com", "password": "p"})
+    result = await plugin.execute({"name": "Fail", "email": "fail@test.com", "password": "password123"})
 
     assert result["success"] is False
     assert "error" in result
-    assert "Database Connection Lost" in result["error"]
-    
-    # Verify Error was logged
+    # Safe error: raw exception must NOT be exposed to the client
+    assert "Database Connection Lost" not in result["error"]
+    assert result["error"] == "Could not create user"
+
+    # Verify the real error was logged server-side
     mock_logger.error.assert_called_once()
