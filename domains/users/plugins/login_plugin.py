@@ -62,7 +62,7 @@ class LoginPlugin(BasePlugin):
                 return {"success": False, "error": "Too many attempts. Try again later."}
 
             row = await self.db.query_one(
-                "SELECT id, password_hash FROM users WHERE email = $1",
+                "SELECT id, password_hash, roles FROM users WHERE email = $1",
                 [req.email]
             )
 
@@ -76,11 +76,14 @@ class LoginPlugin(BasePlugin):
 
             await self.state.delete(req.email, namespace="login_throttle")
 
+            import json
+            roles = json.loads(row["roles"]) if row.get("roles") else ["user"]
+
             # Token and cookie share the same lifetime (24h) — a cookie that
             # outlives its token leaves the client with a phantom session.
             session_minutes = 60 * 24
             token = self.auth.create_token(
-                {"sub": str(row["id"]), "email": req.email},
+                {"sub": str(row["id"]), "email": req.email, "roles": roles},
                 expires_delta=session_minutes,
             )
 

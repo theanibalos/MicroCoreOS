@@ -13,6 +13,7 @@
 | [HTTP_SERVER.md](HTTP_SERVER.md) | All HTTP capabilities: REST, SSE, WebSocket, auth, CORS, security headers, X-Request-ID |
 | [CORE_INFRASTRUCTURE.md](CORE_INFRASTRUCTURE.md) | Kernel, Container, ToolProxy, metrics, ContextVars, Registry, undocumented tool behaviors |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | All observability endpoints, telemetry layers, frontend integration guide |
+| [ELASTIC_DEPLOYMENT.md](ELASTIC_DEPLOYMENT.md) | Operational path from single monolith to N replicas: tool swaps, env flags, migrations pipeline, edge layer |
 
 ## Available Extras
 

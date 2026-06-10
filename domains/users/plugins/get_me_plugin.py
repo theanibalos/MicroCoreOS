@@ -8,6 +8,7 @@ class UserData(BaseModel):
     id: int
     name: str
     email: EmailStr
+    roles: list[str]
 
 
 class GetMeResponse(BaseModel):
@@ -41,16 +42,20 @@ class GetMePlugin(BasePlugin):
 
             user_id = int(auth_payload.get("sub"))
 
-            row = await self.db.query_one("SELECT id, name, email FROM users WHERE id = $1", [user_id])
+            row = await self.db.query_one("SELECT id, name, email, roles FROM users WHERE id = $1", [user_id])
             if not row:
                 return {"success": False, "error": "User no longer exists"}
+
+            import json
+            roles = json.loads(row["roles"]) if row.get("roles") else ["user"]
 
             return {
                 "success": True,
                 "data": {
                     "id": row["id"],
                     "name": row["name"],
-                    "email": row["email"]
+                    "email": row["email"],
+                    "roles": roles
                 }
             }
         except Exception as e:

@@ -20,11 +20,14 @@ TRANSPORT MAPPING:
     event "user.created"  → stream  "bus:user.created" (XADD, capped MAXLEN ~10000)
     every publish ALSO lands in the firehose stream "bus:*" so wildcard
         subscribers ("*") work without cross-stream discovery
-    subscribe(group=None)  → ephemeral consumer group "_bcast_<uuid>"
-        starting at "$" (broadcast: each subscriber sees every NEW message,
-        matching InProcessDriver semantics; destroyed on unsubscribe)
     subscribe(group="g")   → durable consumer group "g": Redis delivers each
-        message to exactly one consumer in the group (round-robin)
+        message to exactly one consumer in the group across the WHOLE fleet.
+        The Bus auto-derives stable groups from the callback identity, so this
+        is the normal path for every business subscription.
+    subscribe(group=None)  → ephemeral consumer group "_bcast_<uuid>"
+        starting at "$" (broadcast: each subscriber sees every NEW message;
+        destroyed on unsubscribe). Only broadcast subscriptions reach the
+        driver without a group: wildcards, RPC replies, broadcast=True.
     delay                  → applied driver-side before XADD (Streams have no
         native delayed delivery)
     key / priority         → accepted but no-ops: a stream is already totally
@@ -37,12 +40,15 @@ CONFIGURATION (env vars):
     (same variables as the Redis state tool — one Redis serves both)
     EVENT_BUS_STREAM_MAXLEN   default "10000" (approximate cap per stream)
 
-DELIVERY GUARANTEE: at-least-once into the Bus. Messages are XACKed after
-being handed to the delivery hook; the Bus then owns retries/DLQ. Handlers
-must be idempotent (already required by the Bus contract).
+DELIVERY GUARANTEE: at-least-once. A message is XACKed only AFTER the handler
+(including Bus-side retries/DLQ) finishes — if the replica dies mid-handler,
+the message stays pending and another consumer of the same group reclaims it
+via XAUTOCLAIM (idle > 60s). Handlers must be idempotent (already required by
+the Bus contract: a crash after the handler but before the ack = redelivery).
 """
 
 import os
+import time
 import uuid
 import asyncio
 import redis.asyncio as aioredis
@@ -151,12 +157,27 @@ class RedisStreamsDriver(EventBusDriver):
         sub.task = asyncio.create_task(self._reader(sub))
         self._subs.append(sub)
 
+    # Pending entries idle longer than this are considered abandoned by a dead
+    # consumer and reclaimed via XAUTOCLAIM (durable groups only).
+    CLAIM_IDLE_MS = 60_000
+    CLAIM_EVERY_S = 30.0
+
     async def _reader(self, sub: _Subscription) -> None:
+        last_claim = time.monotonic()
         while True:
             try:
                 response = await self._redis.xreadgroup(
                     sub.group, sub.consumer, {sub.stream: ">"}, count=16, block=1000
                 )
+                # Crash recovery: periodically adopt messages left pending by
+                # consumers (replicas) that died mid-handler.
+                if not sub.ephemeral and time.monotonic() - last_claim >= self.CLAIM_EVERY_S:
+                    last_claim = time.monotonic()
+                    _, claimed, *_ = await self._redis.xautoclaim(
+                        sub.stream, sub.group, sub.consumer,
+                        min_idle_time=self.CLAIM_IDLE_MS, count=16,
+                    )
+                    await self._process(sub, claimed)
             except asyncio.CancelledError:
                 raise
             except redis_exceptions.ResponseError as e:
@@ -169,15 +190,25 @@ class RedisStreamsDriver(EventBusDriver):
                 continue
 
             for _, messages in response or []:
-                for msg_id, fields in messages:
-                    try:
-                        envelope = self._envelope_cls.model_validate_json(fields["json"])
-                        await self._deliver_hook(envelope, sub.callback, sub.is_wildcard)
-                    except Exception as e:
-                        # Corrupt/foreign message: never let it kill the reader.
-                        print(f"[RedisStreamsDriver] ⚠️ Undeliverable message {msg_id} on {sub.stream}: {e}")
-                    finally:
-                        await self._redis.xack(sub.stream, sub.group, msg_id)
+                await self._process(sub, messages)
+
+    async def _process(self, sub: _Subscription, messages) -> None:
+        for msg_id, fields in messages or []:
+            try:
+                envelope = self._envelope_cls.model_validate_json(fields["json"])
+                delivery = await self._deliver_hook(envelope, sub.callback, sub.is_wildcard)
+                if delivery is not None:
+                    # Ack AFTER the handler (and its Bus-side retries) finishes:
+                    # a replica dying mid-handler leaves the message pending,
+                    # and a surviving consumer reclaims it (at-least-once).
+                    # shield(): a handler may unsubscribe US (poisoned-handler
+                    # escalation) — cancelling this reader must not cancel the
+                    # in-flight delivery that triggered it (await cycle).
+                    await asyncio.shield(delivery)
+            except Exception as e:
+                # Corrupt/foreign message: never let it kill the reader.
+                print(f"[RedisStreamsDriver] ⚠️ Undeliverable message {msg_id} on {sub.stream}: {e}")
+            await self._redis.xack(sub.stream, sub.group, msg_id)
 
     # ─── TRANSPORT: unsubscribe ───────────────────────────
 

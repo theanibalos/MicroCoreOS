@@ -7,11 +7,23 @@ PUBLIC CONTRACT (what plugins use):
 ────────────────────────────────────────────────────────────────────────────────
     await bus.publish("user.created", {"id": 1}, key=None, priority=None,
                       delay=None, ttl=None, correlation_id=None)
-    await bus.subscribe("user.created", self.on_event, group=None, retries=0, backoff=0.5)
+    await bus.subscribe("user.created", self.on_event, group=None, retries=0,
+                        backoff=0.5, broadcast=False)
     reply = await bus.request("user.lookup", {"id": 1}, timeout=5)
     await bus.unsubscribe("user.created", self.on_event)
 
     Subscribers ALWAYS receive an EventEnvelope: async def on_event(self, event: EventEnvelope)
+
+CONSUMER IDENTITY (how replicas are recognized — Elastic Monolith core rule):
+    group=None (default)  → the Bus derives a STABLE group from the callback
+        identity (e.g. "WelcomeServicePlugin.on_user_created"). Every replica
+        runs the same code, derives the same group, and the broker delivers
+        each event to exactly ONE replica. Distinct plugins derive distinct
+        groups, so each logical consumer still gets its own copy.
+    group="workers"       → explicit worker pool (exactly-one across the pool).
+    broadcast=True        → EVERY instance receives a copy. Only for
+        instance-local concerns (cache invalidation, local metrics).
+        Wildcard ("*") and RPC reply subscriptions are always broadcast.
 
 UNIVERSAL HINTS (kwargs):
 - key: String. Strict ordering (Kafka/SQS).
@@ -235,7 +247,12 @@ class EventBusTool(BaseTool):
         return """
         Universal Event Bus (event_bus):
         - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5): Listen for events.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
         - request(event_name, data, timeout=5): Async RPC (returns dict).
         - unsubscribe(event_name, callback): Stop listening.
         - get_trace_history() -> List[TraceNode]: Last 500 event records.
@@ -267,8 +284,16 @@ class EventBusTool(BaseTool):
         - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
         """
 
-    async def subscribe(self, event_name: str, callback: Callable, group: Optional[str] = None, retries: int = 0, backoff: float = 0.5):
+    async def subscribe(self, event_name: str, callback: Callable, group: Optional[str] = None,
+                        retries: int = 0, backoff: float = 0.5, broadcast: bool = False):
         self._sub_options[(event_name, callback)] = SubOptions(retries=retries, backoff=backoff)
+        if group is None and not broadcast and event_name != "*" and not event_name.startswith("_reply."):
+            # Stable consumer identity: every replica runs the same code and
+            # derives the same group → the fleet consumes each event exactly
+            # once per logical consumer. Distinct plugins → distinct groups →
+            # each still receives its own copy. Within a single instance this
+            # is indistinguishable from the old broadcast behavior.
+            group = self._get_name(callback)
         await self._driver.subscribe(event_name, group, callback)
 
     async def unsubscribe(self, event_name: str, callback: Callable):
@@ -332,10 +357,15 @@ class EventBusTool(BaseTool):
     # ── Internal Engine ─────────────────────────────────────────────────────────
 
     async def _deliver(self, envelope: EventEnvelope, callback: Callable, is_wildcard: bool):
-        """Entry point for message delivery, triggered by the Driver."""
+        """Entry point for message delivery, triggered by the Driver.
+
+        Returns the delivery task so distributed drivers can await handler
+        completion before acknowledging to the broker (crash-safe delivery).
+        """
         task = asyncio.create_task(self._do_deliver(envelope, callback, is_wildcard))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
+        return task
 
     async def _do_deliver(self, envelope: EventEnvelope, callback: Callable, is_wildcard: bool):
         sub_name = self._get_name(callback)

@@ -28,6 +28,10 @@ async def _main():
         print("[MicroCoreOS] Shutdown complete. See you soon!")
 
 def main():
+    if "--migrate-only" in sys.argv:
+        load_dotenv()
+        asyncio.run(Kernel().migrate_only())
+        return
     try:
         asyncio.run(_main())
     except (KeyboardInterrupt, asyncio.CancelledError):

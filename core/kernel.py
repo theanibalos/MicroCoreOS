@@ -160,6 +160,31 @@ class Kernel:
 
         print("--- [Kernel] System Ready ---")
 
+    async def migrate_only(self):
+        """Pipeline entry point: run pending DB migrations and exit.
+
+        Boots ONLY the persistence tool (name 'db') — no plugins, no other
+        infrastructure. This is how production pipelines apply migrations
+        while replicas boot with DB_AUTO_MIGRATE=false.
+        """
+        print("--- [Kernel] Migrate-only mode ---")
+        # This entry point IS the migration step: force-enable regardless of
+        # the replica-level env configuration.
+        os.environ["DB_AUTO_MIGRATE"] = "true"
+
+        for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
+            instance = tool_cls()
+            if instance.name != "db":
+                continue
+            await self._call_maybe_async(instance.setup)
+            try:
+                await self._call_maybe_async(instance.on_boot_complete, self.container)
+            finally:
+                await self._call_maybe_async(instance.shutdown)
+            print("--- [Kernel] Migrations complete ---")
+            return
+        raise RuntimeError("No tool registered as 'db' — cannot run migrations.")
+
     async def shutdown(self):
         print("\n--- [Kernel] Shutting down ---")
         for name, instance in self.plugins.items():

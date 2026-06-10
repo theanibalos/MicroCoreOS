@@ -14,3 +14,4 @@ class UserEntity(BaseModel):
     name: str
     email: EmailStr
     password_hash: str | None = None
+    roles: list[str] = ["user"]

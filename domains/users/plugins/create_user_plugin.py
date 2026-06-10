@@ -15,6 +15,7 @@ class CreatedUserData(BaseModel):
     id: int
     name: str
     email: EmailStr
+    roles: list[str]
 
 
 class CreateUserResponse(BaseModel):
@@ -45,16 +46,26 @@ class CreateUserPlugin(BasePlugin):
         try:
             req = CreateUserRequest(**data)
             password_hash = await self.auth.hash_password(req.password)
+            default_roles = ["user"]
+            import json
 
             user_id = await self.db.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
-                [req.name, req.email, password_hash]
+                "INSERT INTO users (name, email, password_hash, roles) VALUES ($1, $2, $3, $4) RETURNING id",
+                [req.name, req.email, password_hash, json.dumps(default_roles)]
             )
             self.logger.info(f"User created with ID {user_id}")
 
-            await self.bus.publish("user.created", {"id": user_id, "email": req.email})
+            await self.bus.publish("user.created", {"id": user_id, "email": req.email, "roles": default_roles})
 
-            return {"success": True, "data": {"id": user_id, "name": req.name, "email": req.email}}
+            return {
+                "success": True, 
+                "data": {
+                    "id": user_id, 
+                    "name": req.name, 
+                    "email": req.email,
+                    "roles": default_roles
+                }
+            }
         except Exception as e:
             self.logger.error(f"Failed to create user: {e}")
             if "UNIQUE" in str(e):

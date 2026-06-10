@@ -112,6 +112,18 @@ class CreateProductPlugin(BasePlugin):
 **Location**: `tools/{name}/{name}_tool.py`
 **Rule**: Stateless, isolated, self-documented. Use `EventBusDriver` pattern for new transport layers.
 
+### The Parity Rule (Contract over Implementation)
+Any replacement tool (e.g., swapping SQLite for PostgreSQL, or In-Memory State
+for Redis) MUST pass the **Parity Suite** of the reference implementation it
+replaces. This ensures that plugins remain infrastructure-blind and behavior
+is consistent across backends.
+
+**Canonical examples:**
+- `tests/tools/test_state_parity.py`: Verifies that `RedisStateTool` behaves
+  exactly like the default in-memory `StateTool`.
+- `tests/tools/test_event_bus_broker_parity.py`: Parametrized suite that
+  runs against both the local driver and `RedisStreamsDriver`.
+
 **Health contract (optional, only for tools with an external backend)**:
 If the tool talks to an external service (DB, S3, broker...), make its
 connection-error class inherit `ToolUnavailableError` so ToolProxy marks it
@@ -129,24 +141,104 @@ fallback (DEAD after 5 consecutive failures) covers every tool automatically.
 
 ---
 
-## 🧪 Testing
+## 🚦 Rate Limiting Pattern
 
-### Event Bus Mocking
-When testing plugins, remember they now expect an `EventEnvelope`.
+There is **no `rate_limiter` tool, by design**. Rate limiting splits into two
+layers, and neither needs one:
+
+- **Volumetric / anonymous (per-IP, anti-abuse, DDoS)** → belongs to the edge
+  (nginx, gateway, CDN), never to the monolith. See the edge section in
+  `docs/ELASTIC_DEPLOYMENT.md`.
+- **Identity-aware (per-user, per-API-key, per-plan quotas)** → business
+  policy, implemented in the plugin with the `state` tool primitive:
 
 ```python
-from tools.event_bus.event_bus_tool import EventEnvelope
-
-async def test_plugin_on_event():
-    plugin = MyPlugin(bus=AsyncMock())
-    mock_event = EventEnvelope(
-        event="test.event",
-        payload={"key": "value"},
-        emitter="TestEmitter"
+async def execute(self, data: dict, context=None):
+    attempts = await self.state.increment(
+        f"login:{req.email}", namespace="rate_limit", ttl=900  # 15-min window
     )
-    await plugin.on_test_event(mock_event)
-    # assert ...
+    if attempts > 5:
+        context.set_status(429)
+        context.set_header("Retry-After", "900")
+        return {"success": False, "error": "Too many attempts. Try again later."}
+    # ... normal handling
 ```
+
+Rules of the pattern:
+
+- **Key by identity** (user id, email, API key) — never by IP (that is the
+  edge's job).
+- **Fixed window**: `increment()` applies the TTL only when the key is
+  created, so the counter resets `ttl` seconds after the first hit. A client
+  can burst up to 2× the limit across a window boundary — acceptable for
+  quotas and throttles. If a real case ever demands sliding-window precision,
+  that is the moment to introduce a tool, not before.
+- **`Retry-After`**: the state contract does not expose remaining TTL, so use
+  the window size as a conservative upper bound.
+- **Distribution is free**: with `RedisStateTool` swapped in
+  (`extras/available_tools/redis_state/`), the same code enforces the limit
+  across all replicas.
+
+---
+
+## 🔐 User Roles & Authorization Pattern
+
+Roles are **business data**, not infrastructure. The `auth` tool remains
+infrastructure-blind (it only handles signing/verifying strings), while the
+`users` domain manages the roles.
+
+- **Storage**: roles are a column in the `users` table (JSON array in SQLite).
+- **Claims**: `LoginPlugin` fetches roles and includes them in the JWT claims.
+- **Consumption**: plugins read `data["_auth"]["roles"]` for general authorization.
+
+### The Hybrid Authorization Rule
+For standard operations, trust the claims in the token. For **critical
+operations** (financial transactions, privilege escalation, destructive
+actions), perform a **fresh check** against the database to catch late
+revocations or role changes that happened after the token was issued:
+
+```python
+async def execute(self, data: dict, context=None):
+    roles = data.get("_auth", {}).get("roles", [])
+    
+    # 1. Fast check (claims)
+    if "admin" not in roles:
+        return {"success": False, "error": "Forbidden"}
+
+    # 2. Fresh check (critical ops only)
+    user_id = data["_auth"]["sub"]
+    user = await self.db.query_one("SELECT roles FROM users WHERE id = $1", [user_id])
+    fresh_roles = json.loads(user["roles"])
+    if "admin" not in fresh_roles:
+         return {"success": False, "error": "Privileges revoked"}
+    
+    # ... proceed
+```
+
+---
+
+## 🧪 Testing
+...
+---
+
+## 📦 Available Extras
+
+The project includes pre-built tools and domains in the `extras/` folder. These
+are not active by default to keep the core lean.
+
+### Activating an Extra
+To activate an extra, move its folder to the corresponding core directory
+(`tools/` or `domains/`). The Kernel will auto-discover and boot it on the next
+restart.
+
+- **PostgreSQL**: Move `extras/available_tools/postgresql/` to `tools/postgresql/`.
+  Ensure `DATABASE_URL` is set in `.env`. It will take over the `db` injection
+  key if the default `sqlite` tool is removed or if it registers with the same
+  name.
+- **Redis State**: Move `extras/available_tools/redis_state/` to `tools/redis_state/`
+  to swap the in-memory `state` for a distributed one.
+- **Chaos Tool/Domain**: Used for resilience testing. Move from `extras/` to
+  `tools/` or `domains/` to enable.
 
 ---
 

@@ -47,16 +47,13 @@ Implemented via `EventContractValidatorPlugin` in the `system` domain.
 
 ## 🛡️ Security & Architectural Governance
 
-**Issue 15 — 🛡️ SecurityTool: The "Architectural Linter"**
+**Issue 15 — ✅ ArchitectureLinterPlugin (Anti-Drift + Isolation)**
 
-A core tool dedicated to enforcing structural integrity and preventing logical vulnerabilities.
+A core plugin dedicated to enforcing structural integrity and preventing logical vulnerabilities.
 
 **Capabilities:**
-- **Dynamic Event Guard**: Monitor event payloads in real-time. If a publisher emits a payload that doesn't match the consumer's expected contract, the event is blocked or logged as a critical security violation.
-- **Recursion Guard (Fork Bomb Protection)**: Analyze the causality tree (via `parent_id`). If an event chain exceeds a configurable depth (e.g., 10 levels), the `SecurityTool` kills the chain to prevent Event Loop Exhaustion.
 - **Domain Isolation Enforcer**: Verify at boot time that no cross-domain imports exist. If `domains.A` imports from `domains.B`, the Kernel refuses to boot.
-
-**Motivation:** Move from "trust-based" architecture to "enforcement-based" architecture.
+- **Anti-Drift Guard**: The linter now introspects each Tool in time of execution and verifies that every public method is documented in `get_interface_description()`. Discrepancies mark the Tool with `WARNING` in the registry. Tests: `tests/test_arch_linter_drift.py`.
 
 ---
 
@@ -101,15 +98,20 @@ Proposed design:
 
 ---
 
-**Issue 13 — Rate limiter tool**
+**Issue 13 — ✅ Rate limiting (resuelto como patrón, NO como tool — decisión 2026-06-10)**
 
-A stateless rate limiting tool backed by Redis (sliding window algorithm). In-memory fallback for single-process deploys.
+Decisión: **no se crea el tool**. El problema se parte en dos capas y ninguna lo necesita:
+- **Volumétrico/anónimo (por IP, anti-abuso, DDoS)** → es infraestructura del edge
+  (nginx/gateway/CDN), no del monolito. Documentado en `docs/ELASTIC_DEPLOYMENT.md`.
+- **Consciente de identidad (por usuario/API key/plan)** → es política de negocio
+  sobre un primitivo que ya existe: `state.increment(key, ttl=ventana)` → 429 +
+  `Retry-After`. Patrón documentado en `INSTRUCTIONS_FOR_AI.md` ("Rate Limiting
+  Pattern"). Con RedisStateTool swapeado, el límite es distribuido gratis.
 
-Proposed design:
-- `tools/rate_limiter/rate_limiter_tool.py` — name = `"rate_limiter"`
-- Public API: `check(key: str, limit: int, window_seconds: int) -> bool`
-- Plugins decide which endpoints call it and what the limits are — rate limiting policy is business logic, the tool is infrastructure
-- Requires Redis tool to be available for distributed deployments; degrades to in-memory for single-process
+El tool propuesto (`check(key, limit, window)`) eran ~5 líneas sobre `state` y
+habría duplicado su backend Redis. Único valor no cubierto: ventana deslizante
+(la fija permite burst de 2× en el borde) — se promueve a tool solo si un caso
+real lo exige.
 
 ---
 
@@ -184,34 +186,89 @@ NO se reescribe el EventBusTool: se implementa la interfaz `EventBusDriver`
 Pendiente: drivers Kafka y RabbitMQ (mismos pasos, documentados en el header
 de `tools/event_bus/event_bus_tool.py`; requisito formal: pasar la paridad).
 
-**Issue 19 — 🟠 Scheduler singleton + jobs vía bus**
+**Issue 19 — ✅ Scheduler singleton + jobs vía bus**
 
-Al escalar a N réplicas el scheduler dispararía cada job N veces. Patrón decidido:
-- El scheduler corre en UNA sola instancia (rol dedicado, como Celery beat).
-- Los jobs no ejecutan trabajo pesado: publican eventos al bus
-  (`bus.publish("jobs.x.due")`) y los N workers consumen con `group=` →
-  el round-robin de grupos garantiza exactamente-un-consumidor.
-- Job store persistente (APScheduler + SQLAlchemy/Redis) SOLO para one-shots
-  (`add_one_shot`); los cron se re-registran solos en `on_boot()` con job_id estable.
+Al escalar a N réplicas el scheduler dispararía cada job N veces. Implementado:
+- `SCHEDULER_ENABLED=true` (default) → rol "beat"; `false` en réplicas worker:
+  los jobs se registran igual (mismo código en todas) pero no disparan.
+- Patrón documentado en el header del tool: el job publica al bus
+  (`bus.publish("jobs.x.due")`) y los workers consumen — los grupos automáticos
+  garantizan exactamente-un-consumidor en toda la flota.
+- Los cron se re-registran solos en `on_boot()` con job_id estable
+  (`replace_existing` cubre el hot-reload). Tests: `test_scheduler_singleton.py`.
+- ✅ One-shots durables: NO en el tool (un tool nunca usa otros tools) — se
+  componen en la capa de plugins: `DurableOneShotsPlugin` (dominio system)
+  persiste (run_at, event, payload) en `scheduler_one_shots` y un cron por
+  minuto (solo beat) publica los vencidos al bus. Cualquier dominio agenda vía
+  `bus.request("system.one_shot.schedule", ...)`. Tests: `test_durable_one_shots.py`.
 
-**Issue 20 — 🟠 Flag de migraciones para CI/CD**
+**Issue 20 — ✅ Flag de migraciones para CI/CD**
 
-Decisión de la sesión: en producción las migraciones NUNCA corren en las réplicas —
-corren como paso del pipeline (estándar industria: Django/Rails/Flyway) con OK del DBA.
+En producción las migraciones NUNCA corren en las réplicas — corren como paso
+del pipeline (estándar industria: Django/Rails/Flyway) con OK del DBA.
 - `DB_AUTO_MIGRATE=true` (default) → comportamiento actual, perfecto para dev/SQLite.
-- `DB_AUTO_MIGRATE=false` en réplicas de producción.
-- Entry point explícito para el pipeline (p.ej. `uv run main.py --migrate-only`).
+- `DB_AUTO_MIGRATE=false` en réplicas de producción → el boot saltea migraciones.
+- Entry point del pipeline: `uv run main.py --migrate-only` (bootea SOLO el tool
+  `db`, migra y sale — `Kernel.migrate_only()`). Aplica a SQLite y PostgreSQL.
 
-**Issue 21 — 🟡 Tool/dominio de autorización (cuando se necesite)**
+**Issue 21 — ✅ Roles como datos del dominio users (Identity-Aware Authorization)**
 
-El `auth` actual es el "SQLite de la identidad": JWT + bcrypt, válido para producción
-de apps pequeñas/medianas con login propio. Para SSO/OIDC: NO imitar Keycloak —
-montarlo como infraestructura y escribir `KeycloakAuthTool` con `name = "auth"`
-que valide tokens con clave pública cacheada en `setup()` (regla crítica documentada
-en el header de `tools/auth/auth_tool.py`: nunca introspección remota por request).
+Implementado: los roles son negocio del dominio `users`, no infraestructura del
+`auth`.
+- Migración: columna `roles` (JSON TEXT) en la tabla `users`.
+- `LoginPlugin` incluye los roles en los claims del JWT.
+- Patrón documentado en `INSTRUCTIONS_FOR_AI.md`: hibridación entre claims para
+  uso general y verificación fresca contra DB para operaciones críticas.
+- Tests de integración verisicando roles en token: `tests/test_roles.py`.
 
-**Issue 22 — 🟡 Tests de paridad como requisito de marketplace**
 
-Generalizar el patrón de `test_event_bus_broker_parity.py`: todo tool de reemplazo
-debe pasar la suite de paridad de su implementación de referencia. Es la respuesta
-de la casa al tipado estático (contratos ejecutables en runtime).
+**Issue 22 — ✅ Paridad de herramientas (Contract Parity Rules)**
+
+Formalizado en `INSTRUCTIONS_FOR_AI.md`: todo tool de reemplazo DEBE pasar la
+suite de paridad de su implementación de referencia.
+- Patrón consolidado con suites de paridad para `state` (`test_state_parity.py`)
+  y `event_bus` (`test_event_bus_broker_parity.py`).
+
+---
+
+## Réplicas del mismo monolito (sesión 2026-06-10, segunda parte)
+
+**✅ Grupos de consumidores automáticos (identidad estable del callback)**
+
+`subscribe()` sin `group=` ahora deriva un grupo estable de la identidad del
+callback (`WelcomeServicePlugin.on_user_created`). Las réplicas corren el mismo
+código → derivan el mismo grupo → el broker entrega cada evento a UNA sola
+réplica. Plugins distintos → grupos distintos → cada consumidor lógico recibe
+su copia. `broadcast=True` para asuntos locales de instancia; wildcards y
+replies RPC son siempre broadcast. Validado con 2 réplicas reales: 1 usuario
+creado → 1 solo welcome en toda la flota.
+
+**✅ Entrega at-least-once en el driver Redis Streams**
+
+XACK ahora ocurre DESPUÉS de que el handler (y sus retries del bus) termina;
+si una réplica muere a mitad del handler, el mensaje queda pendiente y otra
+réplica del grupo lo reclama vía XAUTOCLAIM (idle > 60s). Los handlers deben
+ser idempotentes (ya era requisito del contrato del bus).
+
+**Issue 23 — 🟡 Contratos de eventos en runtime (Dynamic Event Guard)**
+
+El `EventContractValidator` es análisis estático del código local: si el
+consumidor vive en OTRA instancia, no lo ve. Falta validación de payloads en
+el bus mismo (extiende el Dynamic Event Guard del Issue 15 al modo distribuido).
+Anotado para trabajar después — es complejo.
+
+**Issue 24 — 🟡 Trazas causales cross-instance + localidad de eventos**
+
+Los envelopes ya viajan con `id` uuid4 y `parent_id` (verificado: el árbol
+causal cruza instancias intacto). Falta: agregación de trazas entre instancias
+(`/system/traces` es un ring buffer local; candidato natural: apoyarse en el
+OTel ya integrado). Idea exploratoria: localidad — que un evento se entregue
+en la instancia local sin viajar al broker cuando el consumidor vive ahí.
+
+**Issue 25 — ✅ Guía de despliegue elástico (documentación)**
+
+`docs/ELASTIC_DEPLOYMENT.md`: las tres etapas (SQLite dev → PostgreSQL single →
+N réplicas), los swaps de tools, el checklist completo de env vars por réplica,
+la capa edge (TLS, balanceo, rate limiting volumétrico) y el procedimiento de
+verificación del setup elástico (2 réplicas, exactly-one-consumer, árbol causal,
+reclaim at-least-once). Linkeada desde `docs/INDEX.md`.

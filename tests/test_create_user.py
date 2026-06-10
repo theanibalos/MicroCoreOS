@@ -39,16 +39,18 @@ async def test_create_user_success():
     assert result["success"] is True
     assert result["data"]["id"] == 123
     assert result["data"]["name"] == "John Doe"
+    assert result["data"]["roles"] == ["user"]
     
     # Verify DB was called correctly
     mock_db.execute.assert_called_once()
     sql_arg = mock_db.execute.call_args[0][0]
     assert "INSERT INTO users" in sql_arg
+    assert "roles" in sql_arg
     
     # Verify Event was published
     mock_bus.publish.assert_called_once_with(
         "user.created", 
-        {"id": 123, "email": "john@example.com"}
+        {"id": 123, "email": "john@example.com", "roles": ["user"]}
     )
     
     # Verify Auth was used

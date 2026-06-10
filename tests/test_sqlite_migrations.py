@@ -64,6 +64,25 @@ async def test_migration_topological_sort_intent(db, tmp_path, monkeypatch):
     # La intención es que 001_create_users se haya ejecutado ANTES que 000_create_profiles
     assert order == ["001_create_users.sql", "000_create_profiles.sql"]
 
+async def test_db_auto_migrate_false_skips_migrations(db, tmp_path, monkeypatch):
+    """
+    Issue 20: con DB_AUTO_MIGRATE=false (réplicas de producción) el boot NO
+    ejecuta migraciones — las corre el pipeline con `main.py --migrate-only`.
+    """
+    domains_dir = tmp_path / "domains"
+    users_dir = domains_dir / "users" / "migrations"
+    users_dir.mkdir(parents=True)
+    (users_dir / "001_create_users.sql").write_text("CREATE TABLE users (id int);")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
+
+    await db.on_boot_complete(None)
+
+    tables = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    assert tables == []
+
+
 async def test_migration_transaction_safety_intent(db, tmp_path, monkeypatch):
     """
     La intención es que cada archivo de migración sea atómico. Si una sentencia

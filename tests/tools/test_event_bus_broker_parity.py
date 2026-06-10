@@ -23,6 +23,8 @@ async def bus(request, monkeypatch):
             await b.setup()
         except EventBusConnectionError:
             pytest.skip("Redis not available — docker compose -f dev_infra/docker-compose.yml up -d redis")
+        # Durable groups persist between runs: start each test hermetic.
+        await b._driver._redis.flushdb()
     else:
         b = EventBusTool()
         await b.setup()

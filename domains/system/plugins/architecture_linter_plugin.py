@@ -1,24 +1,27 @@
 import ast
 import os
+import inspect
 from core.base_plugin import BasePlugin
 
 
 class ArchitectureLinterPlugin(BasePlugin):
     """
-    Enforces architectural rules by scanning plugin files using AST.
-    Detects illegal imports:
-    - Cross-domain imports (domains communicate ONLY via EventBus).
-    - Hardcoded tool imports (tools MUST be injected via DI).
+    Enforces architectural rules by scanning plugin files using AST and
+    introspecting tools for documentation drift.
     
-    Reports violations to the Registry and Logs.
+    Detects:
+    - Illegal cross-domain imports.
+    - Hardcoded tool imports.
+    - Tool methods missing from get_interface_description() (anti-drift).
     """
 
-    def __init__(self, registry, logger):
-        self.registry = registry
+    def __init__(self, container, logger):
+        self.container = container
+        self.registry = container.registry
         self.logger = logger
 
     async def on_boot(self):
-        # Perform initial scan
+        # 1. Domain Isolation Scan
         violations = self._perform_scan()
         if violations:
             self.registry.register_domain_metadata("system", "arch_violations", violations)
@@ -26,6 +29,45 @@ class ArchitectureLinterPlugin(BasePlugin):
                 self.logger.warning(f"[ArchLinter] {v}")
         else:
             self.logger.info("[ArchLinter] Domain isolation verified. No violations found.")
+
+        # 2. Tool Anti-Drift Check
+        drift_warnings = self._check_tool_drift()
+        if drift_warnings:
+            self.registry.register_domain_metadata("system", "drift_warnings", drift_warnings)
+            for w in drift_warnings:
+                self.logger.warning(f"[ArchLinter] {w}")
+        else:
+            self.logger.info("[ArchLinter] Tool documentation verified. No drift found.")
+
+    def _check_tool_drift(self) -> list[str]:
+        warnings = []
+        # Methods defined in BaseTool or Python internals that shouldn't be documented
+        IGNORED_METHODS = {
+            "setup", "name", "get_interface_description", "on_boot_complete",
+            "on_instrument", "shutdown", "on_boot"
+        }
+
+        for tool in self.container.get_raw_tools():
+            desc = tool.get_interface_description().lower()
+            
+            # Introspect all methods that don't start with '_'
+            for method_name, _ in inspect.getmembers(tool, predicate=inspect.isroutine):
+                if method_name.startswith("_") or method_name in IGNORED_METHODS:
+                    continue
+                
+                # Check if method_name is in the description (case-insensitive)
+                if method_name.lower() not in desc:
+                    warning = f"Tool '{tool.name}' method '{method_name}' is not documented in get_interface_description()"
+                    warnings.append(warning)
+                    
+                    # Also mark the tool specifically in the registry
+                    self.registry.update_tool_status(
+                        tool.name, 
+                        "WARNING", 
+                        f"Documentation drift: missing '{method_name}'"
+                    )
+
+        return warnings
 
     def _perform_scan(self) -> list[str]:
         violations = []

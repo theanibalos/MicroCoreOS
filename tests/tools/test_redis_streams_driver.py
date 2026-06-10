@@ -38,6 +38,9 @@ async def two_buses(monkeypatch):
     """Two independent EventBusTool instances = two replicas sharing one Redis."""
     bus_a = await _make_bus(monkeypatch)
     bus_b = await _make_bus(monkeypatch)
+    # Durable groups persist between runs: start each test hermetic.
+    # (Flush BEFORE any subscription so no reader loses its group.)
+    await bus_a._driver._redis.flushdb()
     yield bus_a, bus_b
     await bus_a.shutdown()
     await bus_b.shutdown()
@@ -80,25 +83,64 @@ async def test_group_exactly_one_consumer_across_instances(two_buses):
     assert sorted(deliveries_a + deliveries_b) == list(range(10))
 
 
-async def test_broadcast_reaches_all_instances(two_buses):
-    """Without group=, every replica's subscriber sees every event."""
+async def test_distinct_consumers_each_receive(two_buses):
+    """Different plugins (different callback identities) each get their own copy."""
     bus_a, bus_b = two_buses
     seen_a, seen_b = [], []
 
-    async def handler_a(env):
+    async def send_notification(env):
         seen_a.append(env.payload["n"])
 
-    async def handler_b(env):
+    async def send_email(env):
         seen_b.append(env.payload["n"])
 
-    await bus_a.subscribe("config.changed", handler_a)
-    await bus_b.subscribe("config.changed", handler_b)
+    await bus_a.subscribe("order.placed", send_notification)
+    await bus_b.subscribe("order.placed", send_email)
 
-    await bus_a.publish("config.changed", {"n": 1})
+    await bus_a.publish("order.placed", {"n": 1})
     await asyncio.sleep(0.3)
 
     assert seen_a == [1]
     assert seen_b == [1]
+
+
+def _make_video_worker(sink):
+    """Same factory in every replica → same callback identity → same auto-group."""
+    async def on_video_uploaded(env):
+        sink.append(env.payload["n"])
+    return on_video_uploaded
+
+
+async def test_same_plugin_across_replicas_consumes_once(two_buses):
+    """The replica case: identical code in N instances → each event processed ONCE.
+    No group= needed — the Bus derives it from the callback identity."""
+    bus_a, bus_b = two_buses
+    sink_a, sink_b = [], []
+
+    await bus_a.subscribe("video.uploaded", _make_video_worker(sink_a))
+    await bus_b.subscribe("video.uploaded", _make_video_worker(sink_b))
+
+    for n in range(10):
+        await bus_a.publish("video.uploaded", {"n": n})
+    await asyncio.sleep(0.5)
+
+    # Every video processed exactly once across the fleet — no duplicates.
+    assert sorted(sink_a + sink_b) == list(range(10))
+
+
+async def test_broadcast_flag_reaches_all_replicas(two_buses):
+    """broadcast=True opts out of grouping: instance-local concerns see everything."""
+    bus_a, bus_b = two_buses
+    sink_a, sink_b = [], []
+
+    await bus_a.subscribe("config.changed", _make_video_worker(sink_a), broadcast=True)
+    await bus_b.subscribe("config.changed", _make_video_worker(sink_b), broadcast=True)
+
+    await bus_a.publish("config.changed", {"n": 1})
+    await asyncio.sleep(0.3)
+
+    assert sink_a == [1]
+    assert sink_b == [1]
 
 
 async def test_wildcard_across_instances(two_buses):
