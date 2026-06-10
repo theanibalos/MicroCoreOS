@@ -1,8 +1,39 @@
+"""
+S3 Storage Tool — Reference Implementation for Object Storage in MicroCoreOS
+=============================================================================
+
+This is the REFERENCE IMPLEMENTATION for object-storage tools. Any replacement
+(Google Cloud Storage, Azure Blob, local filesystem, ...) MUST follow this
+contract and register under the same injection name: "s3".
+
+PUBLIC CONTRACT (what plugins use):
+────────────────────────────────────────────────────────────────────────────────
+    key = await s3.upload_bytes("path/file.png", data, content_type="image/png")
+    key = await s3.upload_fileobj("path/file.png", fileobj)       # streams
+    data = await s3.download_bytes("path/file.png")
+    url  = await s3.get_presigned_url("path/file.png", expires_in=3600)
+    ok   = await s3.delete_object("path/file.png")
+    objs = await s3.list_objects(prefix="path/")
+    All methods accept bucket=None → falls back to AWS_S3_DEFAULT_BUCKET.
+
+REPLACEMENT STANDARD (e.g. GCS or Azure Blob — plugins unaffected):
+────────────────────────────────────────────────────────────────────────────────
+    1. name = "s3" (the injection name is the contract, not the vendor).
+    2. ALL methods are async — object storage is always network I/O.
+    3. setup() NEVER raises: external infra may be down at boot. Log a warning,
+       mark yourself unavailable, retry on first call.
+    4. Raise S3UnavailableError (subclass of ToolUnavailableError) when the
+       backend is unreachable → ToolProxy marks the tool DEAD immediately.
+    5. Preserve the private-bucket + presigned-URL pattern: get_presigned_url()
+       must return a time-limited URL a browser can use directly.
+    6. Honor the size-limit env vars (AWS_S3_SIZE_LIMIT_ENABLED, max bytes).
+"""
+
 import os
 import asyncio
 from typing import Optional, Any
 from botocore.client import Config
-from core.base_tool import BaseTool
+from core.base_tool import BaseTool, ToolUnavailableError
 
 
 class S3Error(Exception):
@@ -10,8 +41,12 @@ class S3Error(Exception):
     pass
 
 
-class S3UnavailableError(S3Error):
-    """S3 is not reachable."""
+class S3UnavailableError(S3Error, ToolUnavailableError):
+    """S3 is not reachable.
+
+    Inherits ToolUnavailableError so ToolProxy marks the tool DEAD immediately
+    (infrastructure failure), unlike plain S3Error (likely business error).
+    """
     pass
 
 

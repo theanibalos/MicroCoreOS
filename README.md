@@ -7,6 +7,25 @@
 
 **1 file = 1 feature.** When AI makes a mistake, you find it in 30 seconds — not 30 minutes reviewing 8 files. The AI reads 2 files (the auto-generated system manifest + the plugin it's working on), follows one pattern, and produces clean, isolated code.
 
+## The Elastic Monolith
+
+MicroCoreOS is an **Elastic Monolith** built on an **Atomic Microkernel Architecture**:
+a single process where business logic lives in atomic plugins (1 file = 1 feature) and
+every piece of infrastructure is a swappable Tool behind a written contract — **in-process
+by default, distributed on demand**.
+
+Scaling is not a rewrite; it is a tool swap. The same plugins run unchanged whether the
+event bus is in-memory or Kafka, the state store is a dict or Redis, the database is SQLite
+or PostgreSQL. The kernel never knows which implementation is mounted — it only knows the
+contract. This is the difference from a *modular monolith* (modules, but fixed infrastructure)
+and from *microservices* (distributed from day one, whether you need it or not): an Elastic
+Monolith starts as the simplest possible system and stretches piece by piece, only where
+load demands it.
+
+Proven today: SQLite ↔ PostgreSQL swap with identical plugin code, and a transport-driver
+interface (`EventBusDriver`) where retries, DLQ, RPC and tracing are broker-agnostic.
+Distributed drivers (Kafka/RabbitMQ, Redis) are tracked in the [roadmap](ROADMAP.md).
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/theanibalos/MicroCoreOS/actions/workflows/ci.yml/badge.svg)](https://github.com/theanibalos/MicroCoreOS/actions)

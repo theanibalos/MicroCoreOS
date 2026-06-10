@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
-from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope, InProcessDriver
+from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
 
 pytestmark = pytest.mark.anyio
 

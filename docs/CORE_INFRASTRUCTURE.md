@@ -96,7 +96,7 @@ The Container holds all tool instances wrapped in `ToolProxy`. It is the single 
 Every tool method call goes through `ToolProxy`, which adds three things automatically:
 
 1. **Timing**: `time.perf_counter()` measures `duration_ms` with microsecond precision.
-2. **Status tracking**: on failure, the tool is marked `DEAD` in the Registry. On subsequent success after `DEAD`, marked `OK` with message "Recovered".
+2. **Status tracking (hybrid DEAD policy)**: a `ToolUnavailableError` (or subclass, e.g. `DatabaseConnectionError`, `S3UnavailableError`) marks the tool `DEAD` immediately — the tool itself declared its infrastructure unreachable. Any other exception is counted instead of classified: only `ToolProxy.DEAD_THRESHOLD` (5) *consecutive* failures mark the tool `DEAD`, so isolated business errors (UNIQUE violations, bad input) never kill a healthy tool. Any success resets the streak; on success after `DEAD`, the tool is marked `OK` with message "Recovered".
 3. **OTel span**: if a span factory is registered (TelemetryTool does this), a span wraps the call.
 
 **NOTE**: The Kernel (ToolProxy) **does NOT retry automatically**. Blind retries at the kernel level can lead to non-idempotent operation duplicates (e.g., double payments). Resilience must be explicitly handled in the Tool (infrastructure knowledge) or Plugin (business logic).
@@ -156,9 +156,9 @@ Tracks the live state of all tools and plugins.
 |--------|---------|
 | `OK` | Last call succeeded, or health check passed |
 | `FAIL` | Health check failed (set by ToolHealthPlugin) |
-| `DEAD` | Raised an exception (set by ToolProxy) |
+| `DEAD` | Infrastructure failure or sustained failure streak (set by ToolProxy) |
 
-ToolProxy sets `DEAD` reactively when a tool raises. It sets `OK` when the same tool succeeds after being `DEAD` ("recovered from transient failure"). This means a tool that silently stopped responding (e.g., a hung connection) may still show `OK` until the next call fails.
+ToolProxy sets `DEAD` reactively: immediately if the tool raised `ToolUnavailableError` (infrastructure down), or after 5 consecutive failures of any kind (see "hybrid DEAD policy" above). It sets `OK` when the same tool succeeds after being `DEAD` ("recovered from transient failure"). This means a tool that silently stopped responding (e.g., a hung connection) may still show `OK` until the next call fails.
 
 For proactive detection, use `ToolHealthPlugin` — it calls `health_check()` on tools at a configurable interval.
 

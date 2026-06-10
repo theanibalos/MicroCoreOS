@@ -1,4 +1,3 @@
-import os
 import pytest
 from tools.sqlite.sqlite_tool import SqliteTool
 

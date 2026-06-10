@@ -37,9 +37,10 @@ async def test_no_auto_retry_async(registry):
     
     with pytest.raises(RuntimeError, match="Fail 1"):
         await proxy.work()
-    
+
     assert tool.calls == 1
-    assert registry.get_tool_status("flaky_tool") == "DEAD"
+    # Hybrid DEAD policy: a single generic failure does not kill the tool
+    assert registry.get_tool_status("flaky_tool") == "OK"
 
 def test_no_auto_retry_sync(registry):
     """
@@ -50,6 +51,7 @@ def test_no_auto_retry_sync(registry):
     
     with pytest.raises(RuntimeError, match="Fail 1"):
         proxy.sync_work()
-    
+
     assert tool.calls == 1
-    assert registry.get_tool_status("flaky_tool") == "DEAD"
+    # Hybrid DEAD policy: a single generic failure does not kill the tool
+    assert registry.get_tool_status("flaky_tool") == "OK"

@@ -1,4 +1,3 @@
-import asyncio
 from core.base_plugin import BasePlugin
 
 

@@ -33,6 +33,7 @@ class UpdateUserPlugin(BasePlugin):
             tags=["Users"],
             request_model=UpdateUserRequest,
             response_model=UpdateUserResponse,
+            auth_validator=self.auth.validate_token,
         )
 
     async def execute(self, data: dict, context=None):
@@ -40,6 +41,13 @@ class UpdateUserPlugin(BasePlugin):
             user_id = data.get("user_id")
             if not user_id:
                 return {"success": False, "error": "Missing user_id"}
+
+            # Ownership: a user can only update their own account
+            auth_payload = data.get("_auth") or {}
+            if str(auth_payload.get("sub")) != str(user_id):
+                if context:
+                    context.set_status(403)
+                return {"success": False, "error": "Forbidden"}
 
             req = UpdateUserRequest(**data)
 
@@ -57,7 +65,7 @@ class UpdateUserPlugin(BasePlugin):
 
             if req.password is not None:
                 fields.append(f"password_hash = ${len(params) + 1}")
-                params.append(self.auth.hash_password(req.password))
+                params.append(await self.auth.hash_password(req.password))
 
             if not fields:
                 return {"success": False, "error": "No fields to update"}
@@ -73,4 +81,6 @@ class UpdateUserPlugin(BasePlugin):
             return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")
+            if "UNIQUE" in str(e):
+                return {"success": False, "error": "Email already in use"}
             return {"success": False, "error": "Could not update user"}

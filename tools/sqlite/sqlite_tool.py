@@ -38,7 +38,7 @@ import uuid
 import asyncio
 import aiosqlite
 from contextvars import ContextVar
-from core.base_tool import BaseTool
+from core.base_tool import BaseTool, ToolUnavailableError
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -58,8 +58,12 @@ class DatabaseError(Exception):
     pass
 
 
-class DatabaseConnectionError(DatabaseError):
-    """Connection error to the SQLite file."""
+class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
+    """Connection error to the SQLite file.
+
+    Inherits ToolUnavailableError so ToolProxy marks the tool DEAD immediately
+    (infrastructure failure), unlike plain DatabaseError (likely business error).
+    """
     pass
 
 
@@ -292,7 +296,7 @@ class SqliteTool(BaseTool):
             )
         """)
 
-        print(f"[System] SqliteTool: Ready (WAL mode, FK enabled).")
+        print("[System] SqliteTool: Ready (WAL mode, FK enabled).")
 
     # ─── LIFECYCLE: on_boot_complete() ────────────────────
     #
@@ -380,7 +384,7 @@ class SqliteTool(BaseTool):
 
             # Each migration in its own transaction
             try:
-                async with self.transaction() as tx:
+                async with self.transaction():
                     # Manually split and execute to ensure atomicity via our Transaction CM
                     # This handles triggers if we are careful, but for now we split by ';'
                     # which is what the user originally had but now inside our safe TX.

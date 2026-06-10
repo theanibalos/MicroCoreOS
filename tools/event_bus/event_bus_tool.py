@@ -3,12 +3,44 @@ Enterprise Event Bus — Universal Elastic Monolith Core
 ======================================================
 Definitive Version: Pydantic-native traceability and industrial drivers.
 
+PUBLIC CONTRACT (what plugins use):
+────────────────────────────────────────────────────────────────────────────────
+    await bus.publish("user.created", {"id": 1}, key=None, priority=None,
+                      delay=None, ttl=None, correlation_id=None)
+    await bus.subscribe("user.created", self.on_event, group=None, retries=0, backoff=0.5)
+    reply = await bus.request("user.lookup", {"id": 1}, timeout=5)
+    await bus.unsubscribe("user.created", self.on_event)
+
+    Subscribers ALWAYS receive an EventEnvelope: async def on_event(self, event: EventEnvelope)
+
 UNIVERSAL HINTS (kwargs):
 - key: String. Strict ordering (Kafka/SQS).
 - priority: Integer (1-10). Importance (RabbitMQ).
 - delay: Integer (seconds). Delivery schedule.
 - ttl: Float (seconds). Message expiration (Broker-side).
 - correlation_id: String. RPC tracking.
+
+REPLACEMENT STANDARD (swap the transport, not the tool):
+────────────────────────────────────────────────────────────────────────────────
+Unlike other tools, you do NOT rewrite EventBusTool to go distributed.
+Retries, backoff, DLQ, RPC, tracing and auto-unsubscribe are broker-agnostic
+and live in the Bus. Only TRANSPORT is delegated, via the EventBusDriver
+interface below (reference implementation: InProcessDriver).
+
+To swap to Kafka/RabbitMQ/Redis Streams:
+    1. Implement EventBusDriver (publish / subscribe / unsubscribe /
+       unsubscribe_all / get_status / setup / shutdown).
+    2. publish() is pure fire-and-forget: serialize the EventEnvelope
+       (envelope.model_dump_json()) and hand it to the broker. Map hints:
+       key → partition key (Kafka), priority → message priority (RabbitMQ),
+       delay → delayed delivery, ttl → broker-side expiration.
+    3. On message arrival, deserialize back into an EventEnvelope and call
+       self._deliver_hook(envelope, callback, is_wildcard) — the Bus takes
+       over from there (retries, DLQ, tracing all still work).
+    4. Inject it: EventBusTool(driver=KafkaDriver()).
+    5. It MUST pass the parity suite: tests/tools/test_event_bus_broker_parity.py.
+
+Plugins are unaffected: same envelope, same API, same semantics.
 """
 
 import collections
@@ -240,9 +272,9 @@ class EventBusTool(BaseTool):
             "payload_keys": list(envelope.payload.keys()),
             "timestamp": envelope.timestamp.timestamp()
         }
-        for l in self._listeners: 
-            try: 
-                res = l(raw_record)
+        for listener in self._listeners:
+            try:
+                res = listener(raw_record)
                 if inspect.isawaitable(res):
                     task = asyncio.create_task(res)
                     self._pending_tasks.add(task)

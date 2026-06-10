@@ -36,6 +36,7 @@ class Kernel:
             return found_classes
 
         abs_dir = os.path.abspath(directory)
+        is_domains_dir = os.path.basename(abs_dir) == "domains"
         for root, _, files in os.walk(abs_dir):
             for file in sorted(files):
                 if not file.endswith(".py") or file == "__init__.py":
@@ -51,7 +52,7 @@ class Kernel:
                         spec.loader.exec_module(module)
 
                     domain_name = None
-                    if "domains" in path:
+                    if is_domains_dir:
                         domain_name = os.path.relpath(path, abs_dir).split(os.sep)[0]
 
                     for _, obj in inspect.getmembers(module):

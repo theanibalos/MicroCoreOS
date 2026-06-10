@@ -44,7 +44,7 @@ class CreateUserPlugin(BasePlugin):
     async def execute(self, data: dict, context=None):
         try:
             req = CreateUserRequest(**data)
-            password_hash = self.auth.hash_password(req.password)
+            password_hash = await self.auth.hash_password(req.password)
 
             user_id = await self.db.execute(
                 "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
@@ -57,4 +57,6 @@ class CreateUserPlugin(BasePlugin):
             return {"success": True, "data": {"id": user_id, "name": req.name, "email": req.email}}
         except Exception as e:
             self.logger.error(f"Failed to create user: {e}")
+            if "UNIQUE" in str(e):
+                return {"success": False, "error": "Email already in use"}
             return {"success": False, "error": "Could not create user"}

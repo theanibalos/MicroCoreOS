@@ -11,15 +11,17 @@ class DeleteUserResponse(BaseModel):
 
 
 class DeleteUserPlugin(BasePlugin):
-    def __init__(self, http, db, event_bus, logger):
+    def __init__(self, http, db, event_bus, logger, auth):
         self.http = http
         self.db = db
         self.bus = event_bus
         self.logger = logger
+        self.auth = auth
 
     async def on_boot(self):
         self.http.add_endpoint("/users/{user_id}", "DELETE", self.execute, tags=["Users"],
-                               response_model=DeleteUserResponse)
+                               response_model=DeleteUserResponse,
+                               auth_validator=self.auth.validate_token)
 
     async def execute(self, data: dict, context=None):
         try:
@@ -27,6 +29,13 @@ class DeleteUserPlugin(BasePlugin):
             if not raw_id:
                 return {"success": False, "error": "Missing user_id"}
             user_id = int(raw_id)
+
+            # Ownership: a user can only delete their own account
+            auth_payload = data.get("_auth") or {}
+            if str(auth_payload.get("sub")) != str(user_id):
+                if context:
+                    context.set_status(403)
+                return {"success": False, "error": "Forbidden"}
 
             affected = await self.db.execute("DELETE FROM users WHERE id = $1", [user_id])
             if affected == 0:

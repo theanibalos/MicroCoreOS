@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      - name: Lint (ruff)
+        run: uv run -m ruff check .
+
       - name: Verify core compilation (Syntax Check)
         run: |
           uv run python -c "from core.kernel import Kernel; print('✅ Kernel OK')"
@@ -48,4 +51,78 @@ jobs:
           uv run python -c "from core.base_tool import BaseTool; print('✅ BaseTool OK')"
 
       - name: Run Core Tests
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run -m pytest tests/ -v --tb=short
+
+  # Boots the REAL system against REAL infrastructure (MinIO as S3, SQLite on
+  # disk) and asserts that every tool is OK and every plugin is READY. This is
+  # the gate that makes boot-time validation count: a tool can only prove it is
+  # alive if its backend is actually mounted.
+  smoke-boot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # The official minio/minio image needs a command ("server /data"), which
+      # GitHub service containers can't pass — so it runs as a step instead.
+      - name: Start MinIO (real S3 backend)
+        run: |
+          docker run -d --rm --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:9000/minio/health/live
+
+      - name: Boot system against real infrastructure
+        env:
+          PYTHONUNBUFFERED: "1"
+          AUTH_SECRET_KEY: ci-smoke-test-secret-key-0123456789abcdef
+          HTTP_PORT: "5000"
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_S3_ENDPOINT_URL: http://localhost:9000
+          AWS_S3_VERIFY_SSL: "false"
+        run: |
+          uv run main.py > boot.log 2>&1 &
+          APP_PID=$!
+
+          # Wait until the gateway answers (max 30s)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/ping > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          curl -sf http://localhost:5000/ping
+          curl -sf http://localhost:5000/system/status > status.json
+
+          # Assert: every tool OK, every plugin READY
+          uv run python - <<'EOF'
+          import json
+          status = json.load(open("status.json"))
+          assert status["success"], "system/status reported failure"
+          bad_tools = [t for t in status["data"]["tools"] if t["status"] != "OK"]
+          bad_plugins = [p for p in status["data"]["plugins"] if p["status"] != "READY"]
+          assert not bad_tools, f"Tools not OK: {bad_tools}"
+          assert not bad_plugins, f"Plugins not READY: {bad_plugins}"
+          names = {t["name"] for t in status["data"]["tools"]}
+          assert {"db", "s3", "http", "auth", "event_bus", "state"} <= names, f"Missing tools: {names}"
+          print(f"✅ {len(status['data']['tools'])} tools OK, {len(status['data']['plugins'])} plugins READY")
+          EOF
+
+          # Assert: S3 connected to REAL infrastructure (not degraded mode)
+          grep -q "\[S3Tool\] Connected" boot.log || { echo "S3 did not connect to MinIO"; cat boot.log; exit 1; }
+
+          kill $APP_PID
+
+      - name: Show boot log on failure
+        if: failure()
+        run: cat boot.log || true

@@ -16,14 +16,16 @@ class GetUserByIdResponse(BaseModel):
 
 
 class GetUserByIdPlugin(BasePlugin):
-    def __init__(self, http, db, logger):
+    def __init__(self, http, db, logger, auth):
         self.http = http
         self.db = db
         self.logger = logger
+        self.auth = auth
 
     async def on_boot(self):
         self.http.add_endpoint("/users/{user_id}", "GET", self.execute, tags=["Users"],
-                               response_model=GetUserByIdResponse)
+                               response_model=GetUserByIdResponse,
+                               auth_validator=self.auth.validate_token)
 
     async def execute(self, data: dict, context=None):
         try:

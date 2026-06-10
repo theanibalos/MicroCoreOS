@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 from domains.users.plugins.create_user_plugin import CreateUserPlugin
 
@@ -11,8 +10,8 @@ async def test_create_user_success():
     
     mock_bus = AsyncMock()
     mock_auth = MagicMock()
-    # auth.hash_password is currently sync in our implementation
-    mock_auth.hash_password.return_value = "hashed_password_123"
+    # auth.hash_password is async (bcrypt runs in a thread)
+    mock_auth.hash_password = AsyncMock(return_value="hashed_password_123")
     
     mock_logger = MagicMock()
     mock_http = MagicMock()
@@ -63,12 +62,15 @@ async def test_create_user_failure():
     
     mock_logger = MagicMock()
     
+    mock_auth = MagicMock()
+    mock_auth.hash_password = AsyncMock(return_value="hashed_password_123")
+
     plugin = CreateUserPlugin(
         http=MagicMock(),
         db=mock_db,
         event_bus=AsyncMock(),
         logger=mock_logger,
-        auth=MagicMock()
+        auth=mock_auth
     )
 
     result = await plugin.execute({"name": "Fail", "email": "fail@test.com", "password": "password123"})

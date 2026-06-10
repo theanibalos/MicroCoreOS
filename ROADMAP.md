@@ -140,3 +140,57 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 ---
 
 **Issue 9 — ✅ OpenTelemetry integration**
+
+---
+
+## Path to Industrial Grade (sesión 2026-06-10 — análisis con Claude)
+
+> Conclusión del análisis: la base es sólida; lo que falta son **adiciones, no cirugías**.
+> Las especificaciones de reemplazo ya están escritas en los headers de cada tool.
+
+**Issue 17 — 🔴 RedisStateTool (primer swap real de un tool)**
+
+Implementar `tools/redis_state/` con `name = "state"` siguiendo el contrato async + TTL
+definido en `tools/state/state_tool.py` (header: tabla de mapeo a comandos Redis —
+`SET EX`, `INCRBY + EXPIRE NX`, `SCAN` por namespace). Redis ya está preparado
+(comentado) en `dev_infra/docker-compose.yml`. Valida el sistema de swap de punta a punta.
+**Es el mejor candidato para empezar: contrato chico y spec completa.**
+
+**Issue 18 — 🔴 Drivers distribuidos del Event Bus (Kafka / RabbitMQ / Redis Streams)**
+
+NO se reescribe el EventBusTool: se implementa la interfaz `EventBusDriver`
+(solo transporte). Retries, DLQ, RPC y tracing son agnósticos y viven en el Bus.
+Pasos documentados en el header de `tools/event_bus/event_bus_tool.py`.
+Requisito formal: pasar `tests/tools/test_event_bus_broker_parity.py`.
+
+**Issue 19 — 🟠 Scheduler singleton + jobs vía bus**
+
+Al escalar a N réplicas el scheduler dispararía cada job N veces. Patrón decidido:
+- El scheduler corre en UNA sola instancia (rol dedicado, como Celery beat).
+- Los jobs no ejecutan trabajo pesado: publican eventos al bus
+  (`bus.publish("jobs.x.due")`) y los N workers consumen con `group=` →
+  el round-robin de grupos garantiza exactamente-un-consumidor.
+- Job store persistente (APScheduler + SQLAlchemy/Redis) SOLO para one-shots
+  (`add_one_shot`); los cron se re-registran solos en `on_boot()` con job_id estable.
+
+**Issue 20 — 🟠 Flag de migraciones para CI/CD**
+
+Decisión de la sesión: en producción las migraciones NUNCA corren en las réplicas —
+corren como paso del pipeline (estándar industria: Django/Rails/Flyway) con OK del DBA.
+- `DB_AUTO_MIGRATE=true` (default) → comportamiento actual, perfecto para dev/SQLite.
+- `DB_AUTO_MIGRATE=false` en réplicas de producción.
+- Entry point explícito para el pipeline (p.ej. `uv run main.py --migrate-only`).
+
+**Issue 21 — 🟡 Tool/dominio de autorización (cuando se necesite)**
+
+El `auth` actual es el "SQLite de la identidad": JWT + bcrypt, válido para producción
+de apps pequeñas/medianas con login propio. Para SSO/OIDC: NO imitar Keycloak —
+montarlo como infraestructura y escribir `KeycloakAuthTool` con `name = "auth"`
+que valide tokens con clave pública cacheada en `setup()` (regla crítica documentada
+en el header de `tools/auth/auth_tool.py`: nunca introspección remota por request).
+
+**Issue 22 — 🟡 Tests de paridad como requisito de marketplace**
+
+Generalizar el patrón de `test_event_bus_broker_parity.py`: todo tool de reemplazo
+debe pasar la suite de paridad de su implementación de referencia. Es la respuesta
+de la casa al tipado estático (contratos ejecutables en runtime).

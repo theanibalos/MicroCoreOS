@@ -112,6 +112,21 @@ class CreateProductPlugin(BasePlugin):
 **Location**: `tools/{name}/{name}_tool.py`
 **Rule**: Stateless, isolated, self-documented. Use `EventBusDriver` pattern for new transport layers.
 
+**Health contract (optional, only for tools with an external backend)**:
+If the tool talks to an external service (DB, S3, broker...), make its
+connection-error class inherit `ToolUnavailableError` so ToolProxy marks it
+DEAD on the first infrastructure failure:
+
+```python
+from core.base_tool import BaseTool, ToolUnavailableError
+
+class RedisError(Exception): ...                                    # business errors
+class RedisConnectionError(RedisError, ToolUnavailableError): ...   # infra -> DEAD immediately
+```
+
+In-memory/local tools (state, logger, scheduler...) skip this entirely — the
+fallback (DEAD after 5 consecutive failures) covers every tool automatically.
+
 ---
 
 ## 🧪 Testing

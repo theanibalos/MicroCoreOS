@@ -132,6 +132,13 @@ import uvicorn
 from typing import Optional, Any, Callable
 from pydantic import BaseModel
 from fastapi.exceptions import RequestValidationError
+from core.base_tool import BaseTool
+from core.context import current_identity_var, current_event_id_var
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, File, UploadFile
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 
 def _serialize(obj):
@@ -143,13 +150,6 @@ def _serialize(obj):
     if isinstance(obj, list):
         return [_serialize(i) for i in obj]
     return obj
-from core.base_tool import BaseTool
-from core.context import current_identity_var, current_event_id_var
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, File, UploadFile, Form
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.concurrency import run_in_threadpool
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -533,7 +533,6 @@ class HttpServerTool(BaseTool):
         injected into the wrapper's signature so FastAPI generates proper OpenAPI docs.
         """
         import re
-        from fastapi import File, UploadFile
 
         path = ep["path"]
         method = ep["method"].upper()

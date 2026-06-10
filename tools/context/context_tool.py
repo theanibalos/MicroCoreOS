@@ -1,6 +1,5 @@
 import ast
 import os
-import re
 from core.base_tool import BaseTool
 
 

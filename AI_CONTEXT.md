@@ -87,6 +87,26 @@ domains/{name}/
 ## 🛠️ Available Tools
 Check method signatures before implementation.
 
+### 🔧 Tool: `auth` (Status: ✅)
+```text
+Authentication Tool (auth):
+        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
+        - CAPABILITIES:
+            - await hash_password(password: str) -> str: Securely hashes a plain-text
+                password using bcrypt. Async — runs in a thread (bcrypt is CPU-bound).
+            - await verify_password(password: str, hashed_password: str) -> bool:
+                Verifies if a password matches its hash. Async — runs in a thread.
+            - create_token(data: dict, expires_delta: Optional[int] = None) -> str:
+                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}).
+                'expires_delta' is optional minutes until expiration.
+            - decode_token(token: str) -> dict:
+                Verifies and decodes a JWT token. Returns the payload dictionary.
+                Raises TokenExpiredError / InvalidTokenError / AuthError on failure.
+            - validate_token(token: str) -> dict | None:
+                Safe, non-throwing token validation. Returns the decoded payload
+                if valid, or None if expired/invalid. Ideal for middleware guards.
+```
+
 ### 🔧 Tool: `config` (Status: ✅)
 ```text
 Configuration Tool (config):
@@ -198,24 +218,6 @@ Telemetry Tool (telemetry):
             uv add opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
-### 🔧 Tool: `auth` (Status: ✅)
-```text
-Authentication Tool (auth):
-        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
-        - CAPABILITIES:
-            - hash_password(password: str) -> str: Securely hashes a plain-text password using bcrypt.
-            - verify_password(password: str, hashed_password: str) -> bool: Verifies if a password matches its hash.
-            - create_token(data: dict, expires_delta: Optional[int] = None) -> str: 
-                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}). 
-                'expires_delta' is optional minutes until expiration.
-            - decode_token(token: str) -> dict: 
-                Verifies and decodes a JWT token. Returns the payload dictionary. 
-                Raises Exception if token is expired or invalid.
-            - validate_token(token: str) -> dict | None:
-                Safe, non-throwing token validation. Returns the decoded payload
-                if valid, or None if expired/invalid. Ideal for middleware guards.
-```
-
 ### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
 Context Manager Tool (context_manager):
@@ -242,18 +244,23 @@ Logging Tool (logger):
 
 ### 🔧 Tool: `state` (Status: ✅)
 ```text
-In-Memory State Tool (state):
+Key-Value State Tool (state):
         - PURPOSE: Share volatile global data between plugins safely.
-        - IDEAL FOR: Counters, temporary caches, and shared business semaphores.
+        - IDEAL FOR: Counters, temporary caches, rate-limit windows, business semaphores.
+        - CONTRACT: All methods are async. Values must be JSON-serializable so the
+          tool can be swapped for a distributed store (Redis) without touching plugins.
+        - TTL: optional expiry in seconds. Expired keys behave like missing keys.
+          On increment(), the TTL only applies when the key is created (fixed window).
         - CAPABILITIES:
-            - set(key, value, namespace='default'): Store a value.
-            - get(key, default=None, namespace='default'): Retrieve a value (None if missing).
-            - has(key, namespace='default'): Returns True if key exists.
-            - keys(namespace='default'): Returns list of all keys in the namespace.
-            - get_all(namespace='default'): Returns a deep copy of all key-value pairs (thread-safe).
-            - increment(key, amount=1, namespace='default'): Atomic increment. Starts at 0.
-            - delete(key, namespace='default'): Delete a key (no-op if missing).
-            - clear(namespace='default'): Remove all keys in the namespace.
+            - await set(key, value, namespace='default', ttl=None): Store a value.
+            - await get(key, default=None, namespace='default'): Retrieve a value (None if missing).
+            - await has(key, namespace='default'): Returns True if key exists.
+            - await keys(namespace='default'): Returns list of all live keys in the namespace.
+            - await get_all(namespace='default'): Returns a deep copy of all live key-value pairs.
+            - await increment(key, amount=1, namespace='default', ttl=None): Atomic increment.
+              Starts at 0. Returns the new value.
+            - await delete(key, namespace='default'): Delete a key (no-op if missing).
+            - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
 ### 🔧 Tool: `registry` (Status: ✅)
@@ -278,7 +285,9 @@ Systems Registry Tool (registry):
                   },
                   "domains": { ... }
                 }
-                NOTE: status is updated REACTIVELY (on exception via ToolProxy).
+                NOTE: status is updated REACTIVELY via ToolProxy (hybrid policy):
+                ToolUnavailableError -> DEAD immediately; any other exception ->
+                DEAD only after 5 consecutive failures (success resets the streak).
                 A tool that silently stopped responding may still show "OK".
             - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
             - get_metrics() -> list[dict]: Last 1000 tool call records.
@@ -404,6 +413,6 @@ S3 Storage Tool (s3):
 - **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
 - **Events emitted**: `user.created` (email, id), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
 - **Events consumed**: user.created
-- **Dependencies**: auth, db, event_bus, http, logger
+- **Dependencies**: auth, db, event_bus, http, logger, state
 - **Plugins**: users.CreateUserPlugin, users.DeleteUserPlugin, users.GetMePlugin, users.GetUserByIdPlugin, users.ListUsersPlugin, users.LoginPlugin, users.LogoutPlugin, users.UpdateUserPlugin, users.WelcomeServicePlugin
 

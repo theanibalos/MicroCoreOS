@@ -25,10 +25,9 @@ PLACEHOLDERS: PostgreSQL uses $1, $2, $3... (NOT '?' like SQLite).
 
 import os
 import re
-import uuid
 import asyncio
 import asyncpg
-from core.base_tool import BaseTool
+from core.base_tool import BaseTool, ToolUnavailableError
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -40,8 +39,12 @@ class DatabaseError(Exception):
     pass
 
 
-class DatabaseConnectionError(DatabaseError):
-    """Connection error to the PostgreSQL server."""
+class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
+    """Connection error to the PostgreSQL server.
+
+    Inherits ToolUnavailableError so ToolProxy marks the tool DEAD immediately
+    (infrastructure failure), unlike plain DatabaseError (likely business error).
+    """
     pass
 
 

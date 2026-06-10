@@ -24,9 +24,14 @@ dependencies = [
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.ruff.lint]
+# E701 (one-line `if x: return y`) is an accepted idiom in this codebase.
+ignore = ["E701"]
+
 [dependency-groups]
 dev = [
     "anyio[trio]>=4.0.0",
     "pytest>=8.0.0",
+    "ruff>=0.15.16",
     "watchfiles>=1.1.1",
 ]

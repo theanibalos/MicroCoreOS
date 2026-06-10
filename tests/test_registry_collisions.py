@@ -1,4 +1,3 @@
-import os
 import pytest
 from core.kernel import Kernel
 from core.base_plugin import BasePlugin
@@ -24,8 +23,8 @@ async def test_registry_collision_prevention(tmp_path):
     Domain2Plugin.__name__ = "ConflictPlugin"
     
     # Test naming logic
-    p1_name = f"domain1.ConflictPlugin"
-    p2_name = f"domain2.ConflictPlugin"
+    p1_name = "domain1.ConflictPlugin"
+    p2_name = "domain2.ConflictPlugin"
     
     kernel.container.registry.register_plugin(p1_name, {"domain": "domain1", "class": "ConflictPlugin"})
     kernel.container.registry.register_plugin(p2_name, {"domain": "domain2", "class": "ConflictPlugin"})
