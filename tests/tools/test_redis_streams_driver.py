@@ -1,0 +1,130 @@
+"""
+Distributed behavior of the Redis Streams driver (Issue 18).
+
+The parity suite (test_event_bus_broker_parity.py) proves the driver behaves
+like the in-process one within a single instance. These tests prove what the
+in-process driver CANNOT do: two EventBusTool instances (two MicroCoreOS
+replicas) sharing transport through the same Redis.
+
+Skips itself if no Redis server is reachable:
+    docker compose -f dev_infra/docker-compose.yml up -d redis
+"""
+
+import asyncio
+import pytest
+from tools.event_bus.event_bus_tool import EventBusTool, InProcessDriver
+from tools.event_bus.redis_streams_driver import RedisStreamsDriver, EventBusConnectionError
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+async def _make_bus(monkeypatch) -> EventBusTool:
+    monkeypatch.setenv("REDIS_DB", "15")
+    b = EventBusTool(driver=RedisStreamsDriver())
+    try:
+        await b.setup()
+    except EventBusConnectionError:
+        pytest.skip("Redis not available — docker compose -f dev_infra/docker-compose.yml up -d redis")
+    return b
+
+
+@pytest.fixture
+async def two_buses(monkeypatch):
+    """Two independent EventBusTool instances = two replicas sharing one Redis."""
+    bus_a = await _make_bus(monkeypatch)
+    bus_b = await _make_bus(monkeypatch)
+    yield bus_a, bus_b
+    await bus_a.shutdown()
+    await bus_b.shutdown()
+
+
+async def test_cross_instance_delivery(two_buses):
+    """An event published in replica B reaches a subscriber living in replica A."""
+    bus_a, bus_b = two_buses
+    received = []
+
+    async def handler(env):
+        received.append(env.payload)
+
+    await bus_a.subscribe("dist.test", handler)
+    await bus_b.publish("dist.test", {"from": "replica_b"})
+    await asyncio.sleep(0.3)
+
+    assert received == [{"from": "replica_b"}]
+
+
+async def test_group_exactly_one_consumer_across_instances(two_buses):
+    """The Issue 19 pattern: N workers with group= → each job consumed exactly once."""
+    bus_a, bus_b = two_buses
+    deliveries_a, deliveries_b = [], []
+
+    async def worker_a(env):
+        deliveries_a.append(env.payload["n"])
+
+    async def worker_b(env):
+        deliveries_b.append(env.payload["n"])
+
+    await bus_a.subscribe("jobs.report.due", worker_a, group="workers")
+    await bus_b.subscribe("jobs.report.due", worker_b, group="workers")
+
+    for n in range(10):
+        await bus_a.publish("jobs.report.due", {"n": n})
+    await asyncio.sleep(0.5)
+
+    # Every job delivered exactly once across the whole fleet — no duplicates.
+    assert sorted(deliveries_a + deliveries_b) == list(range(10))
+
+
+async def test_broadcast_reaches_all_instances(two_buses):
+    """Without group=, every replica's subscriber sees every event."""
+    bus_a, bus_b = two_buses
+    seen_a, seen_b = [], []
+
+    async def handler_a(env):
+        seen_a.append(env.payload["n"])
+
+    async def handler_b(env):
+        seen_b.append(env.payload["n"])
+
+    await bus_a.subscribe("config.changed", handler_a)
+    await bus_b.subscribe("config.changed", handler_b)
+
+    await bus_a.publish("config.changed", {"n": 1})
+    await asyncio.sleep(0.3)
+
+    assert seen_a == [1]
+    assert seen_b == [1]
+
+
+async def test_wildcard_across_instances(two_buses):
+    """'*' subscribers consume the firehose stream, regardless of who published."""
+    bus_a, bus_b = two_buses
+    seen = []
+
+    async def auditor(env):
+        seen.append(env.event)
+
+    await bus_a.subscribe("*", auditor)
+    await bus_b.publish("orders.created", {"id": 1})
+    await bus_b.publish("orders.paid", {"id": 1})
+    await asyncio.sleep(0.3)
+
+    assert sorted(seen) == ["orders.created", "orders.paid"]
+
+
+async def test_driver_selected_by_env_var(monkeypatch):
+    """EVENT_BUS_DRIVER=redis_streams swaps the transport with zero code changes."""
+    monkeypatch.setenv("EVENT_BUS_DRIVER", "redis_streams")
+    assert isinstance(EventBusTool()._driver, RedisStreamsDriver)
+
+    monkeypatch.setenv("EVENT_BUS_DRIVER", "in_process")
+    assert isinstance(EventBusTool()._driver, InProcessDriver)
+
+    monkeypatch.setenv("EVENT_BUS_DRIVER", "kafka")
+    with pytest.raises(ValueError):
+        EventBusTool()

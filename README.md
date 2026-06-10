@@ -118,7 +118,9 @@ A Tool is identified by its `name` property. The SQLite tool and the PostgreSQL 
 
 This pattern works for any infrastructure: swap the event bus backend, the HTTP server, the auth mechanism — as long as the new tool has the same `name` and API, plugins keep working.
 
-Additional tools (PostgreSQL, chaos testing) are available in extras/available_tools/. To activate, move them into tools/.
+Additional tools (PostgreSQL, Redis state, chaos testing) are available in extras/available_tools/. To activate, move them into tools/ — and if the new tool reuses an existing `name` (e.g. `redis_state` registers as `"state"`), move the tool it replaces out of tools/ first: only one tool per name may be discovered.
+
+The Redis state swap is verified by a parity suite (`tests/tools/test_state_parity.py`): the same contract battery runs against the in-memory reference and against a real Redis, so the replacement is proven equivalent, not assumed.
 
 ### Honest Kernel & Smart Infrastructure.
 

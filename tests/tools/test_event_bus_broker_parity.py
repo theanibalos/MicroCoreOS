@@ -3,6 +3,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
+from tools.event_bus.redis_streams_driver import RedisStreamsDriver, EventBusConnectionError
 
 pytestmark = pytest.mark.anyio
 
@@ -10,10 +11,21 @@ pytestmark = pytest.mark.anyio
 def anyio_backend():
     return "asyncio"
 
-@pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
+# The parity requirement (Issue 22): every transport driver must pass this
+# exact suite. The redis variant skips itself if no server is reachable
+# (docker compose -f dev_infra/docker-compose.yml up -d redis).
+@pytest.fixture(params=["in_process", "redis_streams"])
+async def bus(request, monkeypatch):
+    if request.param == "redis_streams":
+        monkeypatch.setenv("REDIS_DB", "15")  # keep test streams away from dev data
+        b = EventBusTool(driver=RedisStreamsDriver())
+        try:
+            await b.setup()
+        except EventBusConnectionError:
+            pytest.skip("Redis not available — docker compose -f dev_infra/docker-compose.yml up -d redis")
+    else:
+        b = EventBusTool()
+        await b.setup()
     yield b
     await b.shutdown()
 

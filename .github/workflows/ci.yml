@@ -28,6 +28,18 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Real Redis so the state parity suite (tests/tools/test_state_parity.py)
+      # runs against actual infrastructure instead of skipping itself.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 

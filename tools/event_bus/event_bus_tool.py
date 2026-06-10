@@ -34,10 +34,15 @@ To swap to Kafka/RabbitMQ/Redis Streams:
        (envelope.model_dump_json()) and hand it to the broker. Map hints:
        key → partition key (Kafka), priority → message priority (RabbitMQ),
        delay → delayed delivery, ttl → broker-side expiration.
-    3. On message arrival, deserialize back into an EventEnvelope and call
+    3. On message arrival, deserialize with self._envelope_cls (injected by
+       the Bus via bind() — do NOT import EventEnvelope yourself: the Kernel
+       loads modules by path, so an imported copy is a DIFFERENT class and
+       Pydantic tracing would reject it) and call
        self._deliver_hook(envelope, callback, is_wildcard) — the Bus takes
        over from there (retries, DLQ, tracing all still work).
-    4. Inject it: EventBusTool(driver=KafkaDriver()).
+    4. Inject it: EventBusTool(driver=KafkaDriver()) — or, for the built-in
+       distributed driver, just set EVENT_BUS_DRIVER=redis_streams
+       (tools/event_bus/redis_streams_driver.py; zero code changes).
     5. It MUST pass the parity suite: tests/tools/test_event_bus_broker_parity.py.
 
 Plugins are unaffected: same envelope, same API, same semantics.
@@ -102,9 +107,16 @@ class SubOptions(BaseModel):
 class EventBusDriver:
     """Interface for all transport implementations (Translators)."""
     async def setup(self): pass
-    def bind(self, deliver_hook: Callable):
-        """Injected by the Bus to handle message delivery."""
+    def bind(self, deliver_hook: Callable, envelope_cls: Optional[type] = None):
+        """Injected by the Bus to handle message delivery.
+
+        envelope_cls is the Bus's OWN EventEnvelope class: drivers must
+        deserialize with it (self._envelope_cls.model_validate_json) instead
+        of importing EventEnvelope, so envelopes always validate against the
+        exact class the Bus uses for tracing.
+        """
         self._deliver_hook = deliver_hook
+        self._envelope_cls = envelope_cls or EventEnvelope
 
     async def publish(self, envelope: EventEnvelope) -> None: 
         """Pure fire-and-forget transport. Returns nothing."""
@@ -188,16 +200,29 @@ class EventBusTool(BaseTool):
     _MAX_CONSECUTIVE_FAILURES = 5
 
     def __init__(self, driver: Optional[EventBusDriver] = None):
-        self._driver = driver or InProcessDriver()
+        self._driver = driver or self._driver_from_env()
         self._trace_log: collections.deque = collections.deque(maxlen=500)
         self._listeners: list = []
         self._failure_listeners: list = []
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._pending_tasks: Set[asyncio.Task] = set()
         self._sub_options: Dict[Tuple[str, Callable], SubOptions] = {}
-        
-        # Bind the delivery hook
-        self._driver.bind(self._deliver)
+
+        # Bind the delivery hook (and OUR envelope class — see EventBusDriver.bind)
+        self._driver.bind(self._deliver, EventEnvelope)
+
+    @staticmethod
+    def _driver_from_env() -> EventBusDriver:
+        """Transport selection without touching code: EVENT_BUS_DRIVER env var."""
+        name = os.getenv("EVENT_BUS_DRIVER", "in_process").strip().lower()
+        if name in ("", "in_process", "inprocess", "memory"):
+            return InProcessDriver()
+        if name == "redis_streams":
+            from tools.event_bus.redis_streams_driver import RedisStreamsDriver
+            return RedisStreamsDriver()
+        raise ValueError(
+            f"Unknown EVENT_BUS_DRIVER '{name}' (expected 'in_process' or 'redis_streams')."
+        )
 
     @property
     def name(self) -> str: return "event_bus"

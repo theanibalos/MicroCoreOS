@@ -202,10 +202,20 @@ The `EventBusTool` decouples the brain (logic, tracing) from the transport via t
 | Driver | Status | Use Case |
 |---|---|---|
 | `InProcessDriver` | Built-in | Default. Fast, local memory. Simulates groups and delays. |
+| `RedisStreamsDriver` | Built-in | Distributed transport across replicas. Activate with `EVENT_BUS_DRIVER=redis_streams`. |
 | `RabbitMQDriver` | Not included | Would add AMQP support. Implement `EventBusDriver` interface. |
 | `KafkaDriver` | Not included | Would add streaming and replayability. Implement `EventBusDriver` interface. |
 
-To use a custom driver, instantiate `EventBusTool(driver=MyDriver())` and register it. Plugins remain 100% unaffected because they only interact with `EventBusTool`'s public API.
+### RedisStreamsDriver (distributed mode)
+
+Set `EVENT_BUS_DRIVER=redis_streams` (plus the `REDIS_*` env vars if Redis is not on localhost) and start N replicas pointing at the same Redis — zero code changes:
+
+- Each event maps to a capped stream (`bus:user.created`), plus a firehose stream (`bus:*`) that powers wildcard subscribers.
+- `subscribe(..., group="workers")` becomes a real Redis consumer group: each message is delivered to exactly **one** consumer across the whole fleet (the Issue 19 scheduler pattern).
+- Without `group=`, every subscriber in every replica receives every event (broadcast), matching in-process semantics.
+- Retries, backoff, DLQ, RPC and tracing keep working untouched — they live in the Bus, not the transport.
+
+To use a custom driver, instantiate `EventBusTool(driver=MyDriver())` and register it. Plugins remain 100% unaffected because they only interact with `EventBusTool`'s public API. Every driver MUST pass the parity suite (`tests/tools/test_event_bus_broker_parity.py`), which runs parametrized over all built-in transports.
 
 ---
 

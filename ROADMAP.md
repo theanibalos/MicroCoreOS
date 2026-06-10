@@ -148,20 +148,41 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 > Conclusión del análisis: la base es sólida; lo que falta son **adiciones, no cirugías**.
 > Las especificaciones de reemplazo ya están escritas en los headers de cada tool.
 
-**Issue 17 — 🔴 RedisStateTool (primer swap real de un tool)**
+**Issue 17 — ✅ RedisStateTool (primer swap real de un tool)**
 
-Implementar `tools/redis_state/` con `name = "state"` siguiendo el contrato async + TTL
-definido en `tools/state/state_tool.py` (header: tabla de mapeo a comandos Redis —
-`SET EX`, `INCRBY + EXPIRE NX`, `SCAN` por namespace). Redis ya está preparado
-(comentado) en `dev_infra/docker-compose.yml`. Valida el sistema de swap de punta a punta.
-**Es el mejor candidato para empezar: contrato chico y spec completa.**
+Implementado en `extras/available_tools/redis_state/` con `name = "state"` (NO en
+`tools/redis_state/` como decía el plan original: el Kernel auto-descubre todo `tools/`
+y dos tools con el mismo nombre se sobreescriben silenciosamente — el patrón correcto
+es el de PostgreSQL: vive en extras/ y se activa moviéndolo a `tools/`).
+- Sigue el contrato async + TTL del header de `tools/state/state_tool.py`
+  (`SET PX`, `INCRBY/INCRBYFLOAT + PEXPIRE NX`, `SCAN` por namespace, valores JSON).
+- Suite de paridad: `tests/tools/test_state_parity.py` — la misma batería corre
+  contra el in-memory y contra Redis real (se salta sola si no hay servidor);
+  Redis agregado como service del CI. Adelanta el patrón del Issue 22.
+- Swap validado de punta a punta: sistema booteado con RedisStateTool como `state`,
+  throttle de login verificado contra Redis real (contador + TTL de 15 min + 429).
+- Redis descomentado en `dev_infra/docker-compose.yml`.
 
-**Issue 18 — 🔴 Drivers distribuidos del Event Bus (Kafka / RabbitMQ / Redis Streams)**
+**Issue 18 — 🟢 Drivers distribuidos del Event Bus (Redis Streams ✅ / Kafka / RabbitMQ)**
 
 NO se reescribe el EventBusTool: se implementa la interfaz `EventBusDriver`
 (solo transporte). Retries, DLQ, RPC y tracing son agnósticos y viven en el Bus.
-Pasos documentados en el header de `tools/event_bus/event_bus_tool.py`.
-Requisito formal: pasar `tests/tools/test_event_bus_broker_parity.py`.
+
+✅ **RedisStreamsDriver** (`tools/event_bus/redis_streams_driver.py`):
+- Activación sin código: `EVENT_BUS_DRIVER=redis_streams`. N réplicas contra el
+  mismo Redis comparten transporte; `group=` es un consumer group real
+  (exactamente-un-consumidor a través de la flota); wildcard vía stream firehose.
+- Pasa la suite de paridad completa (`test_event_bus_broker_parity.py`, ahora
+  parametrizada sobre ambos transportes) + tests distribuidos propios
+  (`test_redis_streams_driver.py`: 2 instancias, cross-delivery, grupos, firehose).
+- Validado de punta a punta: sistema real booteado con el driver, `user.created`
+  → WelcomeService viajando por Redis con el árbol causal intacto.
+- Nota de diseño: `EventBusDriver.bind()` ahora inyecta también la clase
+  `EventEnvelope` del Bus — los drivers NO deben importarla (el Kernel carga
+  módulos por path y una copia importada es otra clase para Pydantic).
+
+Pendiente: drivers Kafka y RabbitMQ (mismos pasos, documentados en el header
+de `tools/event_bus/event_bus_tool.py`; requisito formal: pasar la paridad).
 
 **Issue 19 — 🟠 Scheduler singleton + jobs vía bus**
 
