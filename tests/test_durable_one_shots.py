@@ -145,7 +145,7 @@ async def test_survives_restart(db, bus):
 
 
 async def test_cancel_pending_one_shot(db, bus):
-    plugin = await _make_plugin(db, bus)
+    await _make_plugin(db, bus)
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     res = await bus.request(
         "system.one_shot.schedule",
@@ -161,7 +161,7 @@ async def test_cancel_pending_one_shot(db, bus):
 
 
 async def test_stable_job_id_replaces_pending(db, bus):
-    plugin = await _make_plugin(db, bus)
+    await _make_plugin(db, bus)
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     for v in (1, 2):
         await bus.request(
