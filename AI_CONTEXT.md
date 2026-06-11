@@ -306,6 +306,31 @@ Context Manager Tool (context_manager):
             - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
 ```
 
+### 🔧 Tool: `db` (Status: ✅)
+```text
+Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+        - CAPABILITIES:
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
+          topological sort (alphabetical by default). To declare that one migration must
+          run before another, add as the first comment line:
+            "-- depends: other_domain/001_file.sql"
+          Works for same-domain or cross-domain dependencies. .sql extension is optional.
+```
+
 ### 🔧 Tool: `scheduler` (Status: ✅)
 ```text
 Scheduler Tool (scheduler):
@@ -336,70 +361,6 @@ Scheduler Tool (scheduler):
           worker, never in the job callback.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
-```
-
-### 🔧 Tool: `db` (Status: ✅)
-```text
-Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
-        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
-        - CAPABILITIES:
-            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
-            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
-            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING (SQLite 3.35+): returns the first column value.
-              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes.
-            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
-              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
-            - await health_check() → bool: Verify database connectivity.
-        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
-        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
-          topological sort (alphabetical by default). To declare that one migration must
-          run before another, add as the first comment line:
-            "-- depends: other_domain/001_file.sql"
-          Works for same-domain or cross-domain dependencies. .sql extension is optional.
-```
-
-### 🔧 Tool: `s3` (Status: ✅)
-```text
-S3 Storage Tool (s3):
-        - PURPOSE: AWS S3 object storage. Private bucket + presigned URLs pattern.
-          Compatible with LocalStack and MinIO via AWS_S3_ENDPOINT_URL.
-          External tool — setup() never raises; methods fail gracefully if unavailable.
-        - SIZE LIMITS:
-            Controlled by env vars (AWS_S3_SIZE_LIMIT_ENABLED, AWS_S3_MAX_FILE_SIZE_MB).
-            Override per call with max_size_bytes=N. Raises S3FileSizeError if exceeded.
-            If size limit is disabled globally, max_size_bytes is also ignored.
-        - All methods accept an optional bucket= param. If omitted, uses AWS_S3_DEFAULT_BUCKET.
-        - CAPABILITIES:
-            - await upload_fileobj(key, fileobj, bucket?, content_type?, metadata?) -> str:
-                Upload a file-like object (e.g. FastAPI UploadFile). Streams to S3.
-            - await upload_file(key, file_path, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
-                Upload a file from disk. Returns the key.
-            - await upload_bytes(key, data: bytes, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
-                Upload bytes from memory. Returns the key.
-            - await download_file(key, destination_path, bucket?) -> bool:
-                Download an object to a local path.
-            - await download_bytes(key, bucket?) -> bytes:
-                Download an object into memory.
-            - await get_presigned_url(key, bucket?, expires_in=3600, operation='get'|'put') -> str:
-                Generate a temporary signed URL. Use for serving private media to clients.
-            - await delete_object(key, bucket?) -> bool:
-                Delete an object.
-            - await list_objects(prefix='', bucket?, max_keys=1000) -> list[dict]:
-                List objects. Each dict: {key, size, last_modified, etag}.
-            - await object_exists(key, bucket?) -> bool:
-                Check existence without downloading.
-            - await copy_object(src_key, dst_key, src_bucket?, dst_bucket?) -> bool:
-                Copy between keys or buckets.
-            - await get_object_metadata(key, bucket?) -> dict:
-                Returns {size, content_type, last_modified, etag, metadata}.
-            - await health_check() -> bool:
-                Verify S3 connectivity.
-        - EXCEPTIONS: S3Error, S3UnavailableError, S3FileSizeError.
 ```
 
 ## 📦 Domains
