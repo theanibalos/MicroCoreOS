@@ -475,13 +475,20 @@ class EventBusTool(BaseTool):
     def add_failure_listener(self, cb): self._failure_listeners.append(cb)
 
     def _get_name(self, cb):
-        # Includes the module: this name doubles as the derived consumer group,
-        # and two domains may declare plugins with the same class name — without
-        # the module they would collide into one group and split each other's
-        # events. The module is path-derived, so it is stable across replicas.
-        if hasattr(cb, "__self__"):
-            cls = cb.__self__.__class__
-            return f"{cls.__module__}.{cls.__name__}.{cb.__name__}"
+        # This name doubles as the derived consumer group, so it must be
+        # stable across replicas AND unique across domains (two domains may
+        # declare same-named plugin classes — a bare "Class.method" would
+        # collide them into one group and split each other's events).
+        owner = getattr(cb, "__self__", None)
+        if owner is not None:
+            # Kernel-stamped identity ("users.WelcomeServicePlugin") when
+            # present; module-qualified fallback otherwise (both stable:
+            # domain and module are derived from the file path).
+            base = getattr(owner, "_identity", None)
+            if not base:
+                cls = owner.__class__
+                base = f"{cls.__module__}.{cls.__name__}"
+            return f"{base}.{cb.__name__}"
         module = getattr(cb, "__module__", None) or "anonymous"
         return f"{module}.{getattr(cb, '__qualname__', 'anonymous')}"
 

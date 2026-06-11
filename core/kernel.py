@@ -126,6 +126,9 @@ class Kernel:
                     continue
 
                 instance = plugin_cls(**deps)
+                # Stamp the registered identity so infrastructure names this
+                # plugin exactly like the registry does ("domain.ClassName").
+                instance._identity = p_name
                 self.plugins[p_name] = instance
                 self.container.registry.update_plugin_status(p_name, "RUNNING")
 

@@ -18,8 +18,8 @@ class SystemTracesStreamPlugin(BasePlugin):
         "id": "uuid",
         "parent_id": "uuid | null",
         "event": "user.created",
-        "emitter": "CreateUserPlugin.execute",
-        "subscribers": ["WelcomeServicePlugin.on_user_created"],
+        "emitter": "users.CreateUserPlugin.execute",
+        "subscribers": ["users.WelcomeServicePlugin.on_user_created"],
         "payload_keys": ["id", "email"],
         "timestamp": 1234567890.0,
         "children": []        # only present in snapshot nodes

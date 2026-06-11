@@ -1,5 +1,8 @@
 # Observability — The Living System
 
+> Building an external dashboard? The exact JSON shapes and SSE framing of
+> every endpoint below are specified in [OBSERVABILITY_API.md](OBSERVABILITY_API.md).
+
 > MicroCoreOS is designed to be introspectable by default.
 > It provides real-time metrics, traces, and event history.
 

@@ -677,11 +677,14 @@ class HttpServerTool(BaseTool):
         # so the entire cross-service call chain shares the same root event ID.
         # If absent (first hop or external client), generate a fresh UUID.
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        identity = (
-            f"{handler.__self__.__class__.__name__}.{handler.__name__}"
-            if hasattr(handler, "__self__")
-            else getattr(handler, "__name__", "unknown")
-        )
+        # Same identity scheme as the event bus: prefer the kernel-stamped
+        # "domain.ClassName" so emitters and subscribers share one format.
+        owner = getattr(handler, "__self__", None)
+        if owner is not None:
+            base = getattr(owner, "_identity", None) or owner.__class__.__name__
+            identity = f"{base}.{handler.__name__}"
+        else:
+            identity = getattr(handler, "__name__", "unknown")
         id_token = current_event_id_var.set(request_id)
         ident_token = current_identity_var.set(identity)
         print(

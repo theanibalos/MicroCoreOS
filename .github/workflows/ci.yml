@@ -1,10 +1,17 @@
 name: CI Pipeline
 
+# Docs-only changes (markdown, LICENSE) don't execute code — skip the pipeline.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
 
 jobs:
   test:

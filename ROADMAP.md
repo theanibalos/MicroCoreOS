@@ -238,7 +238,7 @@ parity suite of its reference implementation.
 **✅ Automatic consumer groups (stable callback identity)**
 
 `subscribe()` without `group=` now derives a stable group from the callback
-identity, including its module (`mod_users_plugins_welcome.WelcomeServicePlugin.on_user_created`)
+identity, including its module (`users.WelcomeServicePlugin.on_user_created`)
 so same-named classes in different domains can never collide into one group.
 Replicas run the same code → derive the same group → the broker delivers each
 event to exactly ONE replica. Distinct plugins → distinct groups → each logical
