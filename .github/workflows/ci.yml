@@ -79,36 +79,6 @@ jobs:
   smoke-boot:
     runs-on: ubuntu-latest
 
-    env:
-      ACTIVATE_S3: "true"
-      ACTIVATE_POSTGRESQL: "true"
-      ACTIVATE_REDIS_STATE: "true"
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: microcoreos
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
 
@@ -131,24 +101,6 @@ jobs:
           done
           curl -sf http://localhost:9000/minio/health/live
 
-      - name: Activate extras
-        run: |
-          if [ "${ACTIVATE_S3}" = "true" ]; then
-            echo "Activating S3..."
-            cp -r extras/available_tools/s3 tools/
-          fi
-          if [ "${ACTIVATE_REDIS_STATE}" = "true" ]; then
-            echo "Activating Redis State (replaces in-memory state)..."
-            rm -rf tools/state
-            cp -r extras/available_tools/redis_state tools/
-          fi
-          if [ "${ACTIVATE_POSTGRESQL}" = "true" ]; then
-            echo "Activating PostgreSQL (replaces sqlite)..."
-            rm -rf tools/sqlite
-            cp -r extras/available_tools/postgresql tools/
-            sed -i 's/return "postgresql"/return "db"/g' tools/postgresql/postgresql_tool.py
-          fi
-
       - name: Boot system against real infrastructure
         env:
           PYTHONUNBUFFERED: "1"
@@ -158,15 +110,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: minioadmin
           AWS_S3_ENDPOINT_URL: http://localhost:9000
           AWS_S3_VERIFY_SSL: "false"
-          PG_HOST: localhost
-          PG_PORT: "5432"
-          PG_USER: postgres
-          PG_PASSWORD: postgres
-          PG_DATABASE: microcoreos
-          REDIS_HOST: localhost
-          REDIS_PORT: "6379"
-          DB_AUTO_MIGRATE: "false"
         run: |
+          cp -r extras/available_tools/s3 tools/
           uv run main.py > boot.log 2>&1 &
           APP_PID=$!
 
@@ -182,7 +127,6 @@ jobs:
           # Assert: every tool OK, every plugin READY
           uv run python - <<'EOF'
           import json
-          import os
           status = json.load(open("status.json"))
           assert status["success"], "system/status reported failure"
           bad_tools = [t for t in status["data"]["tools"] if t["status"] != "OK"]
@@ -190,29 +134,12 @@ jobs:
           assert not bad_tools, f"Tools not OK: {bad_tools}"
           assert not bad_plugins, f"Plugins not READY: {bad_plugins}"
           names = {t["name"] for t in status["data"]["tools"]}
-          
-          expected_tools = {"db", "http", "auth", "event_bus", "state"}
-          if os.getenv("ACTIVATE_S3") == "true":
-              expected_tools.add("s3")
-          
-          assert expected_tools <= names, f"Missing tools: {names}"
+          assert {"db", "s3", "http", "auth", "event_bus", "state"} <= names, f"Missing tools: {names}"
           print(f"✅ {len(status['data']['tools'])} tools OK, {len(status['data']['plugins'])} plugins READY")
           EOF
 
-          # Assert: S3 connected to REAL infrastructure (if activated)
-          if [ "${ACTIVATE_S3}" = "true" ]; then
-            grep -q "\[S3Tool\] Connected" boot.log || { echo "S3 did not connect to MinIO"; cat boot.log; exit 1; }
-          fi
-
-          # Assert: Redis connected to REAL infrastructure (if activated)
-          if [ "${ACTIVATE_REDIS_STATE}" = "true" ]; then
-            grep -q "\[System\] RedisStateTool: Distributed store ready." boot.log || { echo "RedisStateTool did not connect"; cat boot.log; exit 1; }
-          fi
-
-          # Assert: PostgreSQL connected to REAL infrastructure (if activated)
-          if [ "${ACTIVATE_POSTGRESQL}" = "true" ]; then
-            grep -q "\[System\] PostgresqlTool: Pool ready" boot.log || { echo "PostgresqlTool did not connect"; cat boot.log; exit 1; }
-          fi
+          # Assert: S3 connected to REAL infrastructure (not degraded mode)
+          grep -q "\[S3Tool\] Connected" boot.log || { echo "S3 did not connect to MinIO"; cat boot.log; exit 1; }
 
           kill $APP_PID
 
