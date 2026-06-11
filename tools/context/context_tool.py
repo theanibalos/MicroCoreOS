@@ -278,8 +278,12 @@ domains/{name}/
                 if event.startswith("_reply."):
                     continue
                 for sub in subs:
-                    # sub is "ClassName.method_name"
-                    sub_class = sub.split(".")[0]
+                    # sub is "module.ClassName.method_name" (module-qualified
+                    # so derived consumer groups never collide across domains)
+                    parts = sub.split(".")
+                    if len(parts) < 3:
+                        continue  # plain-function subscriber, not a plugin method
+                    sub_class = parts[-2]
                     # plugin_names contains "domain.ClassName"
                     if any(p.endswith(f".{sub_class}") or p == sub_class for p in plugin_names):
                         consumed.add(event)

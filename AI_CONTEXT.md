@@ -126,7 +126,12 @@ Configuration Tool (config):
 ```text
 Universal Event Bus (event_bus):
         - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5): Listen for events.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
         - request(event_name, data, timeout=5): Async RPC (returns dict).
         - unsubscribe(event_name, callback): Stop listening.
         - get_trace_history() -> List[TraceNode]: Last 500 event records.
@@ -218,16 +223,6 @@ Telemetry Tool (telemetry):
             uv add opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
-### 🔧 Tool: `context_manager` (Status: ✅)
-```text
-Context Manager Tool (context_manager):
-        - PURPOSE: Automatically manages and generates live AI contextual documentation.
-        - CAPABILITIES:
-            - Reads the system registry.
-            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
-            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
-```
-
 ### 🔧 Tool: `logger` (Status: ✅)
 ```text
 Logging Tool (logger):
@@ -240,27 +235,6 @@ Logging Tool (logger):
                 Sink signature: callback(level: str, message: str, timestamp: str, identity: str)
                 'identity' is the current plugin/tool context (from current_identity_var).
                 Use it to attribute errors to specific plugins for health tracking.
-```
-
-### 🔧 Tool: `state` (Status: ✅)
-```text
-Key-Value State Tool (state):
-        - PURPOSE: Share volatile global data between plugins safely.
-        - IDEAL FOR: Counters, temporary caches, rate-limit windows, business semaphores.
-        - CONTRACT: All methods are async. Values must be JSON-serializable so the
-          tool can be swapped for a distributed store (Redis) without touching plugins.
-        - TTL: optional expiry in seconds. Expired keys behave like missing keys.
-          On increment(), the TTL only applies when the key is created (fixed window).
-        - CAPABILITIES:
-            - await set(key, value, namespace='default', ttl=None): Store a value.
-            - await get(key, default=None, namespace='default'): Retrieve a value (None if missing).
-            - await has(key, namespace='default'): Returns True if key exists.
-            - await keys(namespace='default'): Returns list of all live keys in the namespace.
-            - await get_all(namespace='default'): Returns a deep copy of all live key-value pairs.
-            - await increment(key, amount=1, namespace='default', ttl=None): Atomic increment.
-              Starts at 0. Returns the new value.
-            - await delete(key, namespace='default'): Delete a key (no-op if missing).
-            - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
 ### 🔧 Tool: `registry` (Status: ✅)
@@ -299,6 +273,37 @@ Systems Registry Tool (registry):
             - update_tool_status(name, status, message=None): Manually override a tool's health status.
                 status: "OK" | "FAIL" | "DEAD".
                 Intended for health-check plugins that verify tools proactively.
+```
+
+### 🔧 Tool: `context_manager` (Status: ✅)
+```text
+Context Manager Tool (context_manager):
+        - PURPOSE: Automatically manages and generates live AI contextual documentation.
+        - CAPABILITIES:
+            - Reads the system registry.
+            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
+```
+
+### 🔧 Tool: `state` (Status: ✅)
+```text
+Key-Value State Tool (state):
+        - PURPOSE: Share volatile global data between plugins safely.
+        - IDEAL FOR: Counters, temporary caches, rate-limit windows, business semaphores.
+        - CONTRACT: All methods are async. Values must be JSON-serializable so the
+          tool can be swapped for a distributed store (Redis) without touching plugins.
+        - TTL: optional expiry in seconds. Expired keys behave like missing keys.
+          On increment(), the TTL only applies when the key is created (fixed window).
+        - CAPABILITIES:
+            - await set(key, value, namespace='default', ttl=None): Store a value.
+            - await get(key, default=None, namespace='default'): Retrieve a value (None if missing).
+            - await has(key, namespace='default'): Returns True if key exists.
+            - await keys(namespace='default'): Returns list of all live keys in the namespace.
+            - await get_all(namespace='default'): Returns a deep copy of all live key-value pairs.
+            - await increment(key, amount=1, namespace='default', ttl=None): Atomic increment.
+              Starts at 0. Returns the new value.
+            - await delete(key, namespace='default'): Delete a key (no-op if missing).
+            - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
@@ -340,13 +345,20 @@ Scheduler Tool (scheduler):
                 Providing a stable job_id prevents duplicates on restart.
             - add_one_shot(run_at: datetime, callback, job_id?: str) -> str:
                 Schedule a one-time job at a specific datetime (timezone-aware).
-                Returns job_id.
+                Returns job_id. IN-MEMORY: lost if the process restarts before firing.
+                For one-shots that must survive restarts, publish to the bus:
+                "system.one_shot.schedule" (durable scheduling service, system domain).
             - remove_job(job_id: str) -> bool:
                 Remove a job by ID. Returns True if removed, False if not found.
             - list_jobs() -> list[dict]:
                 Snapshot of all scheduled jobs: [{id, next_run, trigger}].
         - REGISTER IN on_boot(): jobs are collected during on_boot(), scheduler starts
           in on_boot_complete() after all plugins have registered.
+        - SCALING (N replicas): set SCHEDULER_ENABLED=false in worker replicas — jobs
+          register everywhere but fire only in the single "beat" replica. Jobs should
+          publish an event to the bus and return; workers consume it (group semantics
+          guarantee exactly one execution across the fleet). Do heavy work in the
+          worker, never in the job callback.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
 ```
@@ -401,17 +413,17 @@ S3 Storage Tool (s3):
 - **Plugins**: ping.PingPlugin
 
 ### `system`
-- **Tables**: none
+- **Table `scheduler_one_shot`**: job_id (str), run_at_epoch (float), event (str), payload (str)
 - **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
 - **Events emitted**: `event.delivery.failed` ()
-- **Events consumed**: none
-- **Dependencies**: config, container, event_bus, http, logger, registry
-- **Plugins**: system.ArchitectureLinterPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
+- **Events consumed**: system.one_shot.cancel, system.one_shot.schedule
+- **Dependencies**: config, container, db, event_bus, http, logger, registry, scheduler
+- **Plugins**: system.ArchitectureLinterPlugin, system.DurableOneShotsPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
-- **Table `user`**: name (str), email (EmailStr), password_hash (any)
+- **Table `user`**: name (str), email (EmailStr), password_hash (any), roles (list[str])
 - **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
-- **Events emitted**: `user.created` (email, id), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
+- **Events emitted**: `user.created` (email, id, roles), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger, state
 - **Plugins**: users.CreateUserPlugin, users.DeleteUserPlugin, users.GetMePlugin, users.GetUserByIdPlugin, users.ListUsersPlugin, users.LoginPlugin, users.LogoutPlugin, users.UpdateUserPlugin, users.WelcomeServicePlugin

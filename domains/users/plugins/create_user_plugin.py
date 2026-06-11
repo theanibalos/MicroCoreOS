@@ -1,6 +1,11 @@
+import json
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
+
+# Mirrors the column default in migrations/002_add_roles_to_users.sql (the SQL
+# default only backfills pre-existing rows; new users get their roles here).
+DEFAULT_ROLES = ["user"]
 
 
 # ── Request schema ───────────────────────────────────────────────────────────
@@ -46,24 +51,22 @@ class CreateUserPlugin(BasePlugin):
         try:
             req = CreateUserRequest(**data)
             password_hash = await self.auth.hash_password(req.password)
-            default_roles = ["user"]
-            import json
 
             user_id = await self.db.execute(
                 "INSERT INTO users (name, email, password_hash, roles) VALUES ($1, $2, $3, $4) RETURNING id",
-                [req.name, req.email, password_hash, json.dumps(default_roles)]
+                [req.name, req.email, password_hash, json.dumps(DEFAULT_ROLES)]
             )
             self.logger.info(f"User created with ID {user_id}")
 
-            await self.bus.publish("user.created", {"id": user_id, "email": req.email, "roles": default_roles})
+            await self.bus.publish("user.created", {"id": user_id, "email": req.email, "roles": DEFAULT_ROLES})
 
             return {
-                "success": True, 
+                "success": True,
                 "data": {
-                    "id": user_id, 
-                    "name": req.name, 
+                    "id": user_id,
+                    "name": req.name,
                     "email": req.email,
-                    "roles": default_roles
+                    "roles": DEFAULT_ROLES
                 }
             }
         except Exception as e:

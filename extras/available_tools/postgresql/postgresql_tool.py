@@ -271,9 +271,10 @@ class PostgresqlTool(BaseTool):
 
     async def on_boot_complete(self, container) -> None:
         # Issue 20: in production, replicas must NOT race to migrate at boot.
-        # Migrations run as a pipeline step instead: uv run main.py --migrate-only
+        # Migrations run as a pipeline step instead:
+        #   DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
         if os.getenv("DB_AUTO_MIGRATE", "true").strip().lower() != "true":
-            print("[System] PostgresqlTool: DB_AUTO_MIGRATE=false — skipping migrations (pipeline runs `uv run main.py --migrate-only`).")
+            print("[System] PostgresqlTool: DB_AUTO_MIGRATE=false — skipping migrations (pipeline runs `DB_AUTO_MIGRATE=true uv run main.py --boot-tool db`).")
             return
         print("[System] PostgresqlTool: Checking for pending migrations...")
         domains_dir = os.path.abspath("domains")

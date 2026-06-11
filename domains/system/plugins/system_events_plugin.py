@@ -91,4 +91,4 @@ class SystemEventsPlugin(BasePlugin):
             
         except Exception as e:
             print(f"[SystemEvents] Error: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not retrieve events"}

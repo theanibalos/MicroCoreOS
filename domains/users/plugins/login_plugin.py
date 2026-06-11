@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
@@ -76,7 +77,6 @@ class LoginPlugin(BasePlugin):
 
             await self.state.delete(req.email, namespace="login_throttle")
 
-            import json
             roles = json.loads(row["roles"]) if row.get("roles") else ["user"]
 
             # Token and cookie share the same lifetime (24h) — a cookie that

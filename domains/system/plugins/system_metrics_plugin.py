@@ -71,7 +71,8 @@ class SystemMetricsPlugin(BasePlugin):
             records_sorted = sorted(records, key=lambda r: r["timestamp"], reverse=True)
             return {"success": True, "data": records_sorted}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            print(f"[SystemMetrics] Error: {e}")
+            return {"success": False, "error": "Could not retrieve metrics"}
 
     async def _stream(self, data: dict):
         queue = asyncio.Queue(maxsize=200)

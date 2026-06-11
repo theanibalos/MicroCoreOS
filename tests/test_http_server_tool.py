@@ -21,8 +21,8 @@ async def client(tool):
 
 async def test_data_merging_intent(tool, client):
     """
-    La intención del Gateway es ser transparente y combinar todos los datos
-    de entrada (path, query, body) en un único diccionario 'data'.
+    The Gateway's intent is to be transparent and merge all input data
+    (path, query, body) into a single 'data' dictionary.
     """
     received_data = {}
 
@@ -41,8 +41,8 @@ async def test_data_merging_intent(tool, client):
 
 async def test_auth_injection_intent(tool, client):
     """
-    La intención de seguridad es que si hay un validador, este inyecte
-    su resultado en data['_auth'] de forma automática.
+    The security intent is that when a validator is present, it injects
+    its result into data['_auth'] automatically.
     """
     async def mock_validator(token):
         if token == "valid-token":
@@ -60,15 +60,15 @@ async def test_auth_injection_intent(tool, client):
     assert resp.status_code == 401
     assert resp.json()["success"] is False
 
-    # Intento con token válido
+    # Attempt with a valid token
     resp = await client.get("/secure", headers={"Authorization": "Bearer valid-token"})
     assert resp.status_code == 200
     assert resp.json()["data"]["user"]["user_id"] == 123
 
 async def test_http_context_manipulation_intent(tool, client):
     """
-    La intención de HttpContext es permitir que el plugin controle
-    la respuesta (status, headers, cookies) sin acoplarse a FastAPI.
+    The intent of HttpContext is to let the plugin control the
+    response (status, headers, cookies) without coupling to FastAPI.
     """
     async def handler(data, context: HttpContext):
         context.set_status(201)
@@ -86,12 +86,12 @@ async def test_http_context_manipulation_intent(tool, client):
 
 async def test_binary_response_intent(tool, client):
     """
-    La intención es que el plugin pueda devolver datos crudos (ej. imágenes)
-    saltándose el sobre de JSON estándar.
+    The intent is that the plugin can return raw data (e.g. images),
+    bypassing the standard JSON envelope.
     """
     async def handler(data, context: HttpContext):
         context.set_binary_response(b"raw-data", media_type="text/plain")
-        return {"success": True} # Será ignorado por el tool
+        return {"success": True} # Will be ignored by the tool
 
     tool.add_endpoint("/binary", "GET", handler)
     tool._register_all_endpoints()
@@ -103,7 +103,7 @@ async def test_binary_response_intent(tool, client):
 
 async def test_unhandled_exception_safety_intent(tool, client):
     """
-    La intención de resiliencia es que fallos en el plugin no rompan el server
+    The resilience intent is that plugin failures do not break the server
     y devuelvan un error 500 consistente al cliente.
     """
     async def handler(data, context):

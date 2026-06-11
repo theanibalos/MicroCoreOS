@@ -74,7 +74,7 @@ class SystemTracesPlugin(BasePlugin):
             return {"success": True, "data": flat_list}
         except Exception as e:
             print(f"[SystemTraces] Error: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not retrieve traces"}
 
     async def get_tree(self, data: dict, context=None):
         try:
@@ -101,7 +101,7 @@ class SystemTracesPlugin(BasePlugin):
             return {"success": True, "data": roots}
         except Exception as e:
             print(f"[SystemTraces] Error: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Could not retrieve traces"}
 
     def _to_flat_node(self, r) -> dict:
         env = r.envelope

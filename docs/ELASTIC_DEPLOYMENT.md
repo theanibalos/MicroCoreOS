@@ -127,7 +127,7 @@ step, before the new replicas start:
 DB_AUTO_MIGRATE=false
 
 # CI/CD pipeline step (boots ONLY the db tool, migrates, exits)
-uv run main.py --migrate-only
+DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
 ```
 
 This is the same model as Django/Rails/Flyway: the pipeline (with DBA
@@ -145,6 +145,10 @@ requests that should die at the door:
 - **Load balancing** across the N replicas (any strategy works: the
   replicas are stateless once Stage 2 is complete — sessions live in the
   JWT, shared state lives in Redis).
+- **Protecting the `/system/*` observability endpoints** (status, events,
+  metrics, traces). They are public BY DESIGN — the framework does not
+  impose an auth scheme on its own introspection; each deployment decides
+  (block at the proxy, IP-allowlist, or add `auth_validator` in your fork).
 - **Volumetric rate limiting** (per-IP, anti-abuse, DDoS). Example, nginx:
 
   ```nginx
@@ -170,7 +174,7 @@ requests that should die at the door:
 ```bash
 # database (Stage 1 swap: tools/postgresql)
 PG_HOST=db.internal  PG_PORT=5432  PG_USER=app  PG_PASSWORD=***  PG_DATABASE=microcoreos
-DB_AUTO_MIGRATE=false                  # pipeline runs --migrate-only
+DB_AUTO_MIGRATE=false                  # pipeline runs --boot-tool db
 
 # shared state (Stage 2 swap: tools/redis_state) + event transport
 REDIS_HOST=redis.internal  REDIS_PORT=6379  REDIS_PASSWORD=***
@@ -192,7 +196,7 @@ OTEL_SERVICE_NAME=microcoreos
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 ```
 
-Deploy order: `--migrate-only` in the pipeline → start/roll the worker
+Deploy order: `--boot-tool db` in the pipeline → start/roll the worker
 replicas → ensure exactly one beat replica is up.
 
 ---

@@ -60,14 +60,14 @@ def test_require_all_missing_mentions_all(tool, monkeypatch):
 
 def test_get_required_empty_string_does_not_raise(tool, monkeypatch):
     # Documenta el comportamiento actual: get(required=True) con KEY="" retorna ""
-    # sin lanzar, porque la guardia es `value is None` — no detecta strings vacíos.
+    # without raising, because the guard is `value is None` — it misses empty strings.
     monkeypatch.setenv("EMPTY_KEY", "")
     result = tool.get("EMPTY_KEY", required=True)
     assert result == ""
 
 
 def test_require_empty_string_raises(tool, monkeypatch):
-    # require() usa `not os.environ.get(k)` — string vacío es falsy, por lo que SÍ lanza.
+    # require() uses `not os.environ.get(k)` — an empty string is falsy, so it DOES raise.
     # Inconsistencia documentada: get(required=True) con "" pasa, require() con "" falla.
     monkeypatch.setenv("EMPTY_KEY", "")
     with pytest.raises(EnvironmentError):

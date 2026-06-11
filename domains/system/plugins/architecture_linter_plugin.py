@@ -1,5 +1,6 @@
 import ast
 import os
+import re
 import inspect
 from core.base_plugin import BasePlugin
 
@@ -48,24 +49,30 @@ class ArchitectureLinterPlugin(BasePlugin):
         }
 
         for tool in self.container.get_raw_tools():
-            desc = tool.get_interface_description().lower()
-            
+            desc = tool.get_interface_description()
+            missing = []
+
             # Introspect all methods that don't start with '_'
             for method_name, _ in inspect.getmembers(tool, predicate=inspect.isroutine):
                 if method_name.startswith("_") or method_name in IGNORED_METHODS:
                     continue
-                
-                # Check if method_name is in the description (case-insensitive)
-                if method_name.lower() not in desc:
-                    warning = f"Tool '{tool.name}' method '{method_name}' is not documented in get_interface_description()"
-                    warnings.append(warning)
-                    
-                    # Also mark the tool specifically in the registry
-                    self.registry.update_tool_status(
-                        tool.name, 
-                        "WARNING", 
-                        f"Documentation drift: missing '{method_name}'"
+
+                # Whole-word match: a substring check would let "get" pass
+                # because "get_interface" contains it.
+                if not re.search(rf"\b{re.escape(method_name)}\b", desc, re.IGNORECASE):
+                    missing.append(method_name)
+                    warnings.append(
+                        f"Tool '{tool.name}' method '{method_name}' is not documented in get_interface_description()"
                     )
+
+            # One registry status per tool, listing every missing method
+            # (per-method calls would overwrite each other, keeping only the last).
+            if missing:
+                self.registry.update_tool_status(
+                    tool.name,
+                    "WARNING",
+                    f"Documentation drift: missing {', '.join(repr(m) for m in missing)}"
+                )
 
         return warnings
 

@@ -150,7 +150,7 @@ async def test_health_check_no_connection(db):
     assert await db.health_check() is False
 
 
-# ── execute_many vacío ────────────────────────────────────────────────────────
+# ── empty execute_many ───────────────────────────────────────────────────────
 
 async def test_execute_many_empty_list_is_noop(db_with_table):
     await db_with_table.execute_many("INSERT INTO t (name) VALUES ($1)", [])

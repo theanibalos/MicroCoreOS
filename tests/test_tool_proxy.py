@@ -38,7 +38,7 @@ def registry():
     r.register_tool("unstable_tool", "OK")
     return r
 
-# ─── Pruebas de Actualización de Estado (Política DEAD Híbrida) ───────────────
+# ─── Status Update Tests (Hybrid DEAD Policy) ────────────────────────────────
 
 def test_single_business_failure_does_not_mark_dead(registry):
     """A lone generic exception (e.g. UNIQUE violation) must NOT kill the tool."""
@@ -117,7 +117,7 @@ async def test_proxy_async_recovery_marks_ok(registry):
     assert res == "ok"
     assert registry.get_tool_status("unstable_tool") == "OK"
 
-# ─── Pruebas de Recolección de Métricas ──────────────────────────────────────
+# ─── Metrics Collection Tests ────────────────────────────────────────────────
 
 def test_proxy_emits_metrics(registry):
     metrics = []

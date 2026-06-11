@@ -30,8 +30,7 @@ async def test_arch_linter_detects_drift():
     
     # 3. Perform drift check
     warnings = plugin._check_tool_drift()
-    print(f"DEBUG WARNINGS: {warnings}")
-    
+
     # 4. Assertions
     assert any("'undocumented_method'" in w for w in warnings)
     assert not any("'documented_method'" in w for w in warnings)

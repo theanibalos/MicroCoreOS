@@ -39,12 +39,17 @@ CONFIGURATION (env vars):
     REDIS_HOST / REDIS_PORT / REDIS_DB / REDIS_PASSWORD / REDIS_CONNECT_TIMEOUT
     (same variables as the Redis state tool — one Redis serves both)
     EVENT_BUS_STREAM_MAXLEN   default "10000" (approximate cap per stream)
+    EVENT_BUS_CLAIM_IDLE_MS   default "60000" — pending entries idle longer
+        than this are reclaimed from dead consumers. RAISE it above the
+        worst-case handler duration (including Bus retries/backoff): a live
+        handler slower than this is reclaimed and runs TWICE.
 
 DELIVERY GUARANTEE: at-least-once. A message is XACKed only AFTER the handler
 (including Bus-side retries/DLQ) finishes — if the replica dies mid-handler,
 the message stays pending and another consumer of the same group reclaims it
-via XAUTOCLAIM (idle > 60s). Handlers must be idempotent (already required by
-the Bus contract: a crash after the handler but before the ack = redelivery).
+via XAUTOCLAIM (idle > EVENT_BUS_CLAIM_IDLE_MS). Handlers must be idempotent
+(already required by the Bus contract: a crash after the handler but before
+the ack = redelivery).
 """
 
 import os
@@ -88,6 +93,7 @@ class RedisStreamsDriver(EventBusDriver):
         self._password: str = os.getenv("REDIS_PASSWORD", "")
         self._connect_timeout: float = float(os.getenv("REDIS_CONNECT_TIMEOUT", "5"))
         self._maxlen: int = int(os.getenv("EVENT_BUS_STREAM_MAXLEN", "10000"))
+        self._claim_idle_ms: int = int(os.getenv("EVENT_BUS_CLAIM_IDLE_MS", "60000"))
         self._redis: aioredis.Redis | None = None
         self._subs: list[_Subscription] = []
 
@@ -157,9 +163,8 @@ class RedisStreamsDriver(EventBusDriver):
         sub.task = asyncio.create_task(self._reader(sub))
         self._subs.append(sub)
 
-    # Pending entries idle longer than this are considered abandoned by a dead
-    # consumer and reclaimed via XAUTOCLAIM (durable groups only).
-    CLAIM_IDLE_MS = 60_000
+    # How often each reader looks for entries abandoned by a dead consumer
+    # (durable groups only). The idle threshold itself is EVENT_BUS_CLAIM_IDLE_MS.
     CLAIM_EVERY_S = 30.0
 
     async def _reader(self, sub: _Subscription) -> None:
@@ -175,7 +180,7 @@ class RedisStreamsDriver(EventBusDriver):
                     last_claim = time.monotonic()
                     _, claimed, *_ = await self._redis.xautoclaim(
                         sub.stream, sub.group, sub.consumer,
-                        min_idle_time=self.CLAIM_IDLE_MS, count=16,
+                        min_idle_time=self._claim_idle_ms, count=16,
                     )
                     await self._process(sub, claimed)
             except asyncio.CancelledError:

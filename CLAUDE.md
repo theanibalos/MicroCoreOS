@@ -18,7 +18,7 @@ docker compose -f dev_infra/docker-compose.yml up -d  # Dev infra
 
 ## Essential Rules
 
-1. **Never modify `main.py`** — Kernel auto-discovers everything.
+1. **Never modify `main.py`** — Kernel auto-discovers everything. Features NEVER touch it; the only thing that lives there is generic process entry-mode dispatch (e.g. `--boot-tool <name>`), and adding a new mode requires explicit human approval. Neither `main.py` nor `core/` may reference any specific tool.
 2. **1 file = 1 feature** — Plugins in `domains/{domain}/plugins/`.
 3. **DI by name** — `__init__` parameter names match tool `name` properties.
 4. **Entity in models/ = DB mirror only** — Request AND response schemas go inline in the plugin.

@@ -1,11 +1,11 @@
 """
-Issue 19 (pendiente menor) — Persistencia de one-shots.
+Issue 19 (minor leftover) — One-shot persistence.
 
-add_one_shot(callback) del scheduler tool es efímero por diseño (un callable
-no sobrevive un reinicio, y un tool nunca usa otros tools). La durabilidad se
-compone en la capa de plugins: DurableOneShotsPlugin (dominio system) persiste
-(run_at, event, payload) en la tabla scheduler_one_shots y un cron — que solo
-dispara en la réplica beat — publica los vencidos al bus.
+The scheduler tool's add_one_shot(callback) is ephemeral by design (a callable
+cannot survive a restart, and a tool never uses other tools). Durability is
+composed in the plugin layer: DurableOneShotsPlugin (system domain) persists
+(run_at, event, payload) in the scheduler_one_shots table and a cron — firing
+only in the beat replica — publishes the due ones to the bus.
 """
 
 import asyncio
@@ -32,8 +32,8 @@ def anyio_backend():
 
 
 class _SchedulerStub:
-    """El cron real dispara a minuto cerrado — los tests llaman publish_due()
-    directo. El stub solo registra que el plugin agendó su cron en on_boot."""
+    """The real cron fires on the minute — tests call publish_due() directly.
+    The stub only records that the plugin scheduled its cron in on_boot."""
 
     def __init__(self):
         self.jobs = []
@@ -48,7 +48,7 @@ async def db(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "test.db"))
     tool = SqliteTool()
     await tool.setup()
-    await tool.execute(MIGRATION.read_text())  # la migración real del dominio
+    await tool.execute(MIGRATION.read_text())  # the domain's real migration
     yield tool
     await tool.shutdown()
 
@@ -103,30 +103,30 @@ async def test_schedule_via_bus_and_fire_when_due(db, bus):
         {"run_at": future, "event": "jobs.welcome.due", "payload": {"user_id": 99}},
     )
 
-    await plugin.publish_due()  # el tick del cron
+    await plugin.publish_due()  # the cron tick
     await asyncio.sleep(0.1)
 
-    # Dispara solo el vencido; el futuro sigue pendiente en la tabla.
+    # Only the due one fires; the future one stays pending in the table.
     assert received == [{"user_id": 42}]
     rows = await db.query("SELECT job_id FROM scheduler_one_shots")
     assert len(rows) == 1
 
-    # Un segundo tick no re-dispara (la fila se borró al publicar).
+    # A second tick does not re-fire (the row was deleted on publish).
     await plugin.publish_due()
     await asyncio.sleep(0.1)
     assert received == [{"user_id": 42}]
 
 
 async def test_survives_restart(db, bus):
-    """El escenario del Issue 19: la réplica beat muere antes de disparar.
-    La fila persiste y una instancia NUEVA del plugin (misma DB) la dispara."""
+    """The Issue 19 scenario: the beat replica dies before firing.
+    The row persists and a NEW plugin instance (same DB) fires it."""
     first = await _make_plugin(db, bus)
     past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
     await bus.request(
         "system.one_shot.schedule",
         {"run_at": past, "event": "jobs.report.due", "payload": {"id": 7}, "job_id": "rep"},
     )
-    del first  # "muere" sin haber corrido su cron
+    del first  # "dies" without having run its cron
 
     received = []
 

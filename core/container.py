@@ -18,7 +18,7 @@ class ToolProxy:
     - Track tool health in the Registry (see DEAD policy below).
     - Automatically restore OK status on the first successful call after a failure.
     - Measure and emit call duration to a metrics sink.
-    - Create OpenTelemetry spans when a span factory is registered.
+    - Create tracing spans when a span factory is registered.
 
     DEAD policy (hybrid):
     - ToolUnavailableError (or subclass) → DEAD immediately. The tool itself
@@ -128,7 +128,7 @@ class Container:
     Single responsibility: register, get, and list tools.
     Health/metadata tracking is handled by Registry via ToolProxy.
     Metrics collection is handled by an internal ring buffer + sink list.
-    OTel spans are injected via a registrable span factory.
+    Tracing spans are injected via a registrable span factory.
     """
 
     def __init__(self):
@@ -166,10 +166,11 @@ class Container:
             except Exception as e:
                 print(f"[Container] Metrics sink error: {e}")
 
-    # ── Spans (OTel) ──────────────────────────────────────────────────────────
+    # ── Spans ─────────────────────────────────────────────────────────────────
 
     def register_span_factory(self, factory):
-        """Register a span factory for OpenTelemetry instrumentation.
+        """Register a span factory for tracing instrumentation (an
+        observability tool provides the implementation).
         Signature: factory(tool: str, method: str) -> context manager.
         Safe to call after proxies are created — takes effect on the next tool call.
         """

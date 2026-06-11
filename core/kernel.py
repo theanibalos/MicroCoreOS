@@ -160,30 +160,27 @@ class Kernel:
 
         print("--- [Kernel] System Ready ---")
 
-    async def migrate_only(self):
-        """Pipeline entry point: run pending DB migrations and exit.
+    async def boot_tool(self, tool_name: str):
+        """Pipeline entry point: boot ONE tool in isolation, then exit.
 
-        Boots ONLY the persistence tool (name 'db') — no plugins, no other
-        infrastructure. This is how production pipelines apply migrations
-        while replicas boot with DB_AUTO_MIGRATE=false.
+        Runs the tool's full lifecycle (setup → on_boot_complete → shutdown)
+        with no plugins and no other infrastructure. Deployment pipelines use
+        this to trigger a tool's boot-time maintenance work offline; which
+        tool and with which env vars is deployment configuration, not code.
         """
-        print("--- [Kernel] Migrate-only mode ---")
-        # This entry point IS the migration step: force-enable regardless of
-        # the replica-level env configuration.
-        os.environ["DB_AUTO_MIGRATE"] = "true"
-
+        print(f"--- [Kernel] Single-tool boot: '{tool_name}' ---")
         for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
             instance = tool_cls()
-            if instance.name != "db":
+            if instance.name != tool_name:
                 continue
             await self._call_maybe_async(instance.setup)
             try:
                 await self._call_maybe_async(instance.on_boot_complete, self.container)
             finally:
                 await self._call_maybe_async(instance.shutdown)
-            print("--- [Kernel] Migrations complete ---")
+            print(f"--- [Kernel] '{tool_name}' boot complete ---")
             return
-        raise RuntimeError("No tool registered as 'db' — cannot run migrations.")
+        raise RuntimeError(f"No tool named '{tool_name}' found.")
 
     async def shutdown(self):
         print("\n--- [Kernel] Shutting down ---")

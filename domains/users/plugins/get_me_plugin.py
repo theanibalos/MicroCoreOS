@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from pydantic import BaseModel, EmailStr
 from core.base_plugin import BasePlugin
@@ -46,7 +47,6 @@ class GetMePlugin(BasePlugin):
             if not row:
                 return {"success": False, "error": "User no longer exists"}
 
-            import json
             roles = json.loads(row["roles"]) if row.get("roles") else ["user"]
 
             return {

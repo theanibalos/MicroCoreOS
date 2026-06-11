@@ -98,20 +98,20 @@ Proposed design:
 
 ---
 
-**Issue 13 — ✅ Rate limiting (resuelto como patrón, NO como tool — decisión 2026-06-10)**
+**Issue 13 — ✅ Rate limiting (resolved as a pattern, NOT as a tool — decision 2026-06-10)**
 
-Decisión: **no se crea el tool**. El problema se parte en dos capas y ninguna lo necesita:
-- **Volumétrico/anónimo (por IP, anti-abuso, DDoS)** → es infraestructura del edge
-  (nginx/gateway/CDN), no del monolito. Documentado en `docs/ELASTIC_DEPLOYMENT.md`.
-- **Consciente de identidad (por usuario/API key/plan)** → es política de negocio
-  sobre un primitivo que ya existe: `state.increment(key, ttl=ventana)` → 429 +
-  `Retry-After`. Patrón documentado en `INSTRUCTIONS_FOR_AI.md` ("Rate Limiting
-  Pattern"). Con RedisStateTool swapeado, el límite es distribuido gratis.
+Decision: **no tool is created**. The problem splits into two layers and neither needs one:
+- **Volumetric/anonymous (per-IP, anti-abuse, DDoS)** → edge infrastructure
+  (nginx/gateway/CDN), not the monolith's concern. Documented in `docs/ELASTIC_DEPLOYMENT.md`.
+- **Identity-aware (per user/API key/plan)** → business policy on top of a
+  primitive that already exists: `state.increment(key, ttl=window)` → 429 +
+  `Retry-After`. Pattern documented in `INSTRUCTIONS_FOR_AI.md` ("Rate Limiting
+  Pattern"). With RedisStateTool swapped in, the limit is distributed for free.
 
-El tool propuesto (`check(key, limit, window)`) eran ~5 líneas sobre `state` y
-habría duplicado su backend Redis. Único valor no cubierto: ventana deslizante
-(la fija permite burst de 2× en el borde) — se promueve a tool solo si un caso
-real lo exige.
+The proposed tool (`check(key, limit, window)`) was ~5 lines over `state` and
+would have duplicated its Redis backend. The only uncovered value: sliding
+window (the fixed one allows a 2× burst at the edge) — promote to a tool only
+if a real use case demands it.
 
 ---
 
@@ -145,130 +145,134 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 
 ---
 
-## Path to Industrial Grade (sesión 2026-06-10 — análisis con Claude)
+## Path to Industrial Grade (2026-06-10 session — analysis with Claude)
 
-> Conclusión del análisis: la base es sólida; lo que falta son **adiciones, no cirugías**.
-> Las especificaciones de reemplazo ya están escritas en los headers de cada tool.
+> Conclusion of the analysis: the foundation is solid; what's missing are **additions, not surgeries**.
+> The replacement specifications are already written in each tool's header.
 
-**Issue 17 — ✅ RedisStateTool (primer swap real de un tool)**
+**Issue 17 — ✅ RedisStateTool (first real tool swap)**
 
-Implementado en `extras/available_tools/redis_state/` con `name = "state"` (NO en
-`tools/redis_state/` como decía el plan original: el Kernel auto-descubre todo `tools/`
-y dos tools con el mismo nombre se sobreescriben silenciosamente — el patrón correcto
-es el de PostgreSQL: vive en extras/ y se activa moviéndolo a `tools/`).
-- Sigue el contrato async + TTL del header de `tools/state/state_tool.py`
-  (`SET PX`, `INCRBY/INCRBYFLOAT + PEXPIRE NX`, `SCAN` por namespace, valores JSON).
-- Suite de paridad: `tests/tools/test_state_parity.py` — la misma batería corre
-  contra el in-memory y contra Redis real (se salta sola si no hay servidor);
-  Redis agregado como service del CI. Adelanta el patrón del Issue 22.
-- Swap validado de punta a punta: sistema booteado con RedisStateTool como `state`,
-  throttle de login verificado contra Redis real (contador + TTL de 15 min + 429).
-- Redis descomentado en `dev_infra/docker-compose.yml`.
+Implemented in `extras/available_tools/redis_state/` with `name = "state"` (NOT in
+`tools/redis_state/` as the original plan said: the Kernel auto-discovers everything
+under `tools/` and two tools with the same name silently overwrite each other — the
+correct pattern is PostgreSQL's: it lives in extras/ and activates by moving it into `tools/`).
+- Follows the async + TTL contract from the `tools/state/state_tool.py` header
+  (`SET PX`, `INCRBY/INCRBYFLOAT + PEXPIRE NX`, namespace `SCAN`, JSON values).
+- Parity suite: `tests/tools/test_state_parity.py` — the same battery runs
+  against the in-memory impl and against real Redis (skips itself if no server);
+  Redis added as a CI service. Anticipates the Issue 22 pattern.
+- Swap validated end to end: system booted with RedisStateTool as `state`,
+  login throttle verified against real Redis (counter + 15-min TTL + 429).
+- Redis uncommented in `dev_infra/docker-compose.yml`.
 
-**Issue 18 — 🟢 Drivers distribuidos del Event Bus (Redis Streams ✅ / Kafka / RabbitMQ)**
+**Issue 18 — 🟢 Distributed Event Bus drivers (Redis Streams ✅ / Kafka / RabbitMQ)**
 
-NO se reescribe el EventBusTool: se implementa la interfaz `EventBusDriver`
-(solo transporte). Retries, DLQ, RPC y tracing son agnósticos y viven en el Bus.
+The EventBusTool is NOT rewritten: the `EventBusDriver` interface is implemented
+(transport only). Retries, DLQ, RPC and tracing are agnostic and live in the Bus.
 
 ✅ **RedisStreamsDriver** (`tools/event_bus/redis_streams_driver.py`):
-- Activación sin código: `EVENT_BUS_DRIVER=redis_streams`. N réplicas contra el
-  mismo Redis comparten transporte; `group=` es un consumer group real
-  (exactamente-un-consumidor a través de la flota); wildcard vía stream firehose.
-- Pasa la suite de paridad completa (`test_event_bus_broker_parity.py`, ahora
-  parametrizada sobre ambos transportes) + tests distribuidos propios
-  (`test_redis_streams_driver.py`: 2 instancias, cross-delivery, grupos, firehose).
-- Validado de punta a punta: sistema real booteado con el driver, `user.created`
-  → WelcomeService viajando por Redis con el árbol causal intacto.
-- Nota de diseño: `EventBusDriver.bind()` ahora inyecta también la clase
-  `EventEnvelope` del Bus — los drivers NO deben importarla (el Kernel carga
-  módulos por path y una copia importada es otra clase para Pydantic).
+- Zero-code activation: `EVENT_BUS_DRIVER=redis_streams`. N replicas against the
+  same Redis share transport; `group=` is a real consumer group
+  (exactly-one-consumer across the fleet); wildcard via firehose stream.
+- Passes the full parity suite (`test_event_bus_broker_parity.py`, now
+  parameterized over both transports) + its own distributed tests
+  (`test_redis_streams_driver.py`: 2 instances, cross-delivery, groups, firehose).
+- Validated end to end: real system booted with the driver, `user.created`
+  → WelcomeService traveling through Redis with the causal tree intact.
+- Design note: `EventBusDriver.bind()` now also injects the Bus's
+  `EventEnvelope` class — drivers must NOT import it (the Kernel loads modules
+  by path and an imported copy is a different class to Pydantic).
 
-Pendiente: drivers Kafka y RabbitMQ (mismos pasos, documentados en el header
-de `tools/event_bus/event_bus_tool.py`; requisito formal: pasar la paridad).
+Pending: Kafka and RabbitMQ drivers (same steps, documented in the header of
+`tools/event_bus/event_bus_tool.py`; formal requirement: pass the parity suite).
 
-**Issue 19 — ✅ Scheduler singleton + jobs vía bus**
+**Issue 19 — ✅ Scheduler singleton + jobs via the bus**
 
-Al escalar a N réplicas el scheduler dispararía cada job N veces. Implementado:
-- `SCHEDULER_ENABLED=true` (default) → rol "beat"; `false` en réplicas worker:
-  los jobs se registran igual (mismo código en todas) pero no disparan.
-- Patrón documentado en el header del tool: el job publica al bus
-  (`bus.publish("jobs.x.due")`) y los workers consumen — los grupos automáticos
-  garantizan exactamente-un-consumidor en toda la flota.
-- Los cron se re-registran solos en `on_boot()` con job_id estable
-  (`replace_existing` cubre el hot-reload). Tests: `test_scheduler_singleton.py`.
-- ✅ One-shots durables: NO en el tool (un tool nunca usa otros tools) — se
-  componen en la capa de plugins: `DurableOneShotsPlugin` (dominio system)
-  persiste (run_at, event, payload) en `scheduler_one_shots` y un cron por
-  minuto (solo beat) publica los vencidos al bus. Cualquier dominio agenda vía
+When scaling to N replicas the scheduler would fire every job N times. Implemented:
+- `SCHEDULER_ENABLED=true` (default) → "beat" role; `false` in worker replicas:
+  jobs register the same way (identical code everywhere) but never fire.
+- Pattern documented in the tool header: the job publishes to the bus
+  (`bus.publish("jobs.x.due")`) and workers consume — automatic groups
+  guarantee exactly-one-consumer across the whole fleet.
+- Cron jobs re-register themselves in `on_boot()` with a stable job_id
+  (`replace_existing` covers hot-reload). Tests: `test_scheduler_singleton.py`.
+- ✅ Durable one-shots: NOT in the tool (a tool never uses other tools) — they
+  are composed in the plugin layer: `DurableOneShotsPlugin` (system domain)
+  persists (run_at, event, payload) in `scheduler_one_shots` and a per-minute
+  cron (beat only) publishes the due ones to the bus. Any domain schedules via
   `bus.request("system.one_shot.schedule", ...)`. Tests: `test_durable_one_shots.py`.
 
-**Issue 20 — ✅ Flag de migraciones para CI/CD**
+**Issue 20 — ✅ Migrations flag for CI/CD**
 
-En producción las migraciones NUNCA corren en las réplicas — corren como paso
-del pipeline (estándar industria: Django/Rails/Flyway) con OK del DBA.
-- `DB_AUTO_MIGRATE=true` (default) → comportamiento actual, perfecto para dev/SQLite.
-- `DB_AUTO_MIGRATE=false` en réplicas de producción → el boot saltea migraciones.
-- Entry point del pipeline: `uv run main.py --migrate-only` (bootea SOLO el tool
-  `db`, migra y sale — `Kernel.migrate_only()`). Aplica a SQLite y PostgreSQL.
+In production, migrations NEVER run in the replicas — running them there is
+PROHIBITED. They run as a pipeline step (industry standard: Django/Rails/Flyway),
+in a SINGLE instance, under explicit human supervision.
+- `DB_AUTO_MIGRATE=true` (default) → current behavior, perfect for dev/SQLite.
+- `DB_AUTO_MIGRATE=false` in production replicas → boot skips migrations.
+- Pipeline entry point: `DB_AUTO_MIGRATE=true uv run main.py --boot-tool db`
+  (boots ONLY that tool, migrates and exits — `Kernel.boot_tool()` is generic:
+  the kernel knows nothing about migrations or which tool runs). SQLite and PostgreSQL.
 
-**Issue 21 — ✅ Roles como datos del dominio users (Identity-Aware Authorization)**
+**Issue 21 — ✅ Roles as users-domain data (Identity-Aware Authorization)**
 
-Implementado: los roles son negocio del dominio `users`, no infraestructura del
-`auth`.
-- Migración: columna `roles` (JSON TEXT) en la tabla `users`.
-- `LoginPlugin` incluye los roles en los claims del JWT.
-- Patrón documentado en `INSTRUCTIONS_FOR_AI.md`: hibridación entre claims para
-  uso general y verificación fresca contra DB para operaciones críticas.
-- Tests de integración verisicando roles en token: `tests/test_roles.py`.
+Implemented: roles are business data of the `users` domain, not `auth`
+infrastructure.
+- Migration: `roles` column (JSON TEXT) in the `users` table.
+- `LoginPlugin` includes the roles in the JWT claims.
+- Pattern documented in `INSTRUCTIONS_FOR_AI.md`: hybrid between claims for
+  general use and a fresh DB check for critical operations.
+- Integration tests verifying roles in the token: `tests/test_roles.py`.
 
 
-**Issue 22 — ✅ Paridad de herramientas (Contract Parity Rules)**
+**Issue 22 — ✅ Tool parity (Contract Parity Rules)**
 
-Formalizado en `INSTRUCTIONS_FOR_AI.md`: todo tool de reemplazo DEBE pasar la
-suite de paridad de su implementación de referencia.
-- Patrón consolidado con suites de paridad para `state` (`test_state_parity.py`)
-  y `event_bus` (`test_event_bus_broker_parity.py`).
+Formalized in `INSTRUCTIONS_FOR_AI.md`: every replacement tool MUST pass the
+parity suite of its reference implementation.
+- Pattern consolidated with parity suites for `state` (`test_state_parity.py`)
+  and `event_bus` (`test_event_bus_broker_parity.py`).
 
 ---
 
-## Réplicas del mismo monolito (sesión 2026-06-10, segunda parte)
+## Replicas of the same monolith (2026-06-10 session, part two)
 
-**✅ Grupos de consumidores automáticos (identidad estable del callback)**
+**✅ Automatic consumer groups (stable callback identity)**
 
-`subscribe()` sin `group=` ahora deriva un grupo estable de la identidad del
-callback (`WelcomeServicePlugin.on_user_created`). Las réplicas corren el mismo
-código → derivan el mismo grupo → el broker entrega cada evento a UNA sola
-réplica. Plugins distintos → grupos distintos → cada consumidor lógico recibe
-su copia. `broadcast=True` para asuntos locales de instancia; wildcards y
-replies RPC son siempre broadcast. Validado con 2 réplicas reales: 1 usuario
-creado → 1 solo welcome en toda la flota.
+`subscribe()` without `group=` now derives a stable group from the callback
+identity, including its module (`mod_users_plugins_welcome.WelcomeServicePlugin.on_user_created`)
+so same-named classes in different domains can never collide into one group.
+Replicas run the same code → derive the same group → the broker delivers each
+event to exactly ONE replica. Distinct plugins → distinct groups → each logical
+consumer gets its own copy. `broadcast=True` for instance-local concerns;
+wildcards and RPC replies are always broadcast. Validated with 2 real replicas:
+1 user created → 1 single welcome across the fleet.
 
-**✅ Entrega at-least-once en el driver Redis Streams**
+**✅ At-least-once delivery in the Redis Streams driver**
 
-XACK ahora ocurre DESPUÉS de que el handler (y sus retries del bus) termina;
-si una réplica muere a mitad del handler, el mensaje queda pendiente y otra
-réplica del grupo lo reclama vía XAUTOCLAIM (idle > 60s). Los handlers deben
-ser idempotentes (ya era requisito del contrato del bus).
+XACK now happens AFTER the handler (and its Bus retries) finishes; if a replica
+dies mid-handler, the message stays pending and another replica of the group
+reclaims it via XAUTOCLAIM (idle > `EVENT_BUS_CLAIM_IDLE_MS`, default 60s —
+raise it above the worst-case handler duration). Handlers must be idempotent
+(already required by the bus contract).
 
-**Issue 23 — 🟡 Contratos de eventos en runtime (Dynamic Event Guard)**
+**Issue 23 — 🟡 Runtime event contracts (Dynamic Event Guard)**
 
-El `EventContractValidator` es análisis estático del código local: si el
-consumidor vive en OTRA instancia, no lo ve. Falta validación de payloads en
-el bus mismo (extiende el Dynamic Event Guard del Issue 15 al modo distribuido).
-Anotado para trabajar después — es complejo.
+The `EventContractValidator` is static analysis of local code: if the consumer
+lives in ANOTHER instance, it cannot see it. Missing: payload validation on the
+bus itself (extends the Issue 15 Dynamic Event Guard to distributed mode).
+Noted for later — it is complex.
 
-**Issue 24 — 🟡 Trazas causales cross-instance + localidad de eventos**
+**Issue 24 — 🟡 Cross-instance causal traces + event locality**
 
-Los envelopes ya viajan con `id` uuid4 y `parent_id` (verificado: el árbol
-causal cruza instancias intacto). Falta: agregación de trazas entre instancias
-(`/system/traces` es un ring buffer local; candidato natural: apoyarse en el
-OTel ya integrado). Idea exploratoria: localidad — que un evento se entregue
-en la instancia local sin viajar al broker cuando el consumidor vive ahí.
+Envelopes already travel with a uuid4 `id` and `parent_id` (verified: the
+causal tree crosses instances intact). Missing: trace aggregation across
+instances (`/system/traces` is a local ring buffer; natural candidate: lean on
+the already-integrated OTel). Exploratory idea: locality — deliver an event in
+the local instance without a broker round-trip when the consumer lives there.
 
-**Issue 25 — ✅ Guía de despliegue elástico (documentación)**
+**Issue 25 — ✅ Elastic deployment guide (documentation)**
 
-`docs/ELASTIC_DEPLOYMENT.md`: las tres etapas (SQLite dev → PostgreSQL single →
-N réplicas), los swaps de tools, el checklist completo de env vars por réplica,
-la capa edge (TLS, balanceo, rate limiting volumétrico) y el procedimiento de
-verificación del setup elástico (2 réplicas, exactly-one-consumer, árbol causal,
-reclaim at-least-once). Linkeada desde `docs/INDEX.md`.
+`docs/ELASTIC_DEPLOYMENT.md`: the three stages (SQLite dev → PostgreSQL single →
+N replicas), the tool swaps, the full per-replica env var checklist, the edge
+layer (TLS, load balancing, volumetric rate limiting) and the verification
+procedure for the elastic setup (2 replicas, exactly-one-consumer, causal tree,
+at-least-once reclaim). Linked from `docs/INDEX.md`.

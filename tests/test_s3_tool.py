@@ -15,22 +15,22 @@ def tool(monkeypatch):
 
 async def test_size_limit_intent(tool):
     """
-    La intención es proteger los recursos del sistema rechazando archivos
-    que superen el límite configurado ANTES de procesar la subida.
+    The intent is to protect system resources by rejecting files that
+    exceed the configured limit BEFORE processing the upload.
     """
-    large_data = b"x" * (2 * 1024 * 1024) # 2MB, excede el límite de 1MB
+    large_data = b"x" * (2 * 1024 * 1024) # 2MB, exceeds the 1MB limit
     
     with pytest.raises(S3FileSizeError):
         await tool.upload_bytes("test.key", large_data)
 
 async def test_presigned_url_intent(tool):
     """
-    La intención es proveer acceso seguro y temporal a objetos privados.
+    The intent is to provide secure, temporary access to private objects.
     """
     mock_s3 = AsyncMock()
     mock_s3.generate_presigned_url.return_value = "http://presigned-url"
     
-    # Mock del context manager asíncrono del cliente
+    # Mock the client's async context manager
     mock_client_ctx = MagicMock()
     mock_client_ctx.__aenter__.return_value = mock_s3
     
@@ -45,8 +45,8 @@ async def test_presigned_url_intent(tool):
 
 async def test_upload_bytes_intent(tool):
     """
-    La intención es delegar correctamente la subida de datos a S3
-    usando los parámetros de configuración (Bucket, Key).
+    The intent is to correctly delegate the data upload to S3
+    using the configuration parameters (Bucket, Key).
     """
     mock_s3 = AsyncMock()
     mock_client_ctx = MagicMock()
@@ -64,7 +64,7 @@ async def test_upload_bytes_intent(tool):
 
 async def test_object_exists_intent(tool):
     """
-    La intención es verificar existencia sin descargar el archivo completo.
+    The intent is to verify existence without downloading the whole file.
     """
     mock_s3 = AsyncMock()
     mock_client_ctx = MagicMock()

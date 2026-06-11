@@ -16,8 +16,8 @@ async def bus():
 
 async def test_consumer_groups_load_balancing(bus):
     """
-    Verifica que si dos suscriptores están en el mismo grupo, 
-    solo uno recibe cada mensaje (Round-Robin).
+    Verifies that when two subscribers share the same group,
+    only one receives each message (round-robin).
     Uses disjoint sets to verify workload distribution without assuming order.
     """
     received_a = set()
@@ -39,15 +39,15 @@ async def test_consumer_groups_load_balancing(bus):
     assert len(received_a) == 2
     assert len(received_b) == 2
     
-    # Verificamos que los sets son disjuntos (nadie recibió lo mismo que el otro)
+    # Verify the sets are disjoint (no one received what the other did)
     assert received_a.isdisjoint(received_b)
     # Verificamos que entre ambos tienen todos los mensajes
     assert received_a | received_b == {0, 1, 2, 3}
 
 async def test_different_groups_receive_all(bus):
     """
-    Verifica que si los suscriptores están en grupos diferentes,
-    ambos reciben el mensaje (Fan-out).
+    Verifies that when subscribers are in different groups,
+    both receive the message (fan-out).
     """
     received_a = []
     received_b = []
