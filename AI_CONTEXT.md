@@ -275,16 +275,6 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
-### 🔧 Tool: `context_manager` (Status: ✅)
-```text
-Context Manager Tool (context_manager):
-        - PURPOSE: Automatically manages and generates live AI contextual documentation.
-        - CAPABILITIES:
-            - Reads the system registry.
-            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
-            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
-```
-
 ### 🔧 Tool: `state` (Status: ✅)
 ```text
 Key-Value State Tool (state):
@@ -306,29 +296,14 @@ Key-Value State Tool (state):
             - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
-### 🔧 Tool: `db` (Status: ✅)
+### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
-Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
-        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+Context Manager Tool (context_manager):
+        - PURPOSE: Automatically manages and generates live AI contextual documentation.
         - CAPABILITIES:
-            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
-            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
-            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
-              With RETURNING (SQLite 3.35+): returns the first column value.
-              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
-            - await execute_many(sql, params_list) → None: Batch writes.
-            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
-              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
-            - await health_check() → bool: Verify database connectivity.
-        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
-        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
-          topological sort (alphabetical by default). To declare that one migration must
-          run before another, add as the first comment line:
-            "-- depends: other_domain/001_file.sql"
-          Works for same-domain or cross-domain dependencies. .sql extension is optional.
+            - Reads the system registry.
+            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)
@@ -361,6 +336,31 @@ Scheduler Tool (scheduler):
           worker, never in the job callback.
         - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
           and the same 4-method API. Plugins do not change.
+```
+
+### 🔧 Tool: `db` (Status: ✅)
+```text
+Async SQLite Persistence Tool (sqlite):
+        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
+          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
+          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
+        - CAPABILITIES:
+            - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
+            - await query_one(sql, params?) → dict | None: Read a single row (SELECT).
+            - await execute(sql, params?) → int | None: Write data (INSERT/UPDATE/DELETE).
+              With RETURNING (SQLite 3.35+): returns the first column value.
+              INSERT without RETURNING: returns lastrowid. Others: returns affected row count.
+            - await execute_many(sql, params_list) → None: Batch writes.
+            - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
+              Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
+            - await health_check() → bool: Verify database connectivity.
+        - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
+          topological sort (alphabetical by default). To declare that one migration must
+          run before another, add as the first comment line:
+            "-- depends: other_domain/001_file.sql"
+          Works for same-domain or cross-domain dependencies. .sql extension is optional.
 ```
 
 ### 🔧 Tool: `s3` (Status: ✅)

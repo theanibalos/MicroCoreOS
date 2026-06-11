@@ -3,8 +3,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from core.base_plugin import BasePlugin
 
-# Mirrors the column default in migrations/002_add_roles_to_users.sql (the SQL
-# default only backfills pre-existing rows; new users get their roles here).
+
 DEFAULT_ROLES = ["user"]
 
 

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from tools.s3.s3_tool import S3Tool, S3FileSizeError
+from extras.available_tools.s3.s3_tool import S3Tool, S3FileSizeError
 
 pytestmark = pytest.mark.anyio
 

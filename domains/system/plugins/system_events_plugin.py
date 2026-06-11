@@ -64,6 +64,10 @@ class SystemEventsPlugin(BasePlugin):
 
             stats: dict[str, dict] = {}
             for record in history:
+                # The bus logs one "published" node plus one "delivered" node
+                # per subscriber; only publications count as firings.
+                if record.kind != "published":
+                    continue
                 name = record.envelope.event
                 if name.startswith("_reply."):
                     continue
