@@ -172,7 +172,7 @@ MicroCoreOS/
 | --------------------------------------- | ------------------------------------------------------------------------------ |
 | **AI needs too many files for context** | 2 files: `AI_CONTEXT.md` + the plugin.                                         |
 | **Coupling between modules**            | Domains communicate via EventBus only, never direct imports.                   |
-| **Architecture erodes under pressure**  | Conventions are explicit and enforced by GEMINI.md.                            |
+| **Architecture erodes under pressure**  | Conventions are explicit and enforced.                                         |
 | **Merge conflicts on shared files**     | Each feature is its own file. No shared business logic files.                  |
 | **One dependency failure cascades**     | ToolProxy contains failures per-tool automatically.                            |
 | **Changing databases takes weeks**      | Swap the tool file. Same API, same placeholders.                               |
