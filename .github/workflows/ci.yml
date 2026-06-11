@@ -165,6 +165,7 @@ jobs:
           PG_DATABASE: microcoreos
           REDIS_HOST: localhost
           REDIS_PORT: "6379"
+          DB_AUTO_MIGRATE: "false"
         run: |
           uv run main.py > boot.log 2>&1 &
           APP_PID=$!
