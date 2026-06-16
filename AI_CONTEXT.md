@@ -275,6 +275,16 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
+### 🔧 Tool: `context_manager` (Status: ✅)
+```text
+Context Manager Tool (context_manager):
+        - PURPOSE: Automatically manages and generates live AI contextual documentation.
+        - CAPABILITIES:
+            - Reads the system registry.
+            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
+```
+
 ### 🔧 Tool: `state` (Status: ✅)
 ```text
 Key-Value State Tool (state):
@@ -294,16 +304,6 @@ Key-Value State Tool (state):
               Starts at 0. Returns the new value.
             - await delete(key, namespace='default'): Delete a key (no-op if missing).
             - await clear(namespace='default'): Remove all keys in the namespace.
-```
-
-### 🔧 Tool: `context_manager` (Status: ✅)
-```text
-Context Manager Tool (context_manager):
-        - PURPOSE: Automatically manages and generates live AI contextual documentation.
-        - CAPABILITIES:
-            - Reads the system registry.
-            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
-            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
