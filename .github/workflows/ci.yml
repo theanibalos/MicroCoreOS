@@ -81,15 +81,14 @@ jobs:
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
           echo "Waiting for RustFS..."
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
-              echo "RustFS ready after ${i}s"
+          for i in $(seq 1 30); do
+            if curl -s --max-time 2 http://localhost:9000 > /dev/null 2>&1; then
+              echo "RustFS ready after $((i * 2))s"
               exit 0
             fi
-            echo "  ...${i}s"
             sleep 2
           done
-          echo "RustFS did not become healthy after 120s"
+          echo "RustFS did not respond after 60s"
           docker logs rustfs
           exit 1
 
@@ -130,15 +129,14 @@ jobs:
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
           echo "Waiting for RustFS..."
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
-              echo "RustFS ready after ${i}s"
+          for i in $(seq 1 30); do
+            if curl -s --max-time 2 http://localhost:9000 > /dev/null 2>&1; then
+              echo "RustFS ready after $((i * 2))s"
               exit 0
             fi
-            echo "  ...${i}s"
             sleep 2
           done
-          echo "RustFS did not become healthy after 120s"
+          echo "RustFS did not respond after 60s"
           docker logs rustfs
           exit 1
 
