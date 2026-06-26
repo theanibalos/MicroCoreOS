@@ -80,11 +80,18 @@ jobs:
           docker run -d --rm --name rustfs -p 9000:9000 \
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
-            sleep 1
+          echo "Waiting for RustFS..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "RustFS ready after ${i}s"
+              exit 0
+            fi
+            echo "  ...${i}s"
+            sleep 2
           done
-          curl -sf http://localhost:9000/minio/health/live
+          echo "RustFS did not become healthy after 120s"
+          docker logs rustfs
+          exit 1
 
       - name: Lint (ruff)
         run: uv run -m ruff check .
@@ -122,11 +129,18 @@ jobs:
           docker run -d --rm --name rustfs -p 9000:9000 \
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
-            sleep 1
+          echo "Waiting for RustFS..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "RustFS ready after ${i}s"
+              exit 0
+            fi
+            echo "  ...${i}s"
+            sleep 2
           done
-          curl -sf http://localhost:9000/minio/health/live
+          echo "RustFS did not become healthy after 120s"
+          docker logs rustfs
+          exit 1
 
       - name: Boot system against real infrastructure
         env:
