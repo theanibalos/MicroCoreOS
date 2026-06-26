@@ -47,6 +47,18 @@ jobs:
           --health-timeout 3s
           --health-retries 5
 
+      # Real RabbitMQ so the broker parity suite
+      # (tests/tools/test_event_bus_rabbitmq_parity.py) runs instead of skipping.
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +70,21 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --dev
+
+      # RustFS needs a custom command so it can't run as a service container —
+      # started as a step instead (same pattern as smoke-boot uses for S3).
+      # The S3 parity fixture sets all credentials via monkeypatch; no extra
+      # env vars are needed here.
+      - name: Start RustFS (S3 parity tests)
+        run: |
+          docker run -d --rm --name rustfs -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
+            rustfs/rustfs:latest server /data --console-address ":9001"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:9000/minio/health/live
 
       - name: Lint (ruff)
         run: uv run -m ruff check .
@@ -88,13 +115,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      # The official minio/minio image needs a command ("server /data"), which
-      # GitHub service containers can't pass — so it runs as a step instead.
-      - name: Start MinIO (real S3 backend)
+      # RustFS needs a custom command so it can't run as a service container —
+      # started as a step instead.
+      - name: Start RustFS (real S3 backend)
         run: |
-          docker run -d --rm --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
+          docker run -d --rm --name rustfs -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
+            rustfs/rustfs:latest server /data --console-address ":9001"
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
             sleep 1

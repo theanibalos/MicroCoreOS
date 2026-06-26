@@ -6,6 +6,7 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "aio-pika>=9.4",
     "aioboto3>=15.5.0",
     "aiosqlite>=0.20.0",
     "apscheduler>=3.10,<4",

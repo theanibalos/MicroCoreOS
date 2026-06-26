@@ -198,7 +198,15 @@ MicroCoreOS/
 | `registry`  | Runtime introspection + metrics + health status                   |
 | `telemetry` | OpenTelemetry — auto-instruments all tool calls                   |
 | `config`    | Environment variable validation for plugins                       |
-| `s3`        | AWS S3 object storage — private bucket + presigned URLs           |
+
+**Available in `extras/available_tools/` (move to `tools/` to activate):**
+
+| Tool         | Description                                                              |
+| ------------ | ------------------------------------------------------------------------ |
+| `s3`         | AWS S3 object storage — private bucket + presigned URLs                  |
+| `db`         | PostgreSQL — drop-in swap for SQLite, same API and placeholders          |
+| `state`      | Redis-backed state — drop-in swap for in-memory StateTool                |
+| `event_bus`  | RabbitMQ driver — distributed transport for the Event Bus                |
 
 ---
 
