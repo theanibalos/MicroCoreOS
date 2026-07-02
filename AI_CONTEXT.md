@@ -375,11 +375,11 @@ Scheduler Tool (scheduler):
 
 ### `system`
 - **Table `scheduler_one_shot`**: job_id (str), run_at_epoch (float), event (str), payload (str)
-- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
+- **Endpoints**: GET /system/events, GET /system/lint, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
 - **Events emitted**: `event.delivery.failed` ()
 - **Events consumed**: system.one_shot.cancel, system.one_shot.schedule
 - **Dependencies**: config, container, db, event_bus, http, logger, registry, scheduler
-- **Plugins**: system.ArchitectureLinterPlugin, system.DurableOneShotsPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
+- **Plugins**: system.ArchitectureLinterPlugin, system.DurableOneShotsPlugin, system.EventContractLinterPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
 - **Table `user`**: name (str), email (EmailStr), password_hash (any), roles (list[str])

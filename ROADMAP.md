@@ -276,3 +276,21 @@ N replicas), the tool swaps, the full per-replica env var checklist, the edge
 layer (TLS, load balancing, volumetric rate limiting) and the verification
 procedure for the elastic setup (2 replicas, exactly-one-consumer, causal tree,
 at-least-once reclaim). Linked from `docs/INDEX.md`.
+
+**Issue 26 — 🟡 Route-collision linter**
+
+`add_endpoint` buffers endpoints without checking duplicates: two plugins
+registering the same `(method, path)` boot green, but Starlette routes to the
+first match and the second endpoint is silently unreachable. Missing: at
+`on_boot_complete`, warn listing both plugins for any duplicate route (same
+advisory pattern as the arch linter). ~15 lines; completes the namespace
+coverage described in `docs/PARALLEL_DEVELOPMENT.md`.
+
+**Issue 27 — 🟡 Table-ownership linter**
+
+Domain isolation is code-level; the DB table namespace is global. Two domains
+CREATE-ing the same table means the second `IF NOT EXISTS` silently no-ops and
+one of them runs against the wrong schema. Missing: scan `domains/*/migrations/*.sql`
+at boot, register table→domain ownership, warn on duplicate table declarations
+across domains. Pairs with the `tables:` ownership field of the formal plan
+format (`docs/PARALLEL_DEVELOPMENT.md`).

@@ -174,6 +174,12 @@ If the same subscriber reaches **5 consecutive final failures** (after all retri
 
 The counter resets on any successful execution. This prevents a broken subscriber from accumulating errors forever.
 
+The drop is never silent: the bus publishes **`system.subscriber.dropped`** with payload
+`{event, subscriber, error, consecutive_failures}`. Its `parent_id` is the event that
+caused the final failure, so the drop appears chained in `/system/traces/tree`. Subscribe
+to it for alerting (a dropped subscriber of `system.subscriber.dropped` itself does not
+re-trigger it — loop-guarded).
+
 **To avoid it for external services** — catch exceptions inside the subscriber and never let them escape to the bus:
 
 ```python

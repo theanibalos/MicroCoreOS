@@ -210,6 +210,7 @@ class InProcessDriver(EventBusDriver):
 
 class EventBusTool(BaseTool):
     _MAX_CONSECUTIVE_FAILURES = 5
+    SUBSCRIBER_DROPPED_EVENT = "system.subscriber.dropped"
 
     def __init__(self, driver: Optional[EventBusDriver] = None):
         self._driver = driver or self._driver_from_env()
@@ -282,6 +283,9 @@ class EventBusTool(BaseTool):
 
         RESILIENCE:
         - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
         """
 
     async def subscribe(self, event_name: str, callback: Callable, group: Optional[str] = None,
@@ -446,6 +450,15 @@ class EventBusTool(BaseTool):
             self._consecutive_failures.pop(fail_key, None)
             await self._driver.unsubscribe(envelope.event, callback)
             self._sub_options.pop((envelope.event, callback), None)
+            # Make the silent drop observable. Guard: a dropped subscriber OF
+            # this very event must not re-trigger it (self-reference loop).
+            if envelope.event != self.SUBSCRIBER_DROPPED_EVENT:
+                await self.publish(self.SUBSCRIBER_DROPPED_EVENT, {
+                    "event": envelope.event,
+                    "subscriber": sub_name,
+                    "error": str(e),
+                    "consecutive_failures": count,
+                })
 
         # Notify failure listeners
         failure_record = {"event": envelope.event, "event_id": envelope.id, "subscriber": sub_name, "error": str(e), "attempts": attempts}

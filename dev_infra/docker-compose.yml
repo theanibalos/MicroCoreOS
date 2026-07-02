@@ -87,6 +87,23 @@ services:
       timeout: 10s
       retries: 3
 
+  # ─── Jaeger (OpenTelemetry / OTLP tracing UI) ─────────────
+  # UI: http://localhost:16686
+  # App: en .env → OTEL_ENABLED=true y
+  #      OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  # Requiere: uv add opentelemetry-sdk opentelemetry-exporter-otlp
+  # Almacenamiento en memoria (dev): las trazas se pierden al reiniciar.
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: microcoreos_jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"   # Web UI
+      - "4317:4317"     # OTLP gRPC (el que usa el tool telemetry)
+      - "4318:4318"     # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
 volumes:
   postgres_data:
   redis_data:
