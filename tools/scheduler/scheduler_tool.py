@@ -95,11 +95,54 @@ REPLACEMENT STANDARD (swap without changing plugins):
     Plugins do not change.
 """
 
+import functools
+import inspect
 import os
 import uuid
 from datetime import datetime
 from typing import Callable, Optional
 from core.base_tool import BaseTool
+from core.context import current_identity_var
+
+
+def _callback_identity(callback: Callable) -> str:
+    """Identity for events/logs a job produces: '<domain>.<Class>.<method>'
+    when the callback is a plugin's bound method (mirrors the event bus's
+    subscriber naming), module-qualified fallback otherwise."""
+    owner = getattr(callback, "__self__", None)
+    if owner is not None:
+        base = getattr(owner, "_identity", None)
+        if not base:
+            cls = owner.__class__
+            base = f"{cls.__module__}.{cls.__name__}"
+        return f"{base}.{callback.__name__}"
+    module = getattr(callback, "__module__", None) or "anonymous"
+    return f"{module}.{getattr(callback, '__qualname__', 'anonymous')}"
+
+
+def _with_identity(callback: Callable) -> Callable:
+    """Jobs fire from APScheduler's own context, where current_identity_var
+    is unset — without this wrapper everything a job publishes or logs is
+    attributed to the anonymous default instead of the owning plugin."""
+    identity = _callback_identity(callback)
+    if inspect.iscoroutinefunction(callback):
+        @functools.wraps(callback)
+        async def async_wrapper():
+            token = current_identity_var.set(identity)
+            try:
+                return await callback()
+            finally:
+                current_identity_var.reset(token)
+        return async_wrapper
+
+    @functools.wraps(callback)
+    def sync_wrapper():
+        token = current_identity_var.set(identity)
+        try:
+            return callback()
+        finally:
+            current_identity_var.reset(token)
+    return sync_wrapper
 
 
 class SchedulerTool(BaseTool):
@@ -178,7 +221,7 @@ class SchedulerTool(BaseTool):
 
         job_id = job_id or uuid.uuid4().hex
         self._scheduler.add_job(
-            callback,
+            _with_identity(callback),
             trigger=CronTrigger.from_crontab(cron_expr),
             id=job_id,
             replace_existing=True,
@@ -211,7 +254,7 @@ class SchedulerTool(BaseTool):
 
         job_id = job_id or uuid.uuid4().hex
         self._scheduler.add_job(
-            callback,
+            _with_identity(callback),
             trigger=DateTrigger(run_date=run_at),
             id=job_id,
             replace_existing=True,

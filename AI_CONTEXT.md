@@ -178,6 +178,8 @@ HTTP Server Tool (http):
         - SECURITY DEFAULTS:
             - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
             - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
+            - Swagger UI (/docs): endpoints with auth_validator show a lock icon and accept
+              tokens via the "Authorize" button (documentation-only; real check unaffected).
         - CAPABILITIES:
             - add_endpoint(path, method, handler, tags=None, request_model=None,
                            response_model=None, auth_validator=None, has_files=False):
