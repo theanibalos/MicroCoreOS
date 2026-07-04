@@ -134,10 +134,11 @@ from pydantic import BaseModel
 from fastapi.exceptions import RequestValidationError
 from core.base_tool import BaseTool
 from core.context import current_identity_var, current_event_id_var
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, File, UploadFile
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, File, UploadFile, Security
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.concurrency import run_in_threadpool
 
 
@@ -267,6 +268,15 @@ class HttpServerTool(BaseTool):
         self._port: int = int(os.getenv("HTTP_PORT", 5000))
         self._server: Optional[uvicorn.Server] = None
         self._pending_endpoints: list[dict] = []
+        # Documentation-only security scheme: shows the "Authorize" button in
+        # Swagger UI (/docs) and marks protected routes with a lock icon.
+        # auto_error=False is critical — actual token validation still happens
+        # in _process_request via auth_validator; this dependency must never
+        # short-circuit with its own 401/403 before that runs.
+        self._bearer_scheme = HTTPBearer(
+            auto_error=False,
+            description="Paste the token as-is (JWT, no 'Bearer ' prefix — Swagger adds it).",
+        )
 
     @property
     def name(self) -> str:
@@ -367,6 +377,8 @@ class HttpServerTool(BaseTool):
         - SECURITY DEFAULTS:
             - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
             - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
+            - Swagger UI (/docs): endpoints with auth_validator show a lock icon and accept
+              tokens via the "Authorize" button (documentation-only; real check unaffected).
         - CAPABILITIES:
             - add_endpoint(path, method, handler, tags=None, request_model=None,
                            response_model=None, auth_validator=None, has_files=False):
@@ -462,50 +474,63 @@ class HttpServerTool(BaseTool):
         generator: async generator callable(data: dict) that yields pre-formatted SSE strings,
                    e.g. "data: {...}\\n\\n". The generator's finally block runs on client disconnect.
         """
-        from fastapi.responses import StreamingResponse
-
-        async def sse_handler(request: Request):
-            data: dict = {}
-            data.update(request.query_params)
-            data.update(request.path_params)
-
-            if auth_validator:
-                token = self._extract_bearer_token(request)
-                if not token:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"success": False, "error": "Missing authorization token"},
-                    )
-                if inspect.iscoroutinefunction(auth_validator):
-                    payload = await auth_validator(token)
-                else:
-                    payload = await run_in_threadpool(auth_validator, token)
-                if not payload:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"success": False, "error": "Invalid or expired token"},
-                    )
-                data["_auth"] = payload
-
-            async def event_stream():
-                gen = generator(data)
-                try:
-                    async for chunk in gen:
-                        if await request.is_disconnected():
-                            break
-                        yield chunk
-                finally:
-                    await gen.aclose()
-
-            return StreamingResponse(
-                event_stream(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
+        if auth_validator:
+            # Documentation-only Bearer dependency (see add_endpoint) so Swagger
+            # UI marks this SSE route as protected. Real auth check is below.
+            async def sse_handler(
+                request: Request,
+                _bearer_auth: Optional[HTTPAuthorizationCredentials] = Security(self._bearer_scheme),
+            ):
+                return await self._sse_response(request, generator, auth_validator)
+        else:
+            async def sse_handler(request: Request):
+                return await self._sse_response(request, generator, auth_validator)
 
         clean_path = path.replace("/", "_")
         sse_handler.__name__ = f"sse{clean_path}"
         self.app.add_api_route(path, sse_handler, methods=["GET"], tags=tags or [])
+
+    async def _sse_response(self, request: Request, generator: Callable, auth_validator: Optional[Callable]):
+        """Shared SSE request-handling body used by add_sse_endpoint's two wrapper variants."""
+        from fastapi.responses import StreamingResponse
+
+        data: dict = {}
+        data.update(request.query_params)
+        data.update(request.path_params)
+
+        if auth_validator:
+            token = self._extract_bearer_token(request)
+            if not token:
+                return JSONResponse(
+                    status_code=401,
+                    content={"success": False, "error": "Missing authorization token"},
+                )
+            if inspect.iscoroutinefunction(auth_validator):
+                payload = await auth_validator(token)
+            else:
+                payload = await run_in_threadpool(auth_validator, token)
+            if not payload:
+                return JSONResponse(
+                    status_code=401,
+                    content={"success": False, "error": "Invalid or expired token"},
+                )
+            data["_auth"] = payload
+
+        async def event_stream():
+            gen = generator(data)
+            try:
+                async for chunk in gen:
+                    if await request.is_disconnected():
+                        break
+                    yield chunk
+            finally:
+                await gen.aclose()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # ── Endpoint registration ────────────────────────────────────────────────────
 
@@ -602,6 +627,20 @@ class HttpServerTool(BaseTool):
                         annotation=field.annotation
                     )
                 )
+
+        # 3. Add a documentation-only Bearer security dependency for protected
+        # routes, so Swagger UI (/docs) shows the lock icon + honors the
+        # "Authorize" button by sending "Authorization: Bearer <token>".
+        # Real auth is still enforced in _process_request; this is metadata only.
+        if auth_validator:
+            params.append(
+                inspect.Parameter(
+                    "_bearer_auth",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    default=Security(self._bearer_scheme),
+                    annotation=Optional[HTTPAuthorizationCredentials],
+                )
+            )
 
         fastapi_wrapper.__signature__ = sig.replace(parameters=params)
 

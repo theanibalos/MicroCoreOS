@@ -20,6 +20,15 @@ The gateway implements a modern CSRF protection mechanism for mutation methods (
 - If authentication is done via **Cookies** (`access_token`), the client MUST send the `X-Requested-With` header.
 - If authentication is done via **Bearer Token** (Authorization header), no extra guard is needed as it is immune to CSRF.
 
+### 3. Swagger UI Lock Icon
+Any endpoint registered with `auth_validator` gets a documentation-only `HTTPBearer` dependency
+attached to it. This is what makes Swagger UI (`/docs`) show a lock icon on the route and lets you
+click **Authorize** once, paste a Bearer token, and have it applied to every "Try it out" call —
+without that, protected routes are indistinguishable from public ones in the docs and there's no
+way to attach a token from the UI. `auto_error=False` keeps this dependency purely cosmetic: it
+never rejects a request on its own — the real check still happens in `_process_request` via the
+`auth_validator` you passed to `add_endpoint`/`add_sse_endpoint`.
+
 ---
 
 ## The Request Pipeline

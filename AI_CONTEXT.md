@@ -161,6 +161,9 @@ Universal Event Bus (event_bus):
 
         RESILIENCE:
         - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
