@@ -6,11 +6,25 @@ description: Create a complete new domain with entity, migration, and CRUD plugi
 
 Creates a full domain from scratch: entity model, SQL migration, and one plugin per use case.
 
+> Planning levels: single features on an existing domain → [feature-plan.md](feature-plan.md) ·
+> one new domain → this workflow · several domains / cross-domain chains →
+> [multi-domain-plan.md](multi-domain-plan.md) · new infrastructure → [new-tool.md](new-tool.md).
+
 ## Prerequisites
 - Read `AI_CONTEXT.md` for available tools.
 - Read `INSTRUCTIONS_FOR_AI.md` for rules and templates.
 
 ## Steps
+
+### 0. Plan the domain first
+
+Write the plan of `docs/PARALLEL_DEVELOPMENT.md` ("Formal plan format") scoped
+to this domain: `phase_0` (its migrations + models, with table ownership),
+`features` (one per plugin, every published event with its payload `model` and
+fields), and `flows` (happy path + the sad-path checklist per link, including
+the `atomic_with_db` outbox question). Build in that order — tools first if
+any, then migrations + models, then plugins with their events. Nothing below
+this line should require a decision the plan did not already make.
 
 ### 1. Create the domain folder structure
 
@@ -60,6 +74,7 @@ For each operation (create, get_all, get_by_id, update, delete), create a separa
 **Critical rules**:
 - Define the **request schema** (what the HTTP client sends) at the **top of the plugin file**, NOT in the models folder.
 - Define the **response schema** (what the HTTP client receives) at the **top of the plugin file** too — never import the Entity for this; only expose the fields you actually return.
+- Define the **event payload schema** for every event this plugin publishes, also at the top of the file: `{Name}CreatedPayload(BaseModel)`. Publish with `.model_dump()` (bare call, no arguments). The publisher owns the event contract — consumers in other domains never import it; they declare their own model with only the fields they need (tolerant reader).
 - Always pass `response_model=` to `add_endpoint` — this generates complete OpenAPI docs.
 
 Example for create:
@@ -88,6 +103,10 @@ class Create{Name}Response(BaseModel):
     data: Optional[{Name}Data] = None
     error: Optional[str] = None
 
+# ── Event payload schema lives HERE (publisher owns the contract) ──
+class {Name}CreatedPayload(BaseModel):
+    id: int
+
 class Create{Name}Plugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger):
         self.http = http
@@ -110,11 +129,12 @@ class Create{Name}Plugin(BasePlugin):
                 [req.field1, req.field2]
             )
             self.logger.info(f"{Name} created with ID {new_id}")
-            await self.bus.publish("{name}.created", {"id": new_id})
+            await self.bus.publish("{name}.created", {Name}CreatedPayload(id=new_id).model_dump())
             return {"success": True, "data": {"id": new_id, "field1": req.field1, "field2": req.field2}}
         except Exception as e:
+            # Safe Error Reporting: log technically, respond safely (never str(e)).
             self.logger.error(f"Failed to create {name}: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Database operation failed"}
 ```
 
 Repeat for: `get_{name}s_plugin.py`, `get_{name}_by_id_plugin.py`, `update_{name}_plugin.py`, `delete_{name}_plugin.py`.
@@ -129,7 +149,9 @@ uv run main.py
 Check that:
 - Migration ran successfully (look for `[Migration] ✅` in logs)
 - Endpoints appear in the Swagger UI at `http://localhost:5000/docs`
-- `AI_CONTEXT.md` was regenerated with the new domain
+- `GET /system/lint` has no warnings and no `UNTYPED_PAYLOAD` for your events
+- `GET /system/events/schemas` lists every event the plan declared
+- `AI_CONTEXT.md` was regenerated with the new domain — **done when it matches the plan**
 
 ### 6. Generate tests
 
@@ -162,7 +184,7 @@ async def test_create_{name}_db_error():
     )
     result = await plugin.execute({"field1": "value", "field2": 42})
     assert result["success"] is False
-    assert "DB down" in result["error"]
+    assert "DB down" not in result["error"]  # Safe Errors: technical detail never reaches the client
 ```
 
 Run with `uv run pytest tests/test_{name}_plugin.py`.

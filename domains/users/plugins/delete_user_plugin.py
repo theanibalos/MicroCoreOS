@@ -10,6 +10,11 @@ class DeleteUserResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Event payload schema (publisher owns the contract) ───────────────────────
+class UserDeletedPayload(BaseModel):
+    id: int
+
+
 class DeleteUserPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger, auth):
         self.http = http
@@ -42,7 +47,7 @@ class DeleteUserPlugin(BasePlugin):
                 return {"success": False, "error": "User not found"}
             self.logger.info(f"User {user_id} deleted")
 
-            await self.bus.publish("user.deleted", {"id": user_id})
+            await self.bus.publish("user.deleted", UserDeletedPayload(id=user_id).model_dump())
 
             return {"success": True}
         except Exception as e:

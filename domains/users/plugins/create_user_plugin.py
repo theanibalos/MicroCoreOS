@@ -28,6 +28,13 @@ class CreateUserResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Event payload schema (publisher owns the contract) ───────────────────────
+class UserCreatedPayload(BaseModel):
+    id: int
+    email: EmailStr
+    roles: list[str]
+
+
 class CreateUserPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger, auth):
         self.http = http
@@ -57,7 +64,10 @@ class CreateUserPlugin(BasePlugin):
             )
             self.logger.info(f"User created with ID {user_id}")
 
-            await self.bus.publish("user.created", {"id": user_id, "email": req.email, "roles": DEFAULT_ROLES})
+            await self.bus.publish(
+                "user.created",
+                UserCreatedPayload(id=user_id, email=req.email, roles=DEFAULT_ROLES).model_dump(),
+            )
 
             return {
                 "success": True,

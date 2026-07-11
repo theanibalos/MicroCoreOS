@@ -52,15 +52,18 @@ To swap to Kafka/RabbitMQ/Redis Streams:
        Pydantic tracing would reject it) and call
        self._deliver_hook(envelope, callback, is_wildcard) — the Bus takes
        over from there (retries, DLQ, tracing all still work).
-    4. Inject it: EventBusTool(driver=KafkaDriver()) — or, for the built-in
-       distributed driver, just set EVENT_BUS_DRIVER=redis_streams
-       (tools/event_bus/redis_streams_driver.py; zero code changes).
+    4. Install it the same way tools are swapped — file placement, no code
+       edits: drop the driver in as tools/event_bus/{name}_driver.py and set
+       EVENT_BUS_DRIVER={name}. Discovery is generic (ready-made drivers ship
+       in extras/available_tools/, e.g. rabbitmq). Explicit injection also
+       works: EventBusTool(driver=KafkaDriver()).
     5. It MUST pass the parity suite: tests/tools/test_event_bus_broker_parity.py.
 
 Plugins are unaffected: same envelope, same API, same semantics.
 """
 
 import collections
+import importlib
 import uuid
 import asyncio
 import inspect
@@ -226,15 +229,36 @@ class EventBusTool(BaseTool):
 
     @staticmethod
     def _driver_from_env() -> EventBusDriver:
-        """Transport selection without touching code: EVENT_BUS_DRIVER env var."""
+        """Transport selection without touching code: EVENT_BUS_DRIVER env var.
+
+        Same swap standard as the db tool, applied to transports: any
+        tools/event_bus/{name}_driver.py defining an EventBusDriver subclass
+        is installed by dropping the file in — EVENT_BUS_DRIVER={name} selects
+        it. No branch to add here, ever.
+        """
         name = os.getenv("EVENT_BUS_DRIVER", "in_process").strip().lower()
         if name in ("", "in_process", "inprocess", "memory"):
             return InProcessDriver()
-        if name == "redis_streams":
-            from tools.event_bus.redis_streams_driver import RedisStreamsDriver
-            return RedisStreamsDriver()
+
+        driver_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), f"{name}_driver.py"
+        )
+        if not os.path.exists(driver_file):
+            raise ValueError(
+                f"Unknown EVENT_BUS_DRIVER '{name}': tools/event_bus/{name}_driver.py "
+                f"not found. Installing a transport = dropping its *_driver.py file "
+                f"there (ready-made drivers ship in extras/available_tools/)."
+            )
+
+        module = importlib.import_module(f"tools.event_bus.{name}_driver")
+        for obj in vars(module).values():
+            # Base matched by NAME: the Kernel loads this file by path, so the
+            # driver's imported EventBusDriver may be a different class object.
+            if (isinstance(obj, type) and obj.__module__ == module.__name__
+                    and any(b.__name__ == "EventBusDriver" for b in obj.__mro__[1:])):
+                return obj()
         raise ValueError(
-            f"Unknown EVENT_BUS_DRIVER '{name}' (expected 'in_process' or 'redis_streams')."
+            f"tools/event_bus/{name}_driver.py defines no EventBusDriver subclass."
         )
 
     @property

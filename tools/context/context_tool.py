@@ -156,6 +156,11 @@ class CreateThingResponse(BaseModel):
     data: Optional[ThingData] = None
     error: Optional[str] = None
 
+# Event payload schema lives HERE too — the publisher owns the event contract
+class ThingCreatedPayload(BaseModel):
+    id: int
+    name: str
+
 class CreateThingPlugin(BasePlugin):
     def __init__(self, http, db, event_bus, logger):
         self.http = http
@@ -177,7 +182,10 @@ class CreateThingPlugin(BasePlugin):
             thing_id = await self.db.execute(
                 "INSERT INTO things (name) VALUES ($1) RETURNING id", [req.name]
             )
-            await self.bus.publish("thing.created", {"id": thing_id})
+            await self.bus.publish(
+                "thing.created",
+                ThingCreatedPayload(id=thing_id, name=req.name).model_dump(),
+            )
             return {"success": True, "data": {"id": thing_id, "name": req.name}}
         except Exception as e:
             # Technical error logged server-side, safe message for client
@@ -207,6 +215,10 @@ domains/{name}/
 8. **Always pass `response_model=`** to `add_endpoint` — generates OpenAPI docs.
 9. **Never expose sensitive fields** — Define response schema with only safe fields.
 10. **No hardcoded imports** — Never `from tools.x import X`. Use DI.
+11. **Typed event payloads** — Define `XxxPayload(BaseModel)` in the PUBLISHER plugin and
+    publish `XxxPayload(...).model_dump()` (bare call, no arguments). Consumers never import
+    it: they declare their own model with ONLY the fields they need (tolerant reader) and do
+    `Model(**event.payload)`. Raw-dict publishes are flagged `UNTYPED_PAYLOAD` by `/system/lint`.
 
 ---
 
@@ -309,22 +321,42 @@ domains/{name}/
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     tree = ast.parse(f.read())
-                
+
+                # Module-level class fields, so Payload(...).model_dump() publishes
+                # resolve to the payload model's field names.
+                class_fields: dict[str, set[str]] = {}
+                for n in tree.body:
+                    if isinstance(n, ast.ClassDef):
+                        fields = {
+                            s.target.id for s in n.body
+                            if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+                        }
+                        if fields:
+                            class_fields[n.name] = fields
+
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                         if node.func.attr == "publish":
                             event_name, keys = None, set()
-                            
+
                             # First arg is event name
                             if node.args and isinstance(node.args[0], ast.Constant):
                                 event_name = node.args[0].value
-                            
-                            # Second arg is payload (dict)
-                            if len(node.args) >= 2 and isinstance(node.args[1], ast.Dict):
-                                for k in node.args[1].keys:
-                                    if isinstance(k, ast.Constant):
-                                        keys.add(str(k.value))
-                            
+
+                            # Second arg is payload: dict literal or Payload(...).model_dump()
+                            if len(node.args) >= 2:
+                                payload = node.args[1]
+                                if isinstance(payload, ast.Dict):
+                                    for k in payload.keys:
+                                        if isinstance(k, ast.Constant):
+                                            keys.add(str(k.value))
+                                elif (isinstance(payload, ast.Call)
+                                      and isinstance(payload.func, ast.Attribute)
+                                      and payload.func.attr == "model_dump"
+                                      and isinstance(payload.func.value, ast.Call)
+                                      and isinstance(payload.func.value.func, ast.Name)):
+                                    keys.update(class_fields.get(payload.func.value.func.id, set()))
+
                             if event_name:
                                 if event_name not in event_map:
                                     event_map[event_name] = keys

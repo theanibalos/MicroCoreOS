@@ -118,7 +118,7 @@ class BillingPlugin:
         pass
 ''')
     findings = run(PUBLISHER_OK, orphan_sub)
-    assert sorted(codes(findings)) == ["ORPHAN_PUBLISH", "ORPHAN_SUBSCRIBE"]
+    assert sorted(codes(findings)) == ["ORPHAN_PUBLISH", "ORPHAN_SUBSCRIBE", "UNTYPED_PAYLOAD"]
     assert codes(findings, "warning") == []
 
 
@@ -207,6 +207,88 @@ class JobsPlugin:
     assert "'event'" in warnings[0]["detail"]
 
 
+PUBLISHER_TYPED = ("orders", "create_order_plugin.py", '''
+from pydantic import BaseModel
+
+class OrderCreatedPayload(BaseModel):
+    id: int
+    total: float
+
+class CreateOrderPlugin:
+    async def execute(self, data, context=None):
+        await self.bus.publish(
+            "order.created", OrderCreatedPayload(id=1, total=9.5).model_dump()
+        )
+''')
+
+
+def test_model_dump_publish_resolves_keys_from_model():
+    findings = run(PUBLISHER_TYPED, CONSUMER_SUBSCRIPT)
+    # Consumer requires "id", the model provides it: fully clean, no infos either.
+    assert findings == []
+
+
+def test_model_dump_publish_still_detects_missing_key():
+    consumer = ("billing", "billing_plugin.py", '''
+class BillingPlugin:
+    async def on_boot(self):
+        await self.bus.subscribe("order.created", self.on_order)
+
+    async def on_order(self, event):
+        customer = event.payload["customer_id"]
+''')
+    findings = run(PUBLISHER_TYPED, consumer)
+    warnings = [f for f in findings if f["severity"] == "warning"]
+    assert len(warnings) == 1
+    assert warnings[0]["code"] == "MISSING_KEY"
+    assert "customer_id" in warnings[0]["detail"]
+
+
+def test_model_dump_via_variables_is_back_resolved():
+    publisher = ("orders", "create_order_plugin.py", '''
+from pydantic import BaseModel
+
+class OrderCreatedPayload(BaseModel):
+    id: int
+
+class CreateOrderPlugin:
+    async def execute(self, data, context=None):
+        payload = OrderCreatedPayload(id=1)
+        body = payload.model_dump()
+        await self.bus.publish("order.created", body)
+''')
+    findings = run(publisher, CONSUMER_SUBSCRIPT)
+    assert findings == []
+
+
+def test_model_dump_with_arguments_is_unknown_payload():
+    publisher = ("orders", "create_order_plugin.py", '''
+from pydantic import BaseModel
+
+class OrderCreatedPayload(BaseModel):
+    id: int
+
+class CreateOrderPlugin:
+    async def execute(self, data, context=None):
+        await self.bus.publish(
+            "order.created", OrderCreatedPayload(id=1).model_dump(exclude_none=True)
+        )
+''')
+    findings = run(publisher)
+    # exclude_none can drop keys at runtime — the linter must not claim to know them.
+    assert "UNKNOWN_PAYLOAD" in codes(findings)
+    assert codes(findings, "warning") == []
+
+
+def test_raw_dict_publish_gets_untyped_payload_info():
+    findings = run(PUBLISHER_OK, CONSUMER_SUBSCRIPT)
+    untyped = [f for f in findings if f["code"] == "UNTYPED_PAYLOAD"]
+    assert len(untyped) == 1
+    assert untyped[0]["severity"] == "info"
+    assert untyped[0]["event"] == "order.created"
+    assert codes(findings, "warning") == []
+
+
 def test_opaque_consumer_is_informational():
     consumer = ("billing", "billing_plugin.py", '''
 class BillingPlugin:
@@ -249,10 +331,16 @@ async def test_plugin_boot_registers_metadata_and_endpoint():
     plugin = EventContractLinterPlugin(container=container, logger=logger, http=http)
     await plugin.on_boot()
 
-    args, _ = registry.register_domain_metadata.call_args
-    assert args[0] == "system"
-    assert args[1] == "event_contract_violations"
-    assert isinstance(args[2], list)
+    registered = {
+        call.args[1]: call.args[2]
+        for call in registry.register_domain_metadata.call_args_list
+        if call.args[0] == "system"
+    }
+    assert isinstance(registered["event_contract_violations"], list)
+    # Typed publishers are exported for EventSchemasPlugin (event -> model + file).
+    models = registered["event_payload_models"]
+    assert any(m["event"] == "user.created" and m["model"] == "UserCreatedPayload"
+               for m in models)
 
     endpoint_args, endpoint_kwargs = http.add_endpoint.call_args
     assert endpoint_args[0] == "/system/lint"

@@ -13,14 +13,12 @@ ACTIVATION (the swap — the Bus and plugins are NOT touched):
     1. uv add "aio-pika>=9.4"   (already in pyproject if this file shipped)
     2. Start a broker (uncomment the rabbitmq service in
        dev_infra/docker-compose.yml).
-    3. Hand the driver to the Bus — the injection seam documented in
-       event_bus_tool.py ("Inject it: EventBusTool(driver=...)"):
+    3. Move this file into tools/event_bus/ and set EVENT_BUS_DRIVER=rabbitmq.
+       Driver discovery is generic (same swap standard as the db tool: file
+       placement IS the installation — no Bus edit, no branch to add).
+       Explicit injection also works:
            from extras.available_tools.rabbitmq.rabbitmq_driver import RabbitMQDriver
            EventBusTool(driver=RabbitMQDriver())
-       Or, if a deployment prefers env selection, move this file into
-       tools/event_bus/ and add a one-line "rabbitmq" branch to
-       _driver_from_env (the same shape as the redis_streams branch). That is a
-       reviewed deployment choice, NOT a change this extra makes on its own.
 
 With N replicas pointing at the same broker, events published by one instance
 reach subscribers in all instances — and the Bus's auto-derived `group=`

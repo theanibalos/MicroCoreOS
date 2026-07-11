@@ -53,10 +53,12 @@ name that lives in a global namespace, so nothing is left to improvisation:
 - **migrations** (phase 0, listed for traceability, with the tables they own)
 - **plugins** — one per feature: name, domain, file, function
 - **tools** — only if new infrastructure is needed
-- **events** — every published event **with its full payload**, and who consumes it
+- **events** — every published event **with its payload model and fields**, and who consumes it
 - **routes** — method + path per endpoint
-- **flows** — end-to-end chains, so the whole is understood at a glance
-- **tests** — every feature ships with its test file; everything has tests
+- **flows** — end-to-end chains with their happy path AND the sad-path
+  decisions per link, so every failure mode is decided before any code exists
+- **tests** — every feature ships with its unit test file, every flow with its
+  e2e chain test; everything has tests
 
 #### Formal plan format
 
@@ -78,6 +80,7 @@ plan:
       route: { method: POST, path: /orders }
       publishes:
         - event: order.created
+          model: OrderCreatedPayload        # Pydantic payload model, inline in the plugin
           payload: { id: int, user_id: int, total: float }
       consumes: []
       mocks: [db, event_bus]                # what its test mocks
@@ -89,16 +92,47 @@ plan:
       route: null                           # pure consumer, no endpoint
       publishes:
         - event: order.notified
+          model: OrderNotifiedPayload
           payload: { order_id: int, user_id: int }
       consumes:
         - event: order.created
-          requires: [id, user_id]           # keys this consumer will read
+          requires: [id, user_id]           # keys this consumer will read (tolerant reader)
       mocks: [event_bus, logger]
       test: tests/test_order_notifier.py
 
   flows:
-    - "POST /orders → order.created → OrderNotifierPlugin → order.notified"
+    - name: order-lifecycle
+      happy_path: "POST /orders → order.created → OrderNotifierPlugin → order.notified"
+      e2e_test: tests/test_order_lifecycle_chain.py   # asserts the chain via /system/traces/tree
+      links:                                # one entry per consumed event in the chain
+        - consumes: order.created
+          consumer: OrderNotifierPlugin
+          retries: 3
+          backoff: 1.0
+          idempotent: true                  # MANDATORY true whenever retries > 0
+          dlq_watcher: null                 # who observes _dlq.order.created (null = loss accepted)
+          atomic_with_db: false             # commit+publish must be atomic? true → outbox (Issue 28)
+          compensation: null                # compensating event if the chain rolls back (saga)
 ```
+
+#### Sad paths are enumerable, not open-ended
+
+In this architecture the failure modes of a chain are finite, because the bus
+contract defines them. Each `links:` entry answers the full checklist **at
+plan time**, before a line of code exists:
+
+| Field | The question it answers | What forgets to answer it costs |
+|---|---|---|
+| `retries` / `backoff` | How many re-deliveries before giving up? | Transient failures become final |
+| `idempotent` | Can the handler run twice safely? | Duplicates on every retry / reclaim |
+| `dlq_watcher` | Who consumes `_dlq.<event>` after final failure? | Silent event loss (`null` makes the loss *explicit and accepted*) |
+| `atomic_with_db` | Does losing the event between DB commit and publish break the business? | The case for the Transactional Outbox (Roadmap Issue 28) |
+| `compensation` | If a downstream link fails for good, what event undoes the upstream work? | No saga path — partial state forever |
+
+Two failure modes need no per-chain decision because the system already
+handles them observably: a subscriber auto-unsubscribed after 5 consecutive
+final failures publishes `system.subscriber.dropped` (alerting belongs to a
+system-wide watcher, not to each plan), and expired TTLs simply drop delivery.
 
 #### Plan validity rules (mechanically checkable before dispatch)
 
@@ -111,6 +145,15 @@ A plan is valid iff:
 4. Every key in `consumes.requires` exists in the corresponding publisher's
    `payload`.
 5. Every feature has a `test`.
+6. Every `publishes` entry names its payload `model` — the Pydantic class the
+   publisher plugin defines inline (`GET /system/events/schemas` serves the
+   resulting catalog).
+7. Every flow lists ALL its consumed events as `links`, each with the sad-path
+   checklist answered (`idempotent: true` is mandatory where `retries > 0`).
+8. Every flow has an `e2e_test` that triggers the happy path and asserts the
+   real causal chain against `/system/traces/tree`. The helper
+   `tests/helpers/trace_chains.py` makes it a one-liner:
+   `assert_chain(build_tree(bus.get_trace_history()), ["order.created", "order.notified"])`.
 
 ### Phase 2 — Execution (parallel, all at once)
 

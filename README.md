@@ -190,7 +190,7 @@ MicroCoreOS/
 | ----------- | -------------------------------------------------------------- |
 | `http`      | FastAPI gateway — REST, WebSocket, SSE, auto-generated OpenAPI |
 | `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap           |
-| `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing              |
+| `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing. Transports swap by env var: in-process (default), SQLite (durable, survives restarts), Redis Streams (distributed); RabbitMQ in extras |
 | `auth`      | JWT lifecycle + bcrypt password hashing                           |
 | `scheduler` | Cron jobs + one-shot tasks (APScheduler)                          |
 | `logger`    | Structured logging with sink pattern                              |
@@ -206,7 +206,7 @@ MicroCoreOS/
 | `s3`         | AWS S3 object storage — private bucket + presigned URLs                  |
 | `db`         | PostgreSQL — drop-in swap for SQLite, same API and placeholders          |
 | `state`      | Redis-backed state — drop-in swap for in-memory StateTool                |
-| `event_bus`  | RabbitMQ driver — distributed transport for the Event Bus                |
+| `rabbitmq`   | RabbitMQ **driver** for the Event Bus — transports swap by file, like tools: drop the `*_driver.py` into `tools/event_bus/` and set `EVENT_BUS_DRIVER=rabbitmq` |
 
 ---
 
@@ -253,9 +253,15 @@ Quick Start · First Plugin Tutorial · Plugin Reference · Tools Reference · O
 
 ## Roadmap
 
-- `uv add microcoreos` — Core as an installable package
-- Domain isolation linter — CI enforcement of import rules
-- Event contract linter — Static validation of pub/sub schemas
+Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
+
+- **Monolith track**: route-collision & table-ownership linters, automatic test
+  generation, `uv add microcoreos` (Core as an installable package)
+- **Distributed track**: Kafka event bus driver (Redis Streams, RabbitMQ and
+  the durable SQLite transport already shipped), driver capability
+  negotiation, event ACLs, runtime contracts via the schema catalog,
+  distributed observability (export local, aggregate outside), transactional
+  outbox (deferred until a real chain needs it)
 - Official tool packages — `microcoreos-redis`, `microcoreos-postgres`
 
 ---

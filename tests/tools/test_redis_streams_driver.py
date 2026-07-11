@@ -170,3 +170,27 @@ async def test_driver_selected_by_env_var(monkeypatch):
     monkeypatch.setenv("EVENT_BUS_DRIVER", "kafka")
     with pytest.raises(ValueError):
         EventBusTool()
+
+
+async def test_driver_discovery_is_generic_drop_in(monkeypatch):
+    """Installing a transport = dropping tools/event_bus/{name}_driver.py in.
+
+    Same swap standard as the db tool: file placement IS the installation —
+    no branch in the Bus, no code edit.
+    """
+    import os
+    import tools.event_bus.event_bus_tool as bus_module
+
+    driver_dir = os.path.dirname(os.path.abspath(bus_module.__file__))
+    dummy_file = os.path.join(driver_dir, "dummy_driver.py")
+    with open(dummy_file, "w", encoding="utf-8") as f:
+        f.write(
+            "from tools.event_bus.event_bus_tool import EventBusDriver\n\n\n"
+            "class DummyDriver(EventBusDriver):\n"
+            "    pass\n"
+        )
+    try:
+        monkeypatch.setenv("EVENT_BUS_DRIVER", "dummy")
+        assert type(EventBusTool()._driver).__name__ == "DummyDriver"
+    finally:
+        os.remove(dummy_file)

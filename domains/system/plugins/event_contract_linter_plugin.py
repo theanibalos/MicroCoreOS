@@ -96,11 +96,11 @@ class EventContractAnalyzer:
                 if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
                     continue
                 if call.func.attr in ("publish", "request"):
-                    self._extract_publish(domain, filename, classdef.name, method, call)
+                    self._extract_publish(domain, filename, classdef.name, method, call, models)
                 elif call.func.attr == "subscribe":
                     self._extract_subscribe(domain, filename, classdef.name, methods, models, call)
 
-    def _extract_publish(self, domain, filename, cls, method, call) -> None:
+    def _extract_publish(self, domain, filename, cls, method, call, models) -> None:
         if not call.args:
             return
         site = f"{domain}.{cls}.{method.name} ({filename}:{call.lineno})"
@@ -115,18 +115,25 @@ class EventContractAnalyzer:
             return
 
         payload_node = call.args[1] if len(call.args) > 1 else None
-        keys, is_open = self._resolve_payload(payload_node, method)
+        keys, is_open, model = self._resolve_payload(payload_node, method, models)
         if keys is None:
             self.extraction_infos.append(self._finding(
                 "UNKNOWN_PAYLOAD", "info", event=event, publisher=site,
                 detail="payload is not a statically analyzable dict literal"
             ))
+        elif model is None:
+            self.extraction_infos.append(self._finding(
+                "UNTYPED_PAYLOAD", "info", event=event, publisher=site,
+                detail="payload is a raw dict — define a Payload(BaseModel) in this plugin "
+                       "and publish its .model_dump() (schema registry readiness)"
+            ))
         self.publishers.append({
             "event": event, "site": site, "keys": keys, "open": is_open,
+            "model": model, "domain": domain, "file": filename,
         })
 
-    def _resolve_payload(self, node, method):
-        """Returns (keys | None, open). None keys = not analyzable."""
+    def _resolve_payload(self, node, method, models):
+        """Returns (keys | None, open, model_name | None). None keys = not analyzable."""
         if isinstance(node, ast.Dict):
             keys, is_open = set(), False
             for k in node.keys:
@@ -136,17 +143,44 @@ class EventContractAnalyzer:
                     keys.add(k.value)
                 else:
                     is_open = True
-            return keys, is_open
+            return keys, is_open, None
+        if isinstance(node, ast.Call):
+            # Payload(...).model_dump() -> keys come from the Pydantic model.
+            # Only the bare call: model_dump(exclude=...) can drop keys at runtime,
+            # so anything with arguments falls through to UNKNOWN_PAYLOAD.
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == "model_dump"
+                    and not node.args and not node.keywords):
+                model = self._resolve_model_name(node.func.value, method, models)
+                if model is not None:
+                    fields = models[model]
+                    return fields["required"] | fields["optional"], False, model
         if isinstance(node, ast.Name):
-            # Trivial back-resolution: a single dict-literal assignment in the method.
-            assigns = [
-                stmt.value for stmt in ast.walk(method)
-                if isinstance(stmt, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == node.id for t in stmt.targets)
-            ]
-            if len(assigns) == 1 and isinstance(assigns[0], ast.Dict):
-                return self._resolve_payload(assigns[0], method)
-        return None, True
+            # Trivial back-resolution: a single assignment in the method.
+            value = self._single_assignment(node, method)
+            if value is not None:
+                return self._resolve_payload(value, method, models)
+        return None, True, None
+
+    def _resolve_model_name(self, node, method, models):
+        """Node that evaluates to a known Pydantic model instance -> class name."""
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in models):
+            return node.func.id
+        if isinstance(node, ast.Name):
+            value = self._single_assignment(node, method)
+            if value is not None:
+                return self._resolve_model_name(value, method, models)
+        return None
+
+    @staticmethod
+    def _single_assignment(node, method):
+        """The value of the unique assignment to this Name in the method, else None."""
+        assigns = [
+            stmt.value for stmt in ast.walk(method)
+            if isinstance(stmt, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == node.id for t in stmt.targets)
+        ]
+        return assigns[0] if len(assigns) == 1 else None
 
     def _extract_subscribe(self, domain, filename, cls, methods, models, call) -> None:
         if len(call.args) < 2:
@@ -316,6 +350,17 @@ class EventContractLinterPlugin(BasePlugin):
 
     async def on_boot(self):
         findings = self._run_scan()
+        # Map of typed publishers (event -> payload model + source file), consumed
+        # by EventSchemasPlugin to build the event schema catalog via registry
+        # metadata — the same channel the lint endpoint uses for arch_violations.
+        self.registry.register_domain_metadata(
+            "system", "event_payload_models",
+            [
+                {"event": p["event"], "model": p["model"],
+                 "domain": p["domain"], "file": p["file"]}
+                for p in self._analyzer.publishers if p.get("model")
+            ],
+        )
         self.registry.register_domain_metadata(
             "system", "event_contract_violations", findings
         )
@@ -337,7 +382,7 @@ class EventContractLinterPlugin(BasePlugin):
         )
 
     def _run_scan(self, domains_dir: str = "domains") -> list[dict]:
-        analyzer = EventContractAnalyzer()
+        analyzer = self._analyzer = EventContractAnalyzer()
         base = os.path.abspath(domains_dir)
         if not os.path.exists(base):
             return []

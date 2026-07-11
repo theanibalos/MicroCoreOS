@@ -1,6 +1,33 @@
-# MicroCoreOS — Foundational Architecture & Mandates
+# MicroCoreOS — Foundational Architecture, Mandates & AI Instructions
 
-This file contains the "Laws of the Kernel". All development, whether by human or AI, must strictly adhere to these principles to maintain the integrity of the Elastic Monolith.
+This file contains the "Laws of the Kernel" and the specific instructions for AI agents working in this codebase. All development, whether by human or AI, must strictly adhere to these principles to maintain the integrity of the Elastic Monolith.
+
+## 📖 Reading Path (minimize token usage)
+
+**To write a plugin or domain**: Read `AI_CONTEXT.md` + the entity model in `domains/{domain}/models/`. Nothing else.
+**For testing, observability, or creating tools**: Read `INSTRUCTIONS_FOR_AI.md`.
+
+## 💻 Commands
+
+```bash
+uv run main.py                              # Run the app (also regenerates AI_CONTEXT.md)
+uv run pytest                               # Run all tests
+uv run pytest tests/test_file.py            # Run single test
+docker compose -f dev_infra/docker-compose.yml up -d  # Start dev infrastructure (PostgreSQL)
+```
+
+## 🛠️ Essential Rules for AI
+
+1. **Never modify `main.py`** — Kernel auto-discovers everything. Features NEVER touch it.
+2. **1 file = 1 feature** — Plugins live in `domains/{domain}/plugins/{feature}_plugin.py`.
+3. **DI by parameter name** — `__init__(self, http, db, logger)` injects the tools named `http`, `db`, `logger`.
+4. **Entity in models/ = DB mirror only** — Request AND response schemas go inline in the plugin.
+5. **No cross-domain imports** — Domains communicate only through `event_bus`.
+6. **Return envelope** — Always `{"success": bool, "data": ..., "error": ...}`.
+7. **Placeholders** — Always `$1, $2, $3...` in SQL (PostgreSQL-style; SQLite converts internally).
+8. **Runner**: Always `uv run`.
+9. **Core uses `print()`, not the logger** — Core must not depend on the swappable logging tool.
+10. **Protect endpoints**: Pass `auth_validator=self.auth.validate_token` to `add_endpoint` for non-public endpoints, and check ownership via `data["_auth"]["sub"]` inside the handler.
 
 ## ⚖️ The "No Hidden Magic" Rule (Kernel Level)
 

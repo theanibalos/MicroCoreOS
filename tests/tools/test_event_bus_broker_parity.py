@@ -14,8 +14,8 @@ def anyio_backend():
 # The parity requirement (Issue 22): every transport driver must pass this
 # exact suite. The redis variant skips itself if no server is reachable
 # (docker compose -f dev_infra/docker-compose.yml up -d redis).
-@pytest.fixture(params=["in_process", "redis_streams"])
-async def bus(request, monkeypatch):
+@pytest.fixture(params=["in_process", "redis_streams", "sqlite"])
+async def bus(request, monkeypatch, tmp_path):
     if request.param == "redis_streams":
         monkeypatch.setenv("REDIS_DB", "15")  # keep test streams away from dev data
         b = EventBusTool(driver=RedisStreamsDriver())
@@ -25,6 +25,11 @@ async def bus(request, monkeypatch):
             pytest.skip("Redis not available — docker compose -f dev_infra/docker-compose.yml up -d redis")
         # Durable groups persist between runs: start each test hermetic.
         await b._driver._redis.flushdb()
+    elif request.param == "sqlite":
+        from tools.event_bus.sqlite_driver import SQLiteDriver
+        monkeypatch.setenv("EVENT_BUS_SQLITE_PATH", str(tmp_path / "bus_queue.db"))
+        b = EventBusTool(driver=SQLiteDriver())
+        await b.setup()
     else:
         b = EventBusTool()
         await b.setup()

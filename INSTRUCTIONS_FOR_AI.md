@@ -19,6 +19,7 @@ These are the most frequent errors. Check these first before writing any code.
 | `from tools.http_server.http_server_tool import HttpServerTool` | Use DI: `def __init__(self, http)` | Hardcoded imports break tool swapping |
 | Expecting automatic Kernel retries | Handle your own exceptions or use Tool-level resilience | **ToolProxy NO LONGER retries automatically** to prevent duplicates |
 | `return {"success": False, "error": str(e)}` | `logger.error(e); return {"success": False, "error": "Generic Message"}` | `str(e)` leaks table names, paths, and internal logic |
+| `bus.publish("x.y", {"id": 1})` (raw dict) | Define `XyPayload(BaseModel)` and publish `XyPayload(id=1).model_dump()` | The publisher owns the event contract; raw dicts are flagged `UNTYPED_PAYLOAD` by `/system/lint` |
 
 ---
 
@@ -104,6 +105,55 @@ class CreateProductPlugin(BasePlugin):
         # To participate in request() RPC, return a dict
         return {"processed": True}
 ```
+
+---
+
+## 📨 Event Payload Schemas (Schema Registry Readiness)
+
+Every event a plugin publishes has a Pydantic payload model, defined **inline in
+the publisher plugin** — same place as its request/response schemas. The
+publisher owns the event contract, exactly like a producer registers its schema
+in a schema registry.
+
+```python
+# ── In the PUBLISHER plugin ─────────────────────────
+class OrderCreatedPayload(BaseModel):
+    id: int
+    user_id: int
+    total: float
+
+await self.bus.publish("order.created", OrderCreatedPayload(
+    id=order_id, user_id=req.user_id, total=req.total
+).model_dump())
+```
+
+```python
+# ── In a CONSUMER plugin (another domain) ───────────
+# Never import the publisher's model (no cross-domain imports).
+# Declare ONLY the fields this consumer needs — tolerant reader.
+class OrderForBilling(BaseModel):
+    id: int
+    total: float
+
+async def on_order_created(self, event):
+    order = OrderForBilling(**event.payload)  # extra keys are ignored
+```
+
+Rules of the pattern:
+
+- **Publish with a bare `.model_dump()`** — no arguments. `exclude_none=True`
+  and friends can drop keys at runtime, so the linter refuses to trust them
+  (`UNKNOWN_PAYLOAD`).
+- **Consumers are tolerant readers**: they re-declare only the fields they
+  read. This is not duplication — it is what decouples publisher evolution
+  from consumers, and the `EventContractLinterPlugin` statically cross-checks
+  that every field a consumer requires exists in every publish site.
+- **Raw-dict publishes still work** but are flagged `UNTYPED_PAYLOAD`
+  (info, advisory) in `GET /system/lint`.
+- **Why**: when the event bus is swapped to Kafka (Roadmap Issue 18), each
+  payload model's `model_json_schema()` is the JSON Schema the registry needs —
+  the contracts are already written, no plugin changes. `GET /system/events/schemas`
+  serves the full catalog (event → JSON Schema) today.
 
 ---
 
@@ -218,7 +268,88 @@ async def execute(self, data: dict, context=None):
 ---
 
 ## 🧪 Testing
-...
+
+Constructor injection makes testing straightforward. In this project, we support and encourage two levels of testing:
+
+### 1. Black-Box Integration Testing (Recommended for DB/State/Events)
+To prevent fragile mocks and ensure database queries actually run and pass syntax and dialect checks:
+- Do NOT mock `db`, `event_bus`, or `state` tools unless absolutely necessary.
+- Use the real `SqliteTool` configured with `:memory:` (fast, self-contained, no external database files needed).
+- Apply migrations dynamically to the in-memory database to establish the real schema.
+- Assert on the final state of the database and event bus (Black-Box) rather than internal mock call assertions.
+
+Example of a Black-Box Integration Test:
+```python
+import pytest
+from tools.sqlite.sqlite_tool import SqliteTool
+from tools.event_bus.event_bus_tool import EventBusTool
+from tools.auth.auth_tool import AuthTool
+from domains.users.plugins.create_user_plugin import CreateUserPlugin
+
+@pytest.fixture
+async def test_env():
+    # Setup real db in memory
+    db = SqliteTool()
+    db._db_path = ":memory:"
+    await db.setup()
+    
+    # Run the migrations needed for this domain
+    with open("domains/users/migrations/001_create_users_table.sql", "r") as f:
+        await db.execute(f.read())
+        
+    bus = EventBusTool()
+    await bus.setup()
+    
+    auth = AuthTool()
+    await auth.setup()
+    
+    yield db, bus, auth
+    
+    await db.shutdown()
+    await bus.shutdown()
+
+@pytest.mark.anyio
+async def test_create_user_integration(test_env):
+    db, bus, auth = test_env
+    plugin = CreateUserPlugin(http=None, db=db, event_bus=bus, logger=None, auth=auth)
+    
+    # Input
+    data = {"name": "John Doe", "email": "john@example.com", "password": "password123"}
+    
+    # Execute (Black Box)
+    result = await plugin.execute(data)
+    
+    # Output Verification
+    assert result["success"] is True
+    assert result["data"]["email"] == "john@example.com"
+    
+    # Database Verification (No Mocks!)
+    users = await db.query("SELECT * FROM users WHERE email = $1", ["john@example.com"])
+    assert len(users) == 1
+    assert users[0]["name"] == "John Doe"
+```
+
+### 2. Isolated Unit Testing (For pure business logic / third-party mocks)
+If you only need to verify branch/flow logic or if you have complex external dependencies (e.g., third-party APIs):
+- Mock the specific tools using `unittest.mock.AsyncMock` or `MagicMock`.
+- Keep assertions focused on inputs/outputs and mock side-effects.
+
+Example:
+```python
+from unittest.mock import AsyncMock, MagicMock
+from domains.users.plugins.create_user_plugin import CreateUserPlugin
+
+@pytest.mark.anyio
+async def test_create_user_unit():
+    mock_db = AsyncMock(execute=AsyncMock(return_value=42))
+    plugin = CreateUserPlugin(
+        http=MagicMock(), db=mock_db, event_bus=AsyncMock(),
+        logger=MagicMock(), auth=MagicMock(hash_password=AsyncMock(return_value="hashed"))
+    )
+    result = await plugin.execute({"name": "Test", "email": "a@b.com", "password": "p"})
+    assert result["success"] is True
+    assert result["data"]["id"] == 42
+```
 ---
 
 ## 📦 Available Extras

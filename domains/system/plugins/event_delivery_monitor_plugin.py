@@ -1,4 +1,15 @@
+from typing import Optional
+from pydantic import BaseModel
 from core.base_plugin import BasePlugin
+
+
+# ── Event payload schema (publisher owns the contract) ───────────────────────
+class EventDeliveryFailedPayload(BaseModel):
+    event: str
+    event_id: Optional[str] = None
+    subscriber: str
+    error: str
+    attempts: int = 0
 
 
 class EventDeliveryMonitorPlugin(BasePlugin):
@@ -37,4 +48,6 @@ class EventDeliveryMonitorPlugin(BasePlugin):
             f"[EventDeliveryMonitor] Delivery failure — "
             f"event='{record['event']}' subscriber='{record['subscriber']}' error='{record['error']}'"
         )
-        await self.bus.publish("event.delivery.failed", record)
+        await self.bus.publish(
+            "event.delivery.failed", EventDeliveryFailedPayload(**record).model_dump()
+        )
