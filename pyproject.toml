@@ -17,6 +17,7 @@ dependencies = [
     "pydantic[email]>=2.10.0",
     "pyjwt>=2.9.0",
     "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.3",
     "redis>=5.0",
     "uvicorn>=0.30.0",
     "websockets>=13.0",

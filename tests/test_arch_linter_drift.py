@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from domains.system.plugins.architecture_linter_plugin import ArchitectureLinterPlugin
+from domains.devtools.plugins.architecture_linter_plugin import ArchitectureLinterPlugin
 from core.base_tool import BaseTool
 
 class MockDriftTool(BaseTool):
@@ -37,7 +37,20 @@ async def test_arch_linter_detects_drift():
     
     # Verify registry was updated with WARNING
     mock_registry.update_tool_status.assert_called_with(
-        "drift_tool", 
-        "WARNING", 
+        "drift_tool",
+        "WARNING",
         "Documentation drift: missing 'undocumented_method'"
     )
+
+
+@pytest.mark.anyio
+async def test_real_repo_has_no_isolation_violations():
+    """CI gate: domain isolation over the actual codebase must be clean.
+
+    Runs the same scan the linter performs at boot (cross-domain imports,
+    hardcoded tool imports) against the real domains/ tree. A violation here
+    fails the suite — and therefore CI — instead of only warning at boot.
+    """
+    plugin = ArchitectureLinterPlugin(container=MagicMock(), logger=MagicMock())
+    violations = plugin._perform_scan()
+    assert violations == []

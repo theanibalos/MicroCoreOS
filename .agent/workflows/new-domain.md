@@ -21,10 +21,13 @@ Creates a full domain from scratch: entity model, SQL migration, and one plugin 
 Write the plan of `docs/PARALLEL_DEVELOPMENT.md` ("Formal plan format") scoped
 to this domain: `phase_0` (its migrations + models, with table ownership),
 `features` (one per plugin, every published event with its payload `model` and
-fields), and `flows` (happy path + the sad-path checklist per link, including
-the `atomic_with_db` outbox question). Build in that order — tools first if
-any, then migrations + models, then plugins with their events. Nothing below
-this line should require a decision the plan did not already make.
+fields, plus the `db:` persistence contract), and `flows` (durability, happy
+path + the sad-path checklist per link — including the `atomic_with_db` outbox
+question — and the declared `idempotency_test` / `sad_path_test` files).
+Validate with `POST /system/plan/validate` before writing code. Build in that
+order — tools first if any, then migrations + models, then plugins with their
+events. Nothing below this line should require a decision the plan did not
+already make.
 
 ### 1. Create the domain folder structure
 
@@ -187,4 +190,4 @@ async def test_create_{name}_db_error():
     assert "DB down" not in result["error"]  # Safe Errors: technical detail never reaches the client
 ```
 
-Run with `uv run pytest tests/test_{name}_plugin.py`.
+Run with `uv run -m pytest tests/test_{name}_plugin.py`.

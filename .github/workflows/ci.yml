@@ -180,6 +180,25 @@ jobs:
           # Assert: S3 connected to REAL infrastructure (not degraded mode)
           grep -q "\[S3Tool\] Connected" boot.log || { echo "S3 did not connect to MinIO"; cat boot.log; exit 1; }
 
+          # Lint gate: the boot linters are advisory at runtime, but CI is the
+          # hard gate — any arch violation, tool drift, or event contract
+          # warning on the booted system fails the pipeline.
+          curl -sf http://localhost:5000/system/lint > lint.json
+          uv run python - <<'EOF'
+          import json
+          lint = json.load(open("lint.json"))
+          assert lint["success"], "system/lint reported failure"
+          data = lint["data"]
+          contract_warnings = [
+              f for f in data["event_contract_violations"]
+              if f.get("severity") == "warning"
+          ]
+          assert not data["arch_violations"], f"Arch violations: {data['arch_violations']}"
+          assert not data["drift_warnings"], f"Tool drift: {data['drift_warnings']}"
+          assert not contract_warnings, f"Event contract warnings: {contract_warnings}"
+          print("✅ Lint gate clean: no arch violations, no drift, no contract warnings")
+          EOF
+
           kill $APP_PID
 
       - name: Show boot log on failure

@@ -30,6 +30,7 @@ plan:
       file: domains/orders/plugins/cancel_order_plugin.py
       function: "Cancel an order and announce it"
       route: { method: POST, path: /orders/{order_id}/cancel }
+      db: { writes: [orders], reads: [] }   # persistence contract — own-domain tables only
       publishes:
         - event: order.cancelled
           model: OrderCancelledPayload
@@ -39,26 +40,37 @@ plan:
       test: tests/test_cancel_order.py
   flows:
     - name: order-cancellation
+      durability: ephemeral   # durable → in-flight events must survive a crash (needs sqlite/redis driver)
       happy_path: "POST /orders/{id}/cancel → order.cancelled → RefundPlugin → order.refunded"
       e2e_test: tests/test_order_cancellation_chain.py
+      sad_path_test: tests/test_order_cancellation_dlq.py  # mandatory: a link declares retries
       links:
         - consumes: order.cancelled
           consumer: RefundPlugin
           retries: 3
           backoff: 1.0
-          idempotent: true
+          idempotent: true        # mandatory when retries > 0 OR the flow is durable
+          idempotency_test: tests/test_refund.py::test_on_order_cancelled_delivered_twice
           dlq_watcher: null
           atomic_with_db: false   # true → this feature is the trigger for Issue 28 (outbox)
           compensation: null
+      rpc_links: []               # every request() call, with timeout + on_timeout
 ```
 
 ### 2. Validate before writing code
 
-- The `route` and `file` collide with nothing in `AI_CONTEXT.md`.
+`POST /system/plan/validate` with the plan (YAML or JSON) — it runs the 14
+validity rules of `docs/PARALLEL_DEVELOPMENT.md` against this plan AND the
+live system. Zero `errors` before any code; `warnings` are advisory. The main
+things it catches at this level:
+
+- The `route` and `file` collide with nothing live.
 - Every consumed event exists (live system or this plan) and provides the
   `requires` keys.
-- Every flow link has the sad-path checklist answered
-  (`idempotent: true` is mandatory where `retries > 0`).
+- Every flow link has the sad-path checklist answered (`idempotent: true` +
+  `idempotency_test` where `retries > 0` or the flow is `durable`).
+- `sad_path_test` present where the flow declares retries / DLQ / compensation.
+- `db:` tables are owned by this domain.
 
 ### 3. Implement
 
@@ -67,7 +79,11 @@ Publish with `XxxPayload(...).model_dump()` — bare call, no arguments.
 
 ### 4. Test
 
-- Unit test per plugin (mock every injected tool).
+- Unit test per plugin (mock every injected tool) — it proves the black-box
+  contract: input → output, DB effects on the declared tables, published
+  payloads with the declared fields.
+- One double-delivery test per idempotent link (same envelope twice → same
+  final state), at the path declared in `idempotency_test`.
 - One chain test per flow, using the helper:
 
 ```python
@@ -75,6 +91,11 @@ from tests.helpers.trace_chains import build_tree, assert_chain
 # trigger the flow, then:
 assert_chain(build_tree(bus.get_trace_history()), ["order.cancelled", "order.refunded"])
 ```
+
+- One sad-path test per flow that declares retries / DLQ / compensation: force
+  the consumer to fail (mock that raises) and assert the decided outcome —
+  `_dlq.<event>` is causally chained to the event that failed, so the same
+  helper works: `assert_chain(tree, ["order.cancelled", "_dlq.order.cancelled"])`.
 
 ### 5. Close
 

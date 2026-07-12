@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.system.plugins.event_contract_linter_plugin import (
+from domains.devtools.plugins.event_contract_linter_plugin import (
     EventContractAnalyzer,
     EventContractLinterPlugin,
 )
@@ -334,7 +334,7 @@ async def test_plugin_boot_registers_metadata_and_endpoint():
     registered = {
         call.args[1]: call.args[2]
         for call in registry.register_domain_metadata.call_args_list
-        if call.args[0] == "system"
+        if call.args[0] == "devtools"
     }
     assert isinstance(registered["event_contract_violations"], list)
     # Typed publishers are exported for EventSchemasPlugin (event -> model + file).

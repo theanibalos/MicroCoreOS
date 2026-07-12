@@ -56,7 +56,7 @@ class EventSchemasPlugin(BasePlugin):
             return {"success": False, "error": "Could not build event schema catalog"}
 
     def _build_catalog(self) -> dict:
-        meta = self.registry.get_domain_metadata().get("system", {})
+        meta = self.registry.get_domain_metadata().get("devtools", {})
         entries = meta.get("event_payload_models", [])
         catalog: dict[str, list] = {}
         for entry in entries:

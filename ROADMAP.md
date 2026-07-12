@@ -254,7 +254,7 @@ window — promote to a tool only if a real use case demands it.
 ### Contracts & Governance
 
 **Issue 5 — ✅ Event contract validation**
-`EventContractLinterPlugin` (system domain): static AST cross-check of every
+`EventContractLinterPlugin` (devtools domain): static AST cross-check of every
 publish site's payload keys vs every subscriber's required keys, exposed at
 `GET /system/lint`. Extended by Issue 29 (typed payloads).
 
@@ -279,6 +279,49 @@ publish site's payload keys vs every subscriber's required keys, exposed at
   `atomic_with_db` → Issue 28, compensation → saga) and an e2e chain test
   (helper `tests/helpers/trace_chains.py`). Four workflow levels in
   `.agent/workflows/`: feature-plan, new-domain, multi-domain-plan, new-tool.
+
+**Issue 32 — ✅ Plan format v3 (crash points, proofs) & mechanical plan validator (2026-07-12 session)**
+- **Format v3** (`docs/PARALLEL_DEVELOPMENT.md`): per-feature `db:` persistence
+  contract (black-box contract = input + output + storage + events); per-flow
+  `durability` (the "in-flight event dies with the process" crash point —
+  connects the plan to the Issue 31 driver ladder), `sad_path_test` and
+  `rpc_links` (timeout is RPC's one failure mode); per-link `idempotency_test`
+  (the double-delivery proof — "idempotent" was a claim, at-least-once rests
+  on it). Idempotency now mandatory where `retries > 0` OR the flow is durable
+  (durable transports re-deliver after a crash even with zero retries).
+- **Crash-test split**: redelivery is proven once by the transport
+  (kill-and-reboot suite, Issue 31); flows prove only their side — idempotency.
+  No feature ever writes a kill test. Sad-path chains assert via the existing
+  helper: `_dlq.<event>` publishes inside the failing delivery's context, so
+  `assert_chain(tree, ["x", "_dlq.x"])` works with no new machinery.
+- **Validator**: `PlanValidatorPlugin` (devtools domain) —
+  `POST /system/plan/validate` takes the plan (YAML or JSON) and executes all
+  14 validity rules against the plan AND the live system (routes via AST scan,
+  tables via migrations, events via registry metadata + bus subscribers,
+  driver via env). ERRORS = invalid plan; WARNINGS = advisory (e.g. durable
+  flow on `in_process`). "Mechanically checkable" became literal: the
+  orchestrator validates with a tool, not with attention.
+
+---
+
+**Issue 33 — ✅ devtools domain & CI lint gate (2026-07-12 session)**
+- **The split**: `domains/system/` was hosting two families — runtime
+  observability (traces, metrics, status, streams: production needs these)
+  and development tooling (both linters, the schema catalog, the plan
+  validator: the AI/orchestrator needs these). The second family moved to
+  `domains/devtools/` — a deployment that wants a smaller surface deletes the
+  folder and nothing else changes (each plugin is one self-contained file).
+  Routes keep their documented `/system/*` paths (the contract is the path,
+  not the folder); registry metadata moved to the `devtools` key.
+- **Advisory at boot, hard gate in CI** — made literal on both halves:
+  the full pytest suite already gates event contracts and now also domain
+  isolation over the real repo (`test_real_repo_has_no_isolation_violations`);
+  the `smoke-boot` CI job now curls `/system/lint` on the booted system and
+  fails the pipeline on any arch violation, tool drift, or event contract
+  warning (drift needs live tools, so the smoke boot is where it can gate).
+  Boot linters stay warn-only by design: a running system is never blocked.
+
+---
 
 ### Transport & Durability
 

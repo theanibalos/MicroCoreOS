@@ -9,7 +9,7 @@
 
 | Document | What it covers |
 |----------|---------------|
-| [PARALLEL_DEVELOPMENT.md](PARALLEL_DEVELOPMENT.md) | N agents building in parallel without collisions: phases, formal plan format, validity rules |
+| [PARALLEL_DEVELOPMENT.md](PARALLEL_DEVELOPMENT.md) | N agents building in parallel without collisions: phases, formal plan format v3 (crash points, failure planes), the 14 validity rules and `POST /system/plan/validate` |
 | [EVENT_BUS.md](EVENT_BUS.md) | Full event bus reference, causality tracking, failure handling, anti-patterns for event hell |
 | [HTTP_SERVER.md](HTTP_SERVER.md) | All HTTP capabilities: REST, SSE, WebSocket, auth, CORS, security headers, X-Request-ID |
 | [CORE_INFRASTRUCTURE.md](CORE_INFRASTRUCTURE.md) | Kernel, Container, ToolProxy, metrics, ContextVars, Registry, undocumented tool behaviors |

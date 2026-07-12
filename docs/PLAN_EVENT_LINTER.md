@@ -7,7 +7,7 @@
 
 ## Ubicación y patrón
 
-- `domains/system/plugins/event_contract_linter_plugin.py` (1 archivo = 1 feature).
+- `domains/devtools/plugins/event_contract_linter_plugin.py` (1 archivo = 1 feature).
 - DI: `def __init__(self, container, logger, registry, http)` — mismo acceso que el arch linter (`container.registry`), más `http` para el endpoint de exposición.
 - Corre en `on_boot()`: escanea `domains/*/plugins/*.py` con `ast`, cruza publishers vs consumers, registra findings. Cero coste en runtime (v1 es 100% estático).
 

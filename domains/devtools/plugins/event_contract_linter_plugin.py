@@ -354,7 +354,7 @@ class EventContractLinterPlugin(BasePlugin):
         # by EventSchemasPlugin to build the event schema catalog via registry
         # metadata — the same channel the lint endpoint uses for arch_violations.
         self.registry.register_domain_metadata(
-            "system", "event_payload_models",
+            "devtools", "event_payload_models",
             [
                 {"event": p["event"], "model": p["model"],
                  "domain": p["domain"], "file": p["file"]}
@@ -362,7 +362,7 @@ class EventContractLinterPlugin(BasePlugin):
             ],
         )
         self.registry.register_domain_metadata(
-            "system", "event_contract_violations", findings
+            "devtools", "event_contract_violations", findings
         )
 
         warnings = [f for f in findings if f["severity"] == "warning"]
@@ -402,7 +402,7 @@ class EventContractLinterPlugin(BasePlugin):
 
     async def get_lint(self, data: dict, context=None):
         try:
-            meta = self.registry.get_domain_metadata().get("system", {})
+            meta = self.registry.get_domain_metadata().get("devtools", {})
             payload = SystemLintData(
                 arch_violations=meta.get("arch_violations", []),
                 drift_warnings=meta.get("drift_warnings", []),

@@ -25,7 +25,7 @@ class ArchitectureLinterPlugin(BasePlugin):
         # 1. Domain Isolation Scan
         violations = self._perform_scan()
         if violations:
-            self.registry.register_domain_metadata("system", "arch_violations", violations)
+            self.registry.register_domain_metadata("devtools", "arch_violations", violations)
             for v in violations:
                 self.logger.warning(f"[ArchLinter] {v}")
         else:
@@ -34,7 +34,7 @@ class ArchitectureLinterPlugin(BasePlugin):
         # 2. Tool Anti-Drift Check
         drift_warnings = self._check_tool_drift()
         if drift_warnings:
-            self.registry.register_domain_metadata("system", "drift_warnings", drift_warnings)
+            self.registry.register_domain_metadata("devtools", "drift_warnings", drift_warnings)
             for w in drift_warnings:
                 self.logger.warning(f"[ArchLinter] {w}")
         else:

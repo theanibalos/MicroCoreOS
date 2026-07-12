@@ -134,6 +134,50 @@ Configuration Tool (config):
                 Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
 ```
 
+### 🔧 Tool: `event_bus` (Status: ✅)
+```text
+Universal Event Bus (event_bus):
+        - publish(event_name, data, **kwargs): Broadcast an event.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
+        - request(event_name, data, timeout=5): Async RPC (returns dict).
+        - unsubscribe(event_name, callback): Stop listening.
+        - get_trace_history() -> List[TraceNode]: Last 500 event records.
+        - get_subscribers() -> dict: Current subscriber map.
+        - add_listener(callback): Sink for all events (record: dict).
+        - add_failure_listener(callback): Sink for errors (record: dict).
+        
+        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
+        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
+        
+        RETRIES & IDEMPOTENCY:
+        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
+        - Ensure handlers are idempotent as they may run multiple times.
+
+        DEAD-LETTER QUEUE (DLQ):
+        - Final failures are published to '_dlq.<original_event>'.
+        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
+        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
+        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
+
+        UNIVERSAL CAPABILITIES (kwargs):
+        - key: String. For strict ordering (Kafka/SQS).
+        - priority: Integer (1-10). Importance (RabbitMQ).
+        - delay: Integer (seconds). Delivery schedule.
+        - ttl: Float (seconds). Message expiration hint.
+        - correlation_id: String. Cross-reference for RPC.
+
+        RESILIENCE:
+        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
+```
+
 ### 🔧 Tool: `http` (Status: ✅)
 ```text
 HTTP Server Tool (http):
@@ -304,50 +348,6 @@ Async SQLite Persistence Tool (sqlite):
           Works for same-domain or cross-domain dependencies. .sql extension is optional.
 ```
 
-### 🔧 Tool: `event_bus` (Status: ✅)
-```text
-Universal Event Bus (event_bus):
-        - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
-          Listen for events. group=None derives a STABLE group from the callback identity:
-          replicas of the same plugin consume each event exactly once across the fleet,
-          while distinct plugins each get their own copy. Use group="pool" for explicit
-          worker pools, broadcast=True ONLY for instance-local concerns (every replica
-          receives a copy — e.g. local cache invalidation).
-        - request(event_name, data, timeout=5): Async RPC (returns dict).
-        - unsubscribe(event_name, callback): Stop listening.
-        - get_trace_history() -> List[TraceNode]: Last 500 event records.
-        - get_subscribers() -> dict: Current subscriber map.
-        - add_listener(callback): Sink for all events (record: dict).
-        - add_failure_listener(callback): Sink for errors (record: dict).
-        
-        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
-        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
-        
-        RETRIES & IDEMPOTENCY:
-        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
-        - Ensure handlers are idempotent as they may run multiple times.
-
-        DEAD-LETTER QUEUE (DLQ):
-        - Final failures are published to '_dlq.<original_event>'.
-        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
-        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
-        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
-
-        UNIVERSAL CAPABILITIES (kwargs):
-        - key: String. For strict ordering (Kafka/SQS).
-        - priority: Integer (1-10). Importance (RabbitMQ).
-        - delay: Integer (seconds). Delivery schedule.
-        - ttl: Float (seconds). Message expiration hint.
-        - correlation_id: String. Cross-reference for RPC.
-
-        RESILIENCE:
-        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
-        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
-          (payload: event, subscriber, error, consecutive_failures) so the drop
-          is observable — subscribe to it for alerting/monitoring.
-```
-
 ### 🔧 Tool: `scheduler` (Status: ✅)
 ```text
 Scheduler Tool (scheduler):
@@ -382,6 +382,14 @@ Scheduler Tool (scheduler):
 
 ## 📦 Domains
 
+### `devtools`
+- **Tables**: none
+- **Endpoints**: GET /system/events/schemas, GET /system/lint, POST /system/plan/validate
+- **Events emitted**: none
+- **Events consumed**: none
+- **Dependencies**: container, http, logger
+- **Plugins**: devtools.ArchitectureLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.PlanValidatorPlugin
+
 ### `ping`
 - **Tables**: none
 - **Endpoints**: GET /ping
@@ -392,11 +400,11 @@ Scheduler Tool (scheduler):
 
 ### `system`
 - **Table `scheduler_one_shot`**: job_id (str), run_at_epoch (float), event (str), payload (str)
-- **Endpoints**: GET /system/events, GET /system/events/schemas, GET /system/lint, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
+- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
 - **Events emitted**: `event.delivery.failed` (attempts, error, event, event_id, subscriber)
 - **Events consumed**: system.one_shot.cancel, system.one_shot.schedule
 - **Dependencies**: config, container, db, event_bus, http, logger, registry, scheduler
-- **Plugins**: system.ArchitectureLinterPlugin, system.DurableOneShotsPlugin, system.EventContractLinterPlugin, system.EventDeliveryMonitorPlugin, system.EventSchemasPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
+- **Plugins**: system.DurableOneShotsPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
 - **Table `user`**: name (str), email (EmailStr), password_hash (any), roles (list[str])

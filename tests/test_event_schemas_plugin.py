@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.system.plugins.event_schemas_plugin import EventSchemasPlugin
+from domains.devtools.plugins.event_schemas_plugin import EventSchemasPlugin
 
 
 @pytest.fixture
@@ -12,7 +12,7 @@ def anyio_backend():
 def make_plugin(metadata):
     container = MagicMock()
     container.registry.get_domain_metadata.return_value = {
-        "system": {"event_payload_models": metadata}
+        "devtools": {"event_payload_models": metadata}
     }
     return EventSchemasPlugin(container=container, http=MagicMock(), logger=MagicMock())
 
