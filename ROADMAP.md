@@ -52,6 +52,49 @@ format (`docs/PARALLEL_DEVELOPMENT.md`).
 
 ---
 
+**Issue 34 — 🟡 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12**
+
+The chaos extras cover boot-time failure; what's missing is **runtime** chaos
+for live experiments (MicroCoreBench drives it, but any operator can). Two
+interception points, one tiny generic primitive each:
+
+- **Plugins → pause/resume at the Bus** (NOT unsubscribe — that loses the
+  callback for re-enabling and collides with auto-unsubscribe). The bus
+  already names every subscription `domain.Class.method`: add a paused-owner
+  set the delivery loop checks. The right semantics fall out of each driver
+  for free: `in_process` drops the delivery (honest ephemeral), durable
+  groups simply stop claiming rows → **backlog accumulates while paused,
+  drains on resume** — the "turn payment off under traffic, watch it
+  recover" experiment with zero queue logic written. HTTP side: the paused
+  owner's endpoints answer 503 (routes are not unmounted — simulates the
+  service being down for callers).
+- **Tools → fault modes at the ToolProxy**, the universal interception seam
+  (metrics/spans/DEAD-marking already live there): `down` (every call
+  raises), `slow` (injected sleep), `flaky` (fail N%). This exercises the
+  plugins' real Safe-Error paths, trips the registry's existing DEAD
+  marking, and lights up tool_health/the City — every defense reacts as if
+  real, because for them it IS real.
+
+`ChaosControlPlugin` (extras/available_domains/chaos/, never active by
+default) exposes it: `POST /system/chaos/{off|on}` {plugin},
+`/system/chaos/latency` {event, seconds}, `/system/chaos/fail` {event, rate},
+`/system/chaos/tool` {name, mode}. Every chaos action publishes a
+`system.chaos.*` event so experiments appear causally in the trace tree.
+
+**Zero core changes.** The paused set is a Bus feature (`tools/event_bus/` —
+a tool, not core), the 503s are an http-tool feature, and tool faults need no
+proxy change: the chaos plugin takes `container` (the sanctioned meta-plugin
+introspection precedent) and wraps raw tool methods via `get_raw_tools()`,
+keeping originals for restore — calls still traverse the ToolProxy, so DEAD
+marking, metrics and spans react unmodified. All monkey-patching stays inside
+the deletable extras plugin. A first-class fault flag in the ToolProxy (same
+family as its existing DEAD marking) is the promotion path ONLY if wrapping
+proves fragile — the usual decision-log criterion. Auto-unsubscribe interplay
+is free observability: sustained injected failures end in
+`system.subscriber.dropped` after 5 final failures, causally traced.
+
+---
+
 **Issue 10 — 🔬 Migrate HttpServerTool from FastAPI to pure Starlette (exploratory)**
 
 FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_tool.py` are Starlette classes re-exported by FastAPI (`Request`, `WebSocket`, `JSONResponse`, `StreamingResponse`, `StaticFiles`, `CORSMiddleware`, `run_in_threadpool`). What is exclusively FastAPI is minimal: the app object, `Depends()` for GET query params, `response_model`/`tags` in `add_api_route`, and the auto-generated docs at `/docs`.

@@ -35,15 +35,16 @@ the plan is where that happens.
 The schema and infrastructure are shared contracts, so they are written FIRST
 and frozen:
 
-1. **Migrations** (`domains/{domain}/migrations/*.sql`) together with their
+1. **Tools first**, only if the plan requires new infrastructure. Tools are
+   the one legitimate place for shared logic — if two features would need the
+   same code, it is either duplicated (small) or promoted to a tool
+   (infrastructure). They go first because everything below composes them.
+2. **Migrations** (`domains/{domain}/migrations/*.sql`) together with their
    **models** (`domains/{domain}/models/`). One author (human or single agent),
    sequential numbering, `-- depends:` where ordering matters.
-2. **Tools**, only if the plan requires new infrastructure. Tools are the one
-   legitimate place for shared logic — if two features would need the same
-   code, it is either duplicated (small) or promoted to a tool (infrastructure).
 3. **Boot once** (`uv run main.py`). This regenerates `AI_CONTEXT.md` with the
    real tables, models and tool interfaces — the ground truth every agent will
-   receive.
+   receive. Only then do features begin.
 
 ### Phase 1 — The Plan (the contract)
 
