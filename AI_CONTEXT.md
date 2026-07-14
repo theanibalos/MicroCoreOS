@@ -134,50 +134,6 @@ Configuration Tool (config):
                 Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
 ```
 
-### 🔧 Tool: `event_bus` (Status: ✅)
-```text
-Universal Event Bus (event_bus):
-        - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
-          Listen for events. group=None derives a STABLE group from the callback identity:
-          replicas of the same plugin consume each event exactly once across the fleet,
-          while distinct plugins each get their own copy. Use group="pool" for explicit
-          worker pools, broadcast=True ONLY for instance-local concerns (every replica
-          receives a copy — e.g. local cache invalidation).
-        - request(event_name, data, timeout=5): Async RPC (returns dict).
-        - unsubscribe(event_name, callback): Stop listening.
-        - get_trace_history() -> List[TraceNode]: Last 500 event records.
-        - get_subscribers() -> dict: Current subscriber map.
-        - add_listener(callback): Sink for all events (record: dict).
-        - add_failure_listener(callback): Sink for errors (record: dict).
-        
-        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
-        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
-        
-        RETRIES & IDEMPOTENCY:
-        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
-        - Ensure handlers are idempotent as they may run multiple times.
-
-        DEAD-LETTER QUEUE (DLQ):
-        - Final failures are published to '_dlq.<original_event>'.
-        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
-        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
-        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
-
-        UNIVERSAL CAPABILITIES (kwargs):
-        - key: String. For strict ordering (Kafka/SQS).
-        - priority: Integer (1-10). Importance (RabbitMQ).
-        - delay: Integer (seconds). Delivery schedule.
-        - ttl: Float (seconds). Message expiration hint.
-        - correlation_id: String. Cross-reference for RPC.
-
-        RESILIENCE:
-        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
-        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
-          (payload: event, subscriber, error, consecutive_failures) so the drop
-          is observable — subscribe to it for alerting/monitoring.
-```
-
 ### 🔧 Tool: `http` (Status: ✅)
 ```text
 HTTP Server Tool (http):
@@ -346,6 +302,50 @@ Async SQLite Persistence Tool (sqlite):
           run before another, add as the first comment line:
             "-- depends: other_domain/001_file.sql"
           Works for same-domain or cross-domain dependencies. .sql extension is optional.
+```
+
+### 🔧 Tool: `event_bus` (Status: ✅)
+```text
+Universal Event Bus (event_bus):
+        - publish(event_name, data, **kwargs): Broadcast an event.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
+        - request(event_name, data, timeout=5): Async RPC (returns dict).
+        - unsubscribe(event_name, callback): Stop listening.
+        - get_trace_history() -> List[TraceNode]: Last 500 event records.
+        - get_subscribers() -> dict: Current subscriber map.
+        - add_listener(callback): Sink for all events (record: dict).
+        - add_failure_listener(callback): Sink for errors (record: dict).
+        
+        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
+        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
+        
+        RETRIES & IDEMPOTENCY:
+        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
+        - Ensure handlers are idempotent as they may run multiple times.
+
+        DEAD-LETTER QUEUE (DLQ):
+        - Final failures are published to '_dlq.<original_event>'.
+        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
+        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
+        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
+
+        UNIVERSAL CAPABILITIES (kwargs):
+        - key: String. For strict ordering (Kafka/SQS).
+        - priority: Integer (1-10). Importance (RabbitMQ).
+        - delay: Integer (seconds). Delivery schedule.
+        - ttl: Float (seconds). Message expiration hint.
+        - correlation_id: String. Cross-reference for RPC.
+
+        RESILIENCE:
+        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)

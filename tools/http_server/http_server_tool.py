@@ -488,7 +488,17 @@ class HttpServerTool(BaseTool):
 
         clean_path = path.replace("/", "_")
         sse_handler.__name__ = f"sse{clean_path}"
-        self.app.add_api_route(path, sse_handler, methods=["GET"], tags=tags or [])
+        # Declare the real media type in OpenAPI: without response_class +
+        # responses, FastAPI would advertise application/json for a route that
+        # actually emits text/event-stream, and contract-driven consumers
+        # (probes, generated clients) would treat it as a normal JSON endpoint.
+        from fastapi.responses import StreamingResponse
+        self.app.add_api_route(
+            path, sse_handler, methods=["GET"], tags=tags or [],
+            response_class=StreamingResponse,
+            responses={200: {"content": {"text/event-stream": {}},
+                             "description": "Server-Sent Events stream"}},
+        )
 
     async def _sse_response(self, request: Request, generator: Callable, auth_validator: Optional[Callable]):
         """Shared SSE request-handling body used by add_sse_endpoint's two wrapper variants."""
