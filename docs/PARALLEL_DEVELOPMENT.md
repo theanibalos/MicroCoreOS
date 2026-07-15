@@ -30,28 +30,43 @@ the plan is where that happens.
 
 ## The methodology
 
+> **Authoring order**: the plan (Phase 1) is written and validated FIRST;
+> Phase 0 is then *built from it*, mechanically. Phases are numbered by build
+> order — nothing is built before the plan exists.
+
 ### Phase 0 — Foundation (serial, before any feature)
 
-The schema and infrastructure are shared contracts, so they are written FIRST
-and frozen:
+The schema and infrastructure are shared contracts. They are fully **declared
+in the plan** (`phase_0:` section, every table with its `columns`) and
+**built first**, serially, by one author — then frozen:
 
-1. **Tools first**, only if the plan requires new infrastructure. Tools are
-   the one legitimate place for shared logic — if two features would need the
-   same code, it is either duplicated (small) or promoted to a tool
-   (infrastructure). They go first because everything below composes them.
+1. **Tools**, only if the plan requires new infrastructure. Tools are the one
+   legitimate place for shared logic — if two features would need the same
+   code, it is either duplicated (small) or promoted to a tool
+   (infrastructure).
 2. **Migrations** (`domains/{domain}/migrations/*.sql`) together with their
-   **models** (`domains/{domain}/models/`). One author (human or single agent),
-   sequential numbering, `-- depends:` where ordering matters.
-3. **Boot once** (`uv run main.py`). This regenerates `AI_CONTEXT.md` with the
-   real tables, models and tool interfaces — the ground truth every agent will
-   receive. Only then do features begin.
+   **models** (`domains/{domain}/models/`), written 1:1 from the plan's
+   `columns:` — never inventing a field. One author for the migrations
+   (sequential numbering), `-- depends:` where ordering matters.
 
-### Phase 1 — The Plan (the contract)
+Tasks 1 and 2 are independent at write time — disjoint files, neither reads
+the other (plugins compose tools; migrations don't) — so they can be two
+agents, in any order or in parallel. The one hard ordering rule is the boot:
+
+3. **Boot once** (`uv run main.py`), only after EVERYTHING above is written.
+   This regenerates `AI_CONTEXT.md` with the real tables, models and tool
+   interfaces — the ground truth every wave agent receives (a tool missing at
+   boot means a tool missing from every executor's prefix). Only then do
+   features begin.
+
+### Phase 1 — The Plan (the contract — authored before anything is built)
 
 The plan is the namespace-reservation step. It allocates, per feature, every
 name that lives in a global namespace, so nothing is left to improvisation:
 
-- **migrations** (phase 0, listed for traceability, with the tables they own)
+- **migrations** (phase 0, with the tables they own AND every column with its
+  SQL type — the phase 0 author writes the `.sql` files from the plan alone,
+  never inventing a schema)
 - **plugins** — one per feature: name, domain, file, function
 - **tools** — only if new infrastructure is needed
 - **events** — every published event **with its payload model and fields**, and who consumes it
@@ -75,8 +90,15 @@ plan:
     migrations:
       - file: orders/001_create_orders.sql
         tables: [orders]                    # table ownership is declared here
+        columns:                            # FULL schema — phase 0 is written from this, nothing is improvised
+          orders:
+            id: "SERIAL PRIMARY KEY"
+            user_id: "INT NOT NULL"
+            total: "FLOAT NOT NULL"
+            status: "TEXT DEFAULT 'pending'"
+            created_at: "TIMESTAMP DEFAULT NOW()"
     models:
-      - domains/orders/models/order.py
+      - domains/orders/models/order.py      # entity mirrors the columns above 1:1
     tools: []                               # new infra tools, only if needed
 
   features:
@@ -127,15 +149,48 @@ plan:
       rpc_links: []                         # every request() call, each with timeout + on_timeout
 ```
 
+#### Plan sizing — the plan must be proportional to the request
+
+The schema above is the *maximum*, not the norm. Every section that would be
+empty is **omitted**, never filled with nulls:
+
+- **No new tables?** Omit `phase_0` entirely (that is the mini-plan of
+  `.agent/workflows/feature-plan.md`).
+- **No events published or consumed?** Omit `flows` entirely. A pure CRUD
+  endpoint is one `features:` entry of ~10 lines — route, `db:` contract,
+  `mocks`, `test` — and nothing else.
+- **One event chain?** That is ONE flow with its links — e.g. "deleting a user
+  deletes everything they own" is `DELETE /users/{id} → user.deleted →
+  cleanup consumers`, a single flow even if three domains consume it.
+- **`rpc_links`, `dlq_watcher`, `compensation`** only appear when the plan
+  actually uses `request()`, watches a DLQ, or runs a saga. Absent fields
+  already have correct defaults.
+
+Calibration reference: **a domain with 3 CRUD plugins and one event chain is a
+plan of roughly 80–120 lines of YAML, written in one pass.** If a plan is an
+order of magnitude larger than its request, the planning is wrong, not the
+request.
+
+The planner's reading set is fixed and small: `AI_CONTEXT.md` (live inventory)
+plus this document. The plan pins down everything observable from outside, so
+the planner **never reads `domains/`, `tools/` or `tests/` source** — if a
+fact seems to require reading code, it belongs in `AI_CONTEXT.md` or
+`GET /system/events/schemas`, not in the plan.
+
 #### Features are black boxes — the plan is their contract
 
 An agent-written plugin is a black box: nobody reviews its internals, so the
 plan must pin down everything observable from outside — the route it serves
 (request in, response out), the events it publishes (exact payload fields),
 the events it consumes (the keys it reads), and the tables it touches (`db:`).
-The feature's unit test proves **that contract**, not the implementation:
-mock every injected tool, drive the input, assert the output, the DB effects
-on the declared tables, and the published payloads. A feature may only read or
+The feature's test proves **that contract**, not the implementation: drive
+the input, assert the output, the DB effects on the declared tables, and the
+published payloads. The plan's `mocks:` field decides the level per feature:
+tools listed there are mocked (`AsyncMock`/`MagicMock`); tools NOT listed run
+as real in-memory instances (`db` as SQLite `:memory:` with the domain's
+migrations applied, `event_bus` in-process) — the black-box style of
+`INSTRUCTIONS_FOR_AI.md` § Testing. Assert real effects wherever a real tool
+runs; assert mock calls only for what the plan mocked. A feature may only read or
 write tables its own domain owns — data crosses domains as events, never as
 shared tables.
 
@@ -226,7 +281,9 @@ A plan is valid iff:
 1. No two features share a `file`, a `route`, or a `plugin` name — and none
    collides with a route or plugin already live in the system.
 2. No two migrations declare the same table, and no migration declares a table
-   another domain already owns.
+   another domain already owns. Advisory: every declared table should list its
+   `columns` — the validator warns when one doesn't, because phase 0 cannot be
+   written from such a plan without improvising a schema.
 3. Every `consumes.event` has at least one `publishes.event` in the plan (or
    already exists in the live system — check `AI_CONTEXT.md` / `/system/events`).
 4. Every key in `consumes.requires` exists in the corresponding publisher's
@@ -272,12 +329,62 @@ The **orchestrator agent** receives two artifacts: the **full plan** and the
 freshly regenerated **`AI_CONTEXT.md`**. It validates the plan
 (`POST /system/plan/validate` against the system booted in phase 0)
 and dispatches ALL features in a single wave — one agent per feature, each
-producing exactly two files: its plugin and its test. No agent needs to see
-another agent's output; the plan already told each one which events it may
-publish (with exact payloads) and which it consumes.
+producing exactly two files: its plugin and its test.
+
+**Canonical executor prompt — shared prefix first, task last.** Every agent
+receives the same byte-identical preamble, in this exact order:
+
+1. `AI_CONTEXT.md` (frozen since the phase 0 boot)
+2. The full plan (`plans/active_plan.yaml`)
+3. The shared rules/template (`plans/executor_rules.md`)
+
+and ONE per-agent line at the very end: *"Implement feature `<PluginName>`
+from the plan above."* Agents never open the plan or `AI_CONTEXT.md`
+themselves. Because the preamble is byte-identical, any engine with prefix
+caching — a local model's KV cache, Anthropic/OpenAI prompt caching, vLLM —
+processes the shared block **once** and reuses it for every agent in the
+wave. Never insert per-agent content before or inside the shared block: a
+single differing byte breaks the reuse for everything after it. Dispatch the
+first agent, let it start responding, then fire the rest (a cache entry being
+written is not yet readable — N simultaneous cold requests ALL pay the full
+prefix). On an engine with no prefix caching, fall back to pasting only the
+feature's slice plus the `AI_CONTEXT.md` sections for the tools it injects.
+
+"Parallel" here means **logical independence** (zero coordination, any order
+works), not simultaneity. Token cost is identical sequential or simultaneous
+(with a warm cache); simultaneity only buys wall-clock time, and only on
+hosted APIs. On a local single-GPU engine, run the wave **sequentially on one
+slot** — llama.cpp/Ollama KV caches are per-slot, so parallel slots do NOT
+share the prefix, while consecutive requests on one slot reuse it fully (and
+the GPU was the bottleneck anyway).
+
+No agent needs to see another agent's output; the plan already told each one
+which events it may publish (with exact payloads) and which it consumes.
+
+Flow-level tests are wave tasks too: dispatch **one extra executor per flow**
+with the same canonical prefix and the final line *"Implement the flow tests
+for flow `<name>` from the plan above"* — its two files are the flow's
+`e2e_test` and `sad_path_test`, which collide with no feature's files.
+(The `idempotency_test` is NOT a separate task: it lives inside the consumer
+feature's test file, written by that feature's executor.)
+
+Within one executor, the test is written BEFORE the plugin, with every
+assertion derived from the plan — never from the implementation
+(`plans/executor_rules.md`). For critical features, escalate to **independent
+derivation**: split the feature into two executors — one writes only the test
+(from the plan), the other only the plugin (from the plan) — their files never
+collide because the plan declares both paths, and `pytest` arbitrates. If both
+agents misread the plan the same way it won't catch it, but it catches every
+divergent misreading at the cost of one extra dispatch (~a cache read).
 
 Never assign two agents to the same feature — evolution of an existing feature
 is one task for one agent, not two.
+
+**Never boot the system mid-wave.** `AI_CONTEXT.md` and the plan are frozen
+for the entire wave: the plan creates no tools or tables after phase 0, so
+there is nothing to regenerate. The next boot is the phase 3 integration boot,
+after every agent has finished. (This also keeps every agent's prompt prefix
+byte-stable — maximum cache reuse across the wave.)
 
 ### Phase 3 — Integration boot (the safety net)
 
@@ -295,12 +402,23 @@ belongs in CI via tests):
 Then run the whole suite: every feature brought its tests, so the integration
 proof is `uv run -m pytest`.
 
+**Who tests the tests?** A complacent unit test (one that mirrors its own
+plugin's bug) is not alone: the event-contract linter cross-checks publisher
+payloads against consumer requirements statically, the flow's e2e/sad-path
+tests were written by a DIFFERENT agent against the plan, and the final gate
+compares the booted reality against the contract (`AI_CONTEXT.md` == plan).
+A wrong plugin ships only if all four layers miss it. For measured rigor on
+critical domains, add mutation testing (e.g. `mutmut`, scoped to
+`domains/{domain}`): inject deliberate bugs into the plugin and count how
+many the tests kill — a test that kills no mutants is decorative.
+
 ## Summary
 
 ```
-Phase 0 (serial)     migrations + models + tools → boot → AI_CONTEXT.md
-Phase 1 (contract)   plan = namespace + failure-mode reservation
-                     (validated by POST /system/plan/validate)
+Phase 1 (contract)   plan = namespace + schema + failure-mode reservation
+                     (authored FIRST, validated by POST /system/plan/validate)
+Phase 0 (serial)     built FROM the plan: tools + migrations + models
+                     → boot → AI_CONTEXT.md
 Phase 2 (parallel)   orchestrator + N agents → 1 plugin + 1 test each
 Phase 3 (verify)     boot linters + full test suite
 ```

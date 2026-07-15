@@ -36,6 +36,9 @@ class PlanRoute(BaseModel):
 class PlanMigration(BaseModel):
     file: str
     tables: list[str] = []
+    # table -> {column_name: "SQL type + constraints"} — the plan must carry the
+    # full schema so phase 0 can be written from the plan alone (no improvisation)
+    columns: dict[str, dict[str, str]] = {}
 
 
 class PlanPhase0(BaseModel):
@@ -282,6 +285,10 @@ class PlanValidator:
                 if live_owner and domain and live_owner != domain:
                     self._error(2, migration.file,
                                 f"table '{table}' is already owned by domain '{live_owner}'")
+                if table not in migration.columns:
+                    self._warn(2, migration.file,
+                               f"table '{table}' declares no columns — phase 0 "
+                               f"cannot be written from this plan alone")
 
     # rule 3 — every consumed event has a publisher (plan or live); events the
     #          bus itself publishes (_dlq.*, system.subscriber.dropped) are exempt

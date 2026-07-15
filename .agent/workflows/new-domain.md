@@ -19,15 +19,20 @@ Creates a full domain from scratch: entity model, SQL migration, and one plugin 
 ### 0. Plan the domain first
 
 Write the plan of `docs/PARALLEL_DEVELOPMENT.md` ("Formal plan format") scoped
-to this domain: `phase_0` (its migrations + models, with table ownership),
-`features` (one per plugin, every published event with its payload `model` and
-fields, plus the `db:` persistence contract), and `flows` (durability, happy
-path + the sad-path checklist per link — including the `atomic_with_db` outbox
-question — and the declared `idempotency_test` / `sad_path_test` files).
+to this domain: `phase_0` (its migrations + models, with table ownership AND
+every table's `columns:` — name, SQL type, constraints; steps 2-3 below are
+written from this, never invented), `features` (one per plugin, every
+published event with its payload `model` and fields, plus the `db:`
+persistence contract), and — ONLY if any plugin publishes or consumes events —
+`flows` (durability, happy path + the sad-path checklist per link — including
+the `atomic_with_db` outbox question — and the declared `idempotency_test` /
+`sad_path_test` files). A pure-CRUD domain has no `flows` section at all; a
+domain whose delete cascades through one event has exactly one flow.
 Validate with `POST /system/plan/validate` before writing code. Build in that
 order — tools first if any, then migrations + models, then plugins with their
 events. Nothing below this line should require a decision the plan did not
-already make.
+already make. Expected size for a CRUD domain with one event chain: ~80-120
+lines of YAML, one pass.
 
 ### 1. Create the domain folder structure
 
@@ -158,7 +163,10 @@ Check that:
 
 ### 6. Generate tests
 
-Create `tests/test_{name}_plugin.py` with one test per plugin. Mock all tools:
+Create `tests/test_{name}_plugin.py` with one test per plugin. Mock exactly
+the tools the plan's `mocks:` field lists; run the rest as real in-memory
+instances (`INSTRUCTIONS_FOR_AI.md` § Testing). Example with everything
+mocked (`mocks: [http, db, event_bus, logger]`):
 
 ```python
 import pytest

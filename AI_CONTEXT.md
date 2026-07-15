@@ -2,93 +2,9 @@
 
 > This file is ALL you need to build a plugin. For advanced topics (testing, observability, creating tools), see [INSTRUCTIONS_FOR_AI.md](INSTRUCTIONS_FOR_AI.md).
 
-## ⚡ Plugin Quick Start
-
-**Location**: `domains/{domain}/plugins/{feature}_plugin.py` — 1 file = 1 feature.
-
-### Template
-
-```python
-from typing import Optional
-from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
-
-# Request/Response schemas live HERE, not in models/
-class CreateThingRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-
-class ThingData(BaseModel):
-    id: int
-    name: str
-
-class CreateThingResponse(BaseModel):
-    success: bool
-    data: Optional[ThingData] = None
-    error: Optional[str] = None
-
-# Event payload schema lives HERE too — the publisher owns the event contract
-class ThingCreatedPayload(BaseModel):
-    id: int
-    name: str
-
-class CreateThingPlugin(BasePlugin):
-    def __init__(self, http, db, event_bus, logger):
-        self.http = http
-        self.db = db
-        self.bus = event_bus
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint(
-            "/things", "POST", self.execute,
-            tags=["Things"],
-            request_model=CreateThingRequest,
-            response_model=CreateThingResponse,
-        )
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = CreateThingRequest(**data)
-            thing_id = await self.db.execute(
-                "INSERT INTO things (name) VALUES ($1) RETURNING id", [req.name]
-            )
-            await self.bus.publish(
-                "thing.created",
-                ThingCreatedPayload(id=thing_id, name=req.name).model_dump(),
-            )
-            return {"success": True, "data": {"id": thing_id, "name": req.name}}
-        except Exception as e:
-            # Technical error logged server-side, safe message for client
-            self.logger.error(f"Failed to create thing: {e}")
-            return {"success": False, "error": "Database error"}
-```
-
-### New Domain Structure
-
-```
-domains/{name}/
-  __init__.py
-  models/{name}.py        <- Entity: DB mirror only (Pydantic BaseModel)
-  migrations/001_xxx.sql  <- Raw SQL, auto-executed on boot
-  plugins/                <- 1 file = 1 feature
-```
-
-### Critical Rules
-
-1. **Never modify `main.py`** — Kernel auto-discovers everything.
-2. **DI by name** — `__init__` param names must match tool `name` properties.
-3. **Schemas inline** — Request AND response schemas go in the plugin file, not in `models/`.
-4. **No cross-domain imports** — Use `event_bus` for inter-domain communication.
-5. **Return format** — Always `{"success": bool, "data": ..., "error": ...}`.
-6. **Use `Field`** — Never bare `str`/`int` in request schemas. Use `Field(min_length=1)` etc.
-7. **SQL placeholders** — Always `$1, $2, $3...` (never `?`).
-8. **Always pass `response_model=`** to `add_endpoint` — generates OpenAPI docs.
-9. **Never expose sensitive fields** — Define response schema with only safe fields.
-10. **No hardcoded imports** — Never `from tools.x import X`. Use DI.
-11. **Typed event payloads** — Define `XxxPayload(BaseModel)` in the PUBLISHER plugin and
-    publish `XxxPayload(...).model_dump()` (bare call, no arguments). Consumers never import
-    it: they declare their own model with ONLY the fields they need (tolerant reader) and do
-    `Model(**event.payload)`. Raw-dict publishes are flagged `UNTYPED_PAYLOAD` by `/system/lint`.
+## ⚡ Operating Context
+This file contains the technical signature of active tools and domains in the system.
+For plugin development guides, critical rules, and syntax examples, see [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -132,6 +48,50 @@ Configuration Tool (config):
                 Validates that all specified variables are set.
                 Call in on_boot() to fail early with a clear error message.
                 Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
+```
+
+### 🔧 Tool: `event_bus` (Status: ✅)
+```text
+Universal Event Bus (event_bus):
+        - publish(event_name, data, **kwargs): Broadcast an event.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
+        - request(event_name, data, timeout=5): Async RPC (returns dict).
+        - unsubscribe(event_name, callback): Stop listening.
+        - get_trace_history() -> List[TraceNode]: Last 500 event records.
+        - get_subscribers() -> dict: Current subscriber map.
+        - add_listener(callback): Sink for all events (record: dict).
+        - add_failure_listener(callback): Sink for errors (record: dict).
+        
+        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
+        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
+        
+        RETRIES & IDEMPOTENCY:
+        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
+        - Ensure handlers are idempotent as they may run multiple times.
+
+        DEAD-LETTER QUEUE (DLQ):
+        - Final failures are published to '_dlq.<original_event>'.
+        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
+        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
+        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
+
+        UNIVERSAL CAPABILITIES (kwargs):
+        - key: String. For strict ordering (Kafka/SQS).
+        - priority: Integer (1-10). Importance (RabbitMQ).
+        - delay: Integer (seconds). Delivery schedule.
+        - ttl: Float (seconds). Message expiration hint.
+        - correlation_id: String. Cross-reference for RPC.
+
+        RESILIENCE:
+        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
 ```
 
 ### 🔧 Tool: `http` (Status: ✅)
@@ -302,50 +262,6 @@ Async SQLite Persistence Tool (sqlite):
           run before another, add as the first comment line:
             "-- depends: other_domain/001_file.sql"
           Works for same-domain or cross-domain dependencies. .sql extension is optional.
-```
-
-### 🔧 Tool: `event_bus` (Status: ✅)
-```text
-Universal Event Bus (event_bus):
-        - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
-          Listen for events. group=None derives a STABLE group from the callback identity:
-          replicas of the same plugin consume each event exactly once across the fleet,
-          while distinct plugins each get their own copy. Use group="pool" for explicit
-          worker pools, broadcast=True ONLY for instance-local concerns (every replica
-          receives a copy — e.g. local cache invalidation).
-        - request(event_name, data, timeout=5): Async RPC (returns dict).
-        - unsubscribe(event_name, callback): Stop listening.
-        - get_trace_history() -> List[TraceNode]: Last 500 event records.
-        - get_subscribers() -> dict: Current subscriber map.
-        - add_listener(callback): Sink for all events (record: dict).
-        - add_failure_listener(callback): Sink for errors (record: dict).
-        
-        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
-        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
-        
-        RETRIES & IDEMPOTENCY:
-        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
-        - Ensure handlers are idempotent as they may run multiple times.
-
-        DEAD-LETTER QUEUE (DLQ):
-        - Final failures are published to '_dlq.<original_event>'.
-        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
-        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
-        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
-
-        UNIVERSAL CAPABILITIES (kwargs):
-        - key: String. For strict ordering (Kafka/SQS).
-        - priority: Integer (1-10). Importance (RabbitMQ).
-        - delay: Integer (seconds). Delivery schedule.
-        - ttl: Float (seconds). Message expiration hint.
-        - correlation_id: String. Cross-reference for RPC.
-
-        RESILIENCE:
-        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
-        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
-          (payload: event, subscriber, error, consecutive_failures) so the drop
-          is observable — subscribe to it for alerting/monitoring.
 ```
 
 ### 🔧 Tool: `scheduler` (Status: ✅)

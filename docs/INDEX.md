@@ -4,6 +4,8 @@
 
 - `AI_CONTEXT.md` — Quick start, all tools with signatures, active domain inventory
 - `INSTRUCTIONS_FOR_AI.md` — Anti-patterns, new domain/plugin/tool guides, testing
+- `.agent/workflows/` — Scale ladder: feature-plan → new-domain → multi-domain-plan → new-tool
+- `plans/` — The active plan: `active_plan.yaml` (contract) + `active_plan.md` (checklist)
 
 ## Deep reference docs
 

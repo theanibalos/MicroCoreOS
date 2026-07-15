@@ -13,21 +13,14 @@ tool, plugin, route, event (with its payload model), and every chain with its
 happy path and sad paths. Code-time conflicts are structurally impossible;
 what remains is getting the plan right.
 
-## Phase 0 — Foundation (serial, one author)
-
-1. All **migrations** (`domains/*/migrations/*.sql`) with their **models**,
-   sequential numbering, `-- depends:` for cross-domain ordering. Declare
-   table ownership in the plan (`tables:`).
-2. New **tools** only if the spec demands infrastructure that does not exist
-   → follow [new-tool.md](new-tool.md), parity suite included.
-3. Boot once (`uv run main.py`) → regenerated `AI_CONTEXT.md` is the ground
-   truth every agent receives. Freeze phase 0.
-
-## Phase 1 — The full plan (the contract)
+## Phase 1 — The full plan (the contract, authored FIRST)
 
 Write the complete YAML plan of `docs/PARALLEL_DEVELOPMENT.md` ("Formal plan
-format"): `phase_0`, `features` (one per plugin, with `publishes.model` /
-`consumes.requires` / the `db:` persistence contract), and `flows` — each with
+format") to `plans/active_plan.yaml`: `phase_0` (every migration with its
+`tables:` ownership AND its full `columns:` — phase 0 is built from the plan,
+nothing is improvised later), `features` (one per plugin, with
+`publishes.model` / `consumes.requires` / the `db:` persistence contract),
+and `flows` — each with
 its `durability` (may in-flight events die with the process? `durable` needs
 the sqlite/redis driver) and the sad-path checklist per link:
 
@@ -48,16 +41,35 @@ the sqlite/redis driver) and the sad-path checklist per link:
   `on_timeout`
 
 Then run the 14 validity rules mechanically: `POST /system/plan/validate`
-with the plan (YAML or JSON) against the system booted in phase 0 — zero
-`errors` before dispatching anything. An invalid plan is a task-allocation
-error — fix the plan, never patch it in code.
+with the plan (YAML or JSON) against the live system — zero `errors` before
+building anything. An invalid plan is a task-allocation error — fix the plan,
+never patch it in code.
+
+## Phase 0 — Foundation (built FROM the plan; serial, one author)
+
+1. New **tools** only if the spec demands infrastructure that does not exist
+   → follow [new-tool.md](new-tool.md), parity suite included.
+2. All **migrations** (`domains/*/migrations/*.sql`) with their **models**,
+   written 1:1 from the plan's `columns:`, sequential numbering, `-- depends:`
+   for cross-domain ordering.
+
+(1 and 2 are independent at write time — disjoint files; two agents in any
+order or in parallel is fine. Migrations keep one author for numbering.)
+
+3. Boot once (`uv run main.py`), only after everything is written →
+   regenerated `AI_CONTEXT.md` is the ground truth every agent receives
+   (it must include the new tools' interfaces). Freeze phase 0.
 
 ## Phase 2 — Execution (parallel)
 
-Dispatch one agent per feature; each receives the full plan + `AI_CONTEXT.md`
-and produces exactly two files: its plugin and its unit test. Event payload
-schemas go inline in each publisher plugin (`XxxPayload(...).model_dump()`).
-Never assign two agents to the same feature.
+Dispatch one agent per feature with the **canonical executor prompt**
+(`docs/PARALLEL_DEVELOPMENT.md` § Phase 2): a byte-identical shared prefix —
+`AI_CONTEXT.md` → full plan → shared rules — plus one final per-agent line
+naming its feature. Agents never open the plan or `AI_CONTEXT.md` themselves;
+the identical prefix lets any prefix-caching engine process the shared block
+once for the whole wave. Each agent produces exactly two files: its plugin
+and its unit test. Event payload schemas go inline in each publisher plugin
+(`XxxPayload(...).model_dump()`). Never assign two agents to the same feature.
 
 ## Phase 3 — Integration boot (the safety net)
 

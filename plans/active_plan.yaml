@@ -1,0 +1,42 @@
+# Active Plan — the formal contract (schema: docs/PARALLEL_DEVELOPMENT.md "Formal plan format")
+# The Planner AI replaces this template with the real plan.
+# Validate:  jq -Rs '{plan_yaml: .}' plans/active_plan.yaml | \
+#            curl -s -X POST -H "Content-Type: application/json" -d @- \
+#            http://localhost:5000/system/plan/validate
+#
+# SIZING RULES (docs/PARALLEL_DEVELOPMENT.md → "Plan sizing"):
+#   - Omit phase_0 entirely if no new tables/tools.
+#   - Omit flows entirely if no plugin publishes or consumes events.
+#   - A domain with 3 CRUDs + one event chain ≈ 80-120 lines, ONE pass.
+
+plan:
+  domain: things
+
+  phase_0:                                  # OMIT if no new tables/tools
+    migrations:
+      - file: things/001_create_things.sql
+        tables: [things]
+        columns:                            # full schema — phase 0 is built from this
+          things:
+            id: "SERIAL PRIMARY KEY"
+            name: "TEXT NOT NULL"
+            created_at: "TIMESTAMP DEFAULT NOW()"
+    models:
+      - domains/things/models/thing.py      # entity mirrors columns 1:1
+    tools: []                               # new infra tools, only if needed
+
+  features:
+    - plugin: CreateThingPlugin
+      file: domains/things/plugins/create_thing_plugin.py
+      function: "Create a thing and announce it"
+      route: { method: POST, path: /things }
+      db: { writes: [things], reads: [] }
+      publishes:
+        - event: thing.created
+          model: ThingCreatedPayload
+          payload: { id: int, name: str }
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_create_thing_plugin.py
+
+  flows: []                                 # OMIT if no events cross plugins

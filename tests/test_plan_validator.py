@@ -26,7 +26,19 @@ def anyio_backend():
 VALID_PLAN = {
     "domain": "orders",
     "phase_0": {
-        "migrations": [{"file": "orders/001_create_orders.sql", "tables": ["orders"]}],
+        "migrations": [
+            {
+                "file": "orders/001_create_orders.sql",
+                "tables": ["orders"],
+                "columns": {
+                    "orders": {
+                        "id": "SERIAL PRIMARY KEY",
+                        "user_id": "INT NOT NULL",
+                        "total": "FLOAT NOT NULL",
+                    }
+                },
+            }
+        ],
         "models": ["domains/orders/models/order.py"],
         "tools": [],
     },
@@ -149,6 +161,14 @@ def test_rule2_duplicate_table_in_plan():
 def test_rule2_table_owned_by_another_domain_live():
     live = LiveSnapshot(tables={"orders": "billing"})
     assert rule_hits(check(plan_copy(), live), 2)
+
+
+def test_rule2_table_without_columns_warns():
+    plan = plan_copy()
+    del plan["phase_0"]["migrations"][0]["columns"]
+    result = check(plan)
+    assert result.valid  # advisory, not blocking
+    assert rule_hits(result, 2, severity="WARNING")
 
 
 # ── Rules 3 & 4: event contracts ─────────────────────────────────────────

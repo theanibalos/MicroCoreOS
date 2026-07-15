@@ -18,9 +18,10 @@ migrations, no new tools — if you need either, escalate to
 
 ### 1. Write the mini-plan
 
-One `features:` entry per plugin, plus a `flows:` entry if the feature
-publishes or consumes events. Same schema as the formal plan format
-(`docs/PARALLEL_DEVELOPMENT.md`), just without `phase_0`:
+Write it to `plans/active_plan.yaml`: one `features:` entry per plugin
+(~10-15 lines each), plus a `flows:` entry ONLY if the feature publishes or
+consumes events — omit `flows` entirely otherwise. Same schema as the formal
+plan format (`docs/PARALLEL_DEVELOPMENT.md`), just without `phase_0`:
 
 ```yaml
 plan:
@@ -79,9 +80,10 @@ Publish with `XxxPayload(...).model_dump()` — bare call, no arguments.
 
 ### 4. Test
 
-- Unit test per plugin (mock every injected tool) — it proves the black-box
-  contract: input → output, DB effects on the declared tables, published
-  payloads with the declared fields.
+- One test per plugin proving the black-box contract: input → output, DB
+  effects on the declared tables, published payloads with the declared fields.
+  Mock exactly the tools the plan's `mocks:` lists; run the rest as real
+  in-memory instances (`INSTRUCTIONS_FOR_AI.md` § Testing).
 - One double-delivery test per idempotent link (same envelope twice → same
   final state), at the path declared in `idempotency_test`.
 - One chain test per flow, using the helper:
