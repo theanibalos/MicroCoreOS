@@ -1,0 +1,29 @@
+"""Poll-based waits for async delivery in tests.
+
+A fixed `await asyncio.sleep(0.1)` before asserting on event-bus delivery
+assumes delivery always finishes inside that window. It usually does — until
+the runner is under CPU contention (a busy CI box), at which point the
+assertion fails even though nothing is actually broken. `wait_until` polls the
+real condition instead of guessing a duration, so it passes as soon as the
+condition is true and only fails when it truly never becomes true.
+"""
+import asyncio
+from typing import Callable
+
+
+async def wait_until(predicate: Callable[[], bool], timeout: float = 2.0, interval: float = 0.005,
+                      sleep=asyncio.sleep) -> None:
+    """Poll `predicate` on the real clock.
+
+    `sleep` defaults to asyncio.sleep but can be overridden with an
+    unpatched reference when the test under test has mocked
+    `asyncio.sleep` at the module level (mocking it there patches the
+    module object itself, so this poll loop would otherwise call the
+    mock too and never actually wait).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError(f"condition not met within {timeout}s: {predicate}")
+        await sleep(interval)

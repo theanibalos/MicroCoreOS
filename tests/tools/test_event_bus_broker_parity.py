@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
 from tools.event_bus.redis_streams_driver import RedisStreamsDriver, EventBusConnectionError
+from tests.helpers.async_wait import wait_until
 
 pytestmark = pytest.mark.anyio
 
@@ -52,10 +53,14 @@ async def test_ttl_expired(bus):
         ttl=0.001
     )
     await bus._driver.publish(envelope)
-    await asyncio.sleep(0.1) # Wait for tasks
-    
+
+    def _delivered():
+        return any(n.kind == "delivered" and n.envelope.payload.get("msg") == "expired"
+                    for n in bus.get_trace_history())
+    await wait_until(_delivered)
+
     handler.assert_not_called()
-    
+
     # Check trace
     history = bus.get_trace_history()
     # Find the delivered node for this subscriber
@@ -69,8 +74,8 @@ async def test_ttl_valid(bus):
     await bus.subscribe("test.event", handler)
     
     await bus.publish("test.event", {"msg": "valid"}, ttl=60)
-    await asyncio.sleep(0.1)
-    
+    await wait_until(lambda: handler.called)
+
     handler.assert_called_once()
     
     history = bus.get_trace_history()
@@ -93,8 +98,8 @@ async def test_retry_then_success(bus):
     bus.add_failure_listener(fail_listener)
     
     await bus.publish("test.event", {"msg": "retry"})
-    await asyncio.sleep(0.2)
-    
+    await wait_until(lambda: calls >= 3)
+
     assert calls == 3
     fail_listener.assert_not_called()
     assert bus._consecutive_failures.get("anonymous", 0) == 0 # Should be reset
@@ -117,8 +122,8 @@ async def test_retries_exhausted_dlq(bus):
     # The DLQ event itself will be in history if published
     
     await bus.publish("test.fail", {"msg": "to_dlq"})
-    await asyncio.sleep(0.2)
-    
+    await wait_until(lambda: fail_listener.called)
+
     # 1 attempt + 2 retries = 3 calls
     fail_listener.assert_called_once()
     
@@ -146,8 +151,10 @@ async def test_backoff_progression(bus):
     with patch("tools.event_bus.event_bus_tool.asyncio.sleep", side_effect=mock_sleep):
         await bus.subscribe("test.backoff", always_fail, retries=3, backoff=0.5)
         await bus.publish("test.backoff", {"msg": "backoff"})
-        await asyncio.sleep(0.1)
-        
+        # asyncio.sleep is patched module-wide above, so poll with the
+        # captured real sleep — the default would call the mock too.
+        await wait_until(lambda: len(recorded_sleeps) >= 3, sleep=original_sleep)
+
         # Expected sleeps: 0.5 * 2^0 = 0.5, 0.5 * 2^1 = 1.0, 0.5 * 2^2 = 2.0
         assert recorded_sleeps == [0.5, 1.0, 2.0]
 
@@ -159,8 +166,12 @@ async def test_dlq_loop_protection(bus):
     await bus.subscribe("_dlq.some_event", always_fail)
     
     await bus.publish("_dlq.some_event", {"msg": "bad"})
-    await asyncio.sleep(0.1)
-    
+
+    def _delivered():
+        return any(n.kind == "delivered" and n.envelope.payload.get("msg") == "bad"
+                    for n in bus.get_trace_history())
+    await wait_until(_delivered)
+
     history = bus.get_trace_history()
     # There should NOT be a _dlq._dlq.some_event
     dlq_of_dlq = next((n for n in history if n.envelope.event == "_dlq._dlq.some_event"), None)
@@ -173,8 +184,12 @@ async def test_dlq_disabled(bus):
     with patch.dict("os.environ", {"EVENT_BUS_DLQ_ENABLED": "false"}):
         await bus.subscribe("test.no_dlq", always_fail)
         await bus.publish("test.no_dlq", {"msg": "no_dlq"})
-        await asyncio.sleep(0.1)
-        
+
+        def _delivered():
+            return any(n.kind == "delivered" and n.envelope.payload.get("msg") == "no_dlq"
+                        for n in bus.get_trace_history())
+        await wait_until(_delivered)
+
         history = bus.get_trace_history()
         dlq_event = next((n for n in history if n.envelope.event == "_dlq.test.no_dlq"), None)
         assert dlq_event is None
@@ -184,8 +199,8 @@ async def test_backward_compatibility(bus):
     await bus.subscribe("test.compat", handler) # No retries/backoff
     
     await bus.publish("test.compat", {"msg": "ok"})
-    await asyncio.sleep(0.1)
-    
+    await wait_until(lambda: handler.called)
+
     handler.assert_called_once()
     
     history = bus.get_trace_history()
@@ -201,14 +216,20 @@ async def test_poisoned_escalation(bus):
 
     await bus.subscribe("test.poison", always_fail)
     
+    def _delivered(msg):
+        return lambda: any(
+            n.kind == "delivered" and n.envelope.payload.get("msg") == msg
+            for n in bus.get_trace_history()
+        )
+
     # 1st failure
     await bus.publish("test.poison", {"msg": "1"})
-    await asyncio.sleep(0.1)
+    await wait_until(_delivered("1"))
     assert "test.poison" in bus.get_subscribers()
-    
+
     # 2nd failure -> should unsubscribe
     await bus.publish("test.poison", {"msg": "2"})
-    await asyncio.sleep(0.1)
+    await wait_until(lambda: "test.poison" not in bus.get_subscribers())
     assert "test.poison" not in bus.get_subscribers()
 
 async def test_rpc_unaffected(bus):

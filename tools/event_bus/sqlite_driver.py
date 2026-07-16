@@ -145,7 +145,15 @@ class SQLiteDriver(EventBusDriver):
         self._subs.clear()
         if self._conn is not None:
             conn, self._conn = self._conn, None
-            await asyncio.to_thread(conn.close)
+            # A cancelled to_thread task can return before its worker thread
+            # actually stops (cancellation can't interrupt a running thread),
+            # so a reader's _ack/_claim_one may still be mid-execute here.
+            # Route close() through the same lock so it waits its turn
+            # instead of racing the connection out from under that thread.
+            def _close():
+                with self._db_lock:
+                    conn.close()
+            await asyncio.to_thread(_close)
 
     # ─── TRANSPORT: publish ───────────────────────────────
 

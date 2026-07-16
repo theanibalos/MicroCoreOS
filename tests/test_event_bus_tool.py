@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
+from tests.helpers.async_wait import wait_until
 
 pytestmark = pytest.mark.anyio
 
@@ -21,7 +22,7 @@ async def test_subscribe_publish(bus):
 
     await bus.subscribe("user.created", handler)
     await bus.publish("user.created", {"id": 1})
-    await asyncio.sleep(0.01)
+    await wait_until(lambda: len(received) >= 1)
     assert received == [{"id": 1}]
 
 async def test_envelope_metadata(bus):
@@ -31,8 +32,8 @@ async def test_envelope_metadata(bus):
 
     await bus.subscribe("meta.test", handler)
     await bus.publish("meta.test", {"x": 1})
-    await asyncio.sleep(0.01)
-    
+    await wait_until(lambda: len(received) >= 1)
+
     env = received[0]
     assert env.event == "meta.test"
     assert env.payload == {"x": 1}
@@ -52,7 +53,7 @@ async def test_wildcard_observability(bus):
     await bus.subscribe("*", lambda env: received.append(env.event))
     await bus.publish("a", {})
     await bus.publish("b", {})
-    await asyncio.sleep(0.01)
+    await wait_until(lambda: "a" in received and "b" in received)
     assert "a" in received
     assert "b" in received
 
@@ -62,7 +63,7 @@ async def test_causality_chain(bus):
 
     await bus.subscribe("parent", parent_handler)
     await bus.publish("parent", {})
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: any(r.envelope.event == "child" for r in bus.get_trace_history()))
 
     history = bus.get_trace_history()
     parent_rec = next(r for r in history if r.envelope.event == "parent")
@@ -80,12 +81,12 @@ async def test_dead_subscriber_auto_unsubscribe(bus):
     for _ in range(EventBusTool._MAX_CONSECUTIVE_FAILURES):
         await bus.publish("boom", {})
 
-    await asyncio.sleep(0.1)
+    await wait_until(lambda: "boom" not in bus.get_subscribers())
 
     # After max failures, the handler must be gone — bus must not deadlock
     before = len(calls)
     await bus.publish("boom", {})
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.05)  # negative check: no new calls should ever arrive
     assert len(calls) == before  # no new calls — handler was removed
 
 async def test_auto_unsubscribe_publishes_dropped_event(bus):
@@ -101,7 +102,7 @@ async def test_auto_unsubscribe_publishes_dropped_event(bus):
 
     for _ in range(EventBusTool._MAX_CONSECUTIVE_FAILURES):
         await bus.publish("boom", {})
-    await asyncio.sleep(0.1)
+    await wait_until(lambda: len(dropped) >= 1)
 
     assert len(dropped) == 1
     payload = dropped[0].payload
@@ -124,23 +125,31 @@ async def test_dropped_event_subscriber_drop_does_not_retrigger(bus):
 
     await bus.subscribe(EventBusTool.SUBSCRIBER_DROPPED_EVENT, broken_monitor)
 
+    def _delivered_count(event_name):
+        return sum(1 for r in bus.get_trace_history()
+                    if r.kind == "delivered" and r.envelope.event == event_name)
+
     # Drop N distinct subscribers -> N dropped events -> broken_monitor fails
     # on each of them and is itself dropped on the Nth. The guard must prevent
     # a further dropped event about broken_monitor (no self-reference).
     for i in range(max_fails):
         event_name = f"boom.{i}"
         await bus.subscribe(event_name, make_flaky())
-        for _ in range(max_fails):
+        for attempt in range(max_fails):
             await bus.publish(event_name, {})
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.05)
+            await wait_until(lambda: _delivered_count(event_name) > attempt)
+        await wait_until(lambda: event_name not in bus.get_subscribers())
 
-    await asyncio.sleep(0.2)
-    history = bus.get_trace_history()
-    published_dropped = [
-        r for r in history
-        if r.kind == "published" and r.envelope.event == EventBusTool.SUBSCRIBER_DROPPED_EVENT
-    ]
+    def _published_dropped():
+        return [
+            r for r in bus.get_trace_history()
+            if r.kind == "published" and r.envelope.event == EventBusTool.SUBSCRIBER_DROPPED_EVENT
+        ]
+    # Dropping the last flaky subscriber cascades into broken_monitor's own
+    # (fire-and-forget) delivery — wait for that cascade to settle too.
+    await wait_until(lambda: len(_published_dropped()) >= max_fails)
+
+    published_dropped = _published_dropped()
     # One per flaky subscriber; broken_monitor's own drop is guarded and silent.
     assert len(published_dropped) == max_fails
     assert all(
