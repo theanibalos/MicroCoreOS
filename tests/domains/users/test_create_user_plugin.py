@@ -4,7 +4,6 @@ Real tools: SQLite :memory: with the users migrations, real AuthTool, real
 in-process event bus. Only the error-path test mocks `db`.
 """
 import asyncio
-import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
