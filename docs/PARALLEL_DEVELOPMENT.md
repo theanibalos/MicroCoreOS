@@ -335,12 +335,12 @@ producing exactly two files: its plugin and its test.
 **Canonical executor prompt — shared prefix first, task last.** Every agent
 receives the same byte-identical preamble, in this exact order:
 
-1. `AI_CONTEXT.md` (frozen since the phase 0 boot)
+1. `AI_CONTEXT.md` (frozen since the phase 0 boot — it embeds the executor
+   rules and templates as its "Plugin Authoring Guide" section)
 2. The full plan (`plans/active_plan.yaml`)
-3. The shared rules/template (`plans/executor_rules.md`)
 
 and ONE per-agent line at the very end: *"Implement feature `<PluginName>`
-from the plan above."* Agents never open the plan or `AI_CONTEXT.md`
+from the plan above."* Two artifacts plus one line — nothing else. Agents never open the plan or `AI_CONTEXT.md`
 themselves. Because the preamble is byte-identical, any engine with prefix
 caching — a local model's KV cache, Anthropic/OpenAI prompt caching, vLLM —
 processes the shared block **once** and reuses it for every agent in the
@@ -350,6 +350,31 @@ first agent, let it start responding, then fire the rest (a cache entry being
 written is not yet readable — N simultaneous cold requests ALL pay the full
 prefix). On an engine with no prefix caching, fall back to pasting only the
 feature's slice plus the `AI_CONTEXT.md` sections for the tools it injects.
+
+**Executors are dispatched write-only, scoped to their two files.** "Agents
+never open the plan or `AI_CONTEXT.md` themselves" is a property of the
+dispatch, not an instruction to obey: an executor receives file-writing
+capability ONLY — no read, no search, no shell — and the write capability is
+scoped to exactly the two paths its plan entry declares (`file:` + `test:`
+for a feature; `e2e_test` + `sad_path_test` for flow tests). The plan is a
+namespace reservation, so the dispatch can enforce it mechanically: "no
+migrations, no edits to `main.py`, no touching other tasks' files" stops
+being a rule and becomes a property. A model with information-seeking tools
+available will use them under any residual uncertainty, and will guess paths
+when the file it seeks does not exist; removing the capability removes the
+whole failure class, the same way disjoint file ownership removes collisions.
+
+**One complete template per deliverable type.** Write-only dispatch is only
+safe because the prefix is self-sufficient by construction: for every
+deliverable type the plan can assign (publisher feature, subscriber feature,
+flow tests), `AI_CONTEXT.md` § "Plugin Authoring Guide" carries one complete,
+copy-pasteable template — whole file, imports to last line (embedded at boot
+by the context tool from `tools/context/authoring_guide.md`, its single
+source). A rule that names a symbol
+without a template showing its exact usage manufactures uncertainty a
+write-only agent can no longer resolve by reading. Litmus test for the
+prefix: a competent developer with NO repository access must be able to
+write both files from it alone.
 
 "Parallel" here means **logical independence** (zero coordination, any order
 works), not simultaneity. Token cost is identical sequential or simultaneous
@@ -371,7 +396,7 @@ feature's test file, written by that feature's executor.)
 
 Within one executor, the test is written BEFORE the plugin, with every
 assertion derived from the plan — never from the implementation
-(`plans/executor_rules.md`). For critical features, escalate to **independent
+(`AI_CONTEXT.md` § Plugin Authoring Guide). For critical features, escalate to **independent
 derivation**: split the feature into two executors — one writes only the test
 (from the plan), the other only the plugin (from the plan) — their files never
 collide because the plan declares both paths, and `pytest` arbitrates. If both

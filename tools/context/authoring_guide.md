@@ -1,15 +1,16 @@
-# Executor Rules
+## 🧩 Plugin Authoring Guide
 
-> This file is the FINAL block of the shared executor prompt prefix
-> (`AI_CONTEXT.md` → `active_plan.yaml` → this file → your task line).
-> It is byte-identical for every executor in a wave — never edit it mid-wave.
+> Embedded verbatim from `tools/context/authoring_guide.md` on every boot.
+> For a wave executor this section IS the rulebook: the canonical executor
+> prompt is this manifest → `plans/active_plan.yaml` → ONE task line at the
+> end — nothing else.
 
-You are an Executor AI. Your only job is the ONE feature named in the final
-line of this prompt. Everything you need is already above: `AI_CONTEXT.md`
-(the live system) and the plan (your contract). Do not read any other file.
-Do not ask questions — the plan already made every decision.
+### Executor contract — exactly two files
 
-## Deliverable — exactly two files
+Your only job is the ONE feature named in the final line of your prompt.
+Everything you need is in this manifest and the plan (your contract). Do not
+read any other file. Do not ask questions — the plan already made every
+decision.
 
 Your task line names either a **feature** or a **flow's tests**:
 
@@ -22,9 +23,11 @@ Your task line names either a **feature** or a **flow's tests**:
   `_dlq.<event>` appears as a child of the failed event in the same tree).
 
 Nothing else: no migrations, no entity models, no edits to `main.py`, no
-touching other domains or other tasks' files.
+touching other domains or other tasks' files. When both files are written,
+stop. Do not run commands, do not summarize the codebase, do not propose
+follow-ups.
 
-## Plugin rules
+### Plugin rules
 
 1. **Schemas inline** — request, response AND event payload models at the top
    of the plugin file. Never import them from `models/` or other domains.
@@ -43,7 +46,9 @@ touching other domains or other tasks' files.
    `XxxPayload(...).model_dump()` (bare call, no arguments). Consumers never
    import the publisher's model: declare your own model with only the fields
    your `consumes.requires` lists (tolerant reader) and do `Model(**event.payload)`.
-6. **Subscribers receive `EventEnvelope`** — access data via `event.payload`.
+6. **Subscribers receive the event envelope** — access data via
+   `event.payload`. Leave the parameter untyped (no annotation, no import),
+   exactly as the subscriber template below shows.
 7. **Safe errors** — never return `str(e)` to the client. Log it, return a
    generic message ("Database error").
 8. **Protected route?** If the plan marks it, pass
@@ -52,7 +57,12 @@ touching other domains or other tasks' files.
 9. **Always pass `response_model=`** to `add_endpoint`, and `Field(...)`
    constraints on every request field.
 
-## Template
+### Templates — one per deliverable type, copy the one your task matches
+
+Each is a whole file, imports to last line; nothing a feature or flow-tests
+task needs is missing from them.
+
+#### Publisher feature (endpoint + event)
 
 ```python
 from typing import Optional
@@ -102,7 +112,104 @@ class CreateThingPlugin(BasePlugin):
             return {"success": False, "error": "Database error"}
 ```
 
-## Test rules
+#### Subscriber feature (pure event consumer)
+
+```python
+from pydantic import BaseModel
+from core.base_plugin import BasePlugin
+
+
+# Consumed event, tolerant reader: declare ONLY the fields your feature's
+# `consumes.requires` lists — never import the publisher's model.
+class ThingCreatedData(BaseModel):
+    id: int
+    name: str
+
+
+class ThingAuditedPayload(BaseModel):
+    thing_id: int
+
+
+class ThingAuditPlugin(BasePlugin):
+    def __init__(self, event_bus, logger):
+        self.bus = event_bus
+        self.logger = logger
+
+    async def on_boot(self):
+        # retries/backoff: exactly what the plan's flow link declares (omit when none)
+        await self.bus.subscribe("thing.created", self.on_thing_created)
+
+    async def on_thing_created(self, event) -> None:
+        data = ThingCreatedData(**event.payload)
+        self.logger.info(f"Audited thing {data.id}")
+        await self.bus.publish(
+            "thing.audited", ThingAuditedPayload(thing_id=data.id).model_dump()
+        )
+```
+
+#### Flow tests (e2e chain + sad path — one file with both)
+
+```python
+"""Flow tests for <flow-name>: happy-path causal chain + DLQ sad path."""
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from domains.things.plugins.create_thing_plugin import CreateThingPlugin
+from domains.things.plugins.thing_audit_plugin import ThingAuditPlugin
+from tools.event_bus.event_bus_tool import EventBusTool
+from tests.helpers.trace_chains import build_tree, assert_chain
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def bus():
+    b = EventBusTool()
+    await b.setup()
+    yield b
+    await b.shutdown()
+
+
+async def test_happy_path_chain(bus):
+    db = AsyncMock()
+    db.execute.return_value = 1
+
+    publisher = CreateThingPlugin(http=MagicMock(), db=db, event_bus=bus, logger=MagicMock())
+    consumer = ThingAuditPlugin(event_bus=bus, logger=MagicMock())
+    await consumer.on_boot()
+
+    await publisher.execute({"name": "widget"})
+    await asyncio.sleep(0.05)
+
+    assert_chain(build_tree(bus.get_trace_history()),
+                 ["thing.created", "thing.audited"])
+
+
+async def test_sad_path_dlq(bus):
+    logger = MagicMock()
+    consumer = ThingAuditPlugin(event_bus=bus, logger=logger)
+    await consumer.on_boot()
+
+    # Force the consumer to fail on every attempt: one injected tool raises.
+    logger.info.side_effect = RuntimeError("forced failure")
+
+    await bus.publish("thing.created", {"id": 1, "name": "widget"})
+    await asyncio.sleep(0.3)  # covers the link's retries + backoff
+
+    # _dlq.<event> is published inside the failing delivery's context, so it
+    # appears as a child of the event that failed — same helper asserts it.
+    assert_chain(build_tree(bus.get_trace_history()),
+                 ["thing.created", "_dlq.thing.created"])
+```
+
+### Test rules
 
 - **Write the test FIRST, then the plugin.** Derive every assertion from the
   PLAN (route, envelope shape, declared tables, declared payload keys) —
@@ -121,6 +228,3 @@ class CreateThingPlugin(BasePlugin):
   technical detail does NOT reach the client response.
 - Mark async tests with `@pytest.mark.anyio` (add an `anyio_backend`
   fixture returning `"asyncio"`).
-
-When both files are written, stop. Do not run commands, do not summarize the
-codebase, do not propose follow-ups.

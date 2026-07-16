@@ -26,7 +26,7 @@ machinery — including the parts that were never stress-tested together:
 
 Scope: 3 features + 1 flow-tests task, 1 migration, 1 flow, no new tools.
 The wave is therefore **4 executors**: one per feature (each writes test
-first + plugin, per `plans/executor_rules.md`) plus one for the flow's
+first + plugin, per `AI_CONTEXT.md` § Plugin Authoring Guide) plus one for the flow's
 `e2e_test` + `sad_path_test`. Expected plan size: ~90-120 YAML lines. This
 mirrors the "3 CRUDs + 1 tool" workload that once burned 60% of a session's
 budget — the direct comparison point.

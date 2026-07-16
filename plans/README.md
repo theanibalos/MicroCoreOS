@@ -141,14 +141,14 @@ line changes. Assemble each prompt with one command:
 
 ```bash
 build_executor_prompt() {
-  cat AI_CONTEXT.md plans/active_plan.yaml plans/executor_rules.md
+  cat AI_CONTEXT.md plans/active_plan.yaml
   printf '\nImplement feature %s from the plan above.\n' "$1"
 }
 
 build_executor_prompt CreateOrderPlugin > /tmp/executor_1.txt
 build_executor_prompt CancelOrderPlugin > /tmp/executor_2.txt
 # one extra executor per flow writes its e2e + sad-path tests:
-{ cat AI_CONTEXT.md plans/active_plan.yaml plans/executor_rules.md
+{ cat AI_CONTEXT.md plans/active_plan.yaml
   printf '\nImplement the flow tests for flow %s from the plan above.\n' order-lifecycle
 } > /tmp/executor_flow.txt
 ```
@@ -166,8 +166,10 @@ agent). Rules:
   single GPU is the bottleneck either way. "Parallel" means the features are
   independent (any order works), not that they must run simultaneously.
 - **Never** put per-executor content before or inside the shared block, and
-  never edit `AI_CONTEXT.md`, the plan, or `executor_rules.md` mid-wave — one
-  changed byte re-processes everything for every following request.
+  never edit `AI_CONTEXT.md` or the plan mid-wave — one changed byte
+  re-processes everything for every following request. (The executor rules
+  and templates ride inside `AI_CONTEXT.md` as its "Plugin Authoring Guide"
+  section, embedded at boot from `tools/context/authoring_guide.md`.)
 - One feature = one executor. Never two executors on the same feature.
 - **Each executor is a FRESH conversation.** Never reuse a chat that already
   produced another feature: its output would sit in the context of the next

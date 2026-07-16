@@ -285,8 +285,9 @@ class EventBusTool(BaseTool):
         - add_listener(callback): Sink for all events (record: dict).
         - add_failure_listener(callback): Sink for errors (record: dict).
         
-        CRITICAL: Subscribing callbacks receive an 'EventEnvelope' object.
-        Example: async def on_event(self, event: EventEnvelope): print(event.payload)
+        CRITICAL: Subscribing callbacks receive the event envelope as their single
+        argument — read event.payload. Leave the parameter untyped (no annotation,
+        no import needed): async def on_event(self, event): print(event.payload)
         
         RETRIES & IDEMPOTENCY:
         - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.

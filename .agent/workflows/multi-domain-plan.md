@@ -64,8 +64,13 @@ order or in parallel is fine. Migrations keep one author for numbering.)
 
 Dispatch one agent per feature with the **canonical executor prompt**
 (`docs/PARALLEL_DEVELOPMENT.md` § Phase 2): a byte-identical shared prefix —
-`AI_CONTEXT.md` → full plan → shared rules — plus one final per-agent line
-naming its feature. Agents never open the plan or `AI_CONTEXT.md` themselves;
+`AI_CONTEXT.md` (which embeds the executor rules and templates as its
+"Plugin Authoring Guide" section) → full plan — plus one final per-agent line
+naming its feature. Dispatch executors **write-only, scoped to the two paths
+their plan entry declares** (`file:` + `test:` for a feature, the flow's two
+test paths for flow tests — no read/search/shell tools): the prefix is self-sufficient
+by construction, with one complete template per deliverable type embedded in
+`AI_CONTEXT.md` § Authoring Templates. Agents never open the plan or `AI_CONTEXT.md` themselves;
 the identical prefix lets any prefix-caching engine process the shared block
 once for the whole wave. Each agent produces exactly two files: its plugin
 and its unit test. Event payload schemas go inline in each publisher plugin

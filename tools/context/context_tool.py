@@ -18,6 +18,9 @@ class ContextTool(BaseTool):
         - CAPABILITIES:
             - Reads the system registry.
             - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Embeds the plugin authoring guide (tools/context/authoring_guide.md):
+              executor rules plus one complete template per deliverable type, so the
+              manifest alone is enough to write a plugin or its tests.
             - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
         """
 
@@ -125,11 +128,26 @@ class ContextTool(BaseTool):
             manifest += f"- **Dependencies**: {', '.join(sorted(all_deps)) if all_deps else 'none'}\n"
             manifest += f"- **Plugins**: {', '.join(sorted(plugin_names))}\n\n"
 
+        manifest += self._load_authoring_guide()
+
         try:
             with open("AI_CONTEXT.md", "w", encoding="utf-8") as f:
                 f.write(manifest)
         except Exception as e:
             print(f"[ContextTool] Error writing AI_CONTEXT.md: {e}")
+
+    def _load_authoring_guide(self) -> str:
+        """The plugin authoring guide (executor rules + one template per
+        deliverable type) is maintained next to this tool and embedded
+        verbatim, so the manifest stays the single self-sufficient artifact
+        for writing a plugin or its tests."""
+        path = os.path.join(os.path.dirname(__file__), "authoring_guide.md")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip() + "\n"
+        except Exception as e:
+            print(f"[ContextTool] Error reading authoring guide: {e}")
+            return ""
 
     def _generate_plugin_quick_start(self) -> str:
         return """## ⚡ Operating Context
