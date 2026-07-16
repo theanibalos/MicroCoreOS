@@ -86,17 +86,18 @@ name that lives in a global namespace, so nothing is left to improvisation:
 ```yaml
 plan:
   domain: orders
+  engine: sqlite                            # which db engine this plan's SQL targets (informative — migrations run verbatim, see AGENTS.md rule 8)
   phase_0:
     migrations:
       - file: orders/001_create_orders.sql
         tables: [orders]                    # table ownership is declared here
         columns:                            # FULL schema — phase 0 is written from this, nothing is improvised
           orders:
-            id: "SERIAL PRIMARY KEY"
+            id: "INTEGER PRIMARY KEY"       # auto-increment PK spelling is engine-specific — match the declared engine
             user_id: "INT NOT NULL"
             total: "FLOAT NOT NULL"
             status: "TEXT DEFAULT 'pending'"
-            created_at: "TIMESTAMP DEFAULT NOW()"
+            created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     models:
       - domains/orders/models/order.py      # entity mirrors the columns above 1:1
     tools: []                               # new infra tools, only if needed

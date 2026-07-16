@@ -556,4 +556,8 @@ class PostgresqlTool(BaseTool):
               Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
             - await health_check() → bool: Verify database connectivity.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+        - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot
+          (topological sort). Migrations run VERBATIM (no dialect translation).
+          Engine-specific SQL commits you to that engine; portable SQL
+          (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the SQLite <-> PostgreSQL swap free.
         """

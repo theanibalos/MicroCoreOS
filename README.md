@@ -23,8 +23,9 @@ Monolith starts as the simplest possible system and stretches piece by piece, on
 load demands it.
 
 Proven today: SQLite ↔ PostgreSQL swap with identical plugin code, and a transport-driver
-interface (`EventBusDriver`) where retries, DLQ, RPC and tracing are broker-agnostic.
-Distributed drivers (Kafka/RabbitMQ, Redis) are tracked in the [roadmap](ROADMAP.md).
+interface (`EventBusDriver`) where retries, DLQ, RPC and tracing are broker-agnostic —
+Redis Streams, RabbitMQ and a durable SQLite transport already shipped. Kafka is
+tracked in the [roadmap](ROADMAP.md).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -92,7 +93,7 @@ Drop this file in `domains/products/plugins/`, restart, and it works. No `main.p
 
 ## What Makes It Different
 
-### ~378-line kernel. Pure stdlib. No external dependencies in core.
+### ~360 functional lines of kernel. Pure stdlib. No external dependencies in core.
 
 The entire orchestration engine — DI, plugin discovery, tool lifecycle, fault tolerance — uses only Python's standard library.
 
@@ -115,6 +116,11 @@ A Tool is identified by its `name` property. The SQLite tool and the PostgreSQL 
 1. Change `name = "db"` in the SQLite tool to `name = "sqlite"`
 2. Change `name = "postgresql"` in the PostgreSQL tool to `name = "db"`
 3. Plugins don't change a single line.
+
+Migrations are the honest exception: the `db` tool is not an ORM — SQL files run
+**verbatim** on the active engine (no dialect translation), so an engine swap includes
+one review pass over your migration SQL. The full procedure is in
+[docs/ELASTIC_DEPLOYMENT.md](docs/ELASTIC_DEPLOYMENT.md) (Stage 1).
 
 This pattern works for any infrastructure: swap the event bus backend, the HTTP server, the auth mechanism — as long as the new tool has the same `name` and API, plugins keep working.
 
@@ -142,7 +148,7 @@ The Kernel is "logic-free." `ToolProxy` observes and reports health but **never 
 
 ```
 MicroCoreOS/
-├── core/                    # ~378 lines total, zero external deps
+├── core/                    # ~360 functional lines, zero external deps
 │   ├── kernel.py           # Discovery, DI, lifecycle
 │   ├── container.py        # DI container + ToolProxy (Health/Metrics)
 │   ├── registry.py         # Thread-safe system state
@@ -175,7 +181,7 @@ MicroCoreOS/
 | **Architecture erodes under pressure**  | Conventions are explicit and enforced.                                         |
 | **Merge conflicts on shared files**     | Each feature is its own file. No shared business logic files.                  |
 | **One dependency failure cascades**     | ToolProxy contains failures per-tool automatically.                            |
-| **Changing databases takes weeks**      | Swap the tool file. Same API, same placeholders.                               |
+| **Changing databases takes weeks**      | Swap the tool file — same API, same placeholders — plus one review pass over migration SQL. |
 | **Background errors disappear**         | EventBus watchdog + DLQ + causality engine.                                    |
 | **Slow developer onboarding**           | Read `AI_CONTEXT.md` + one plugin.                                             |
 | **Sync/async mixing bugs**              | Kernel auto-detects `def` vs `async def`, offloads sync to thread pool.        |
@@ -189,7 +195,7 @@ MicroCoreOS/
 | Tool        | Description                                                    |
 | ----------- | -------------------------------------------------------------- |
 | `http`      | FastAPI gateway — REST, WebSocket, SSE, auto-generated OpenAPI |
-| `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap           |
+| `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap at the tool-API level |
 | `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing. Transports swap by env var: in-process (default), SQLite (durable, survives restarts), Redis Streams (distributed); RabbitMQ in extras |
 | `auth`      | JWT lifecycle + bcrypt password hashing                           |
 | `scheduler` | Cron jobs + one-shot tasks (APScheduler)                          |
@@ -204,7 +210,7 @@ MicroCoreOS/
 | Tool         | Description                                                              |
 | ------------ | ------------------------------------------------------------------------ |
 | `s3`         | AWS S3 object storage — private bucket + presigned URLs                  |
-| `db`         | PostgreSQL — drop-in swap for SQLite, same API and placeholders          |
+| `db`         | PostgreSQL — same API and placeholders as SQLite; swap procedure in [ELASTIC_DEPLOYMENT.md](docs/ELASTIC_DEPLOYMENT.md) |
 | `state`      | Redis-backed state — drop-in swap for in-memory StateTool                |
 | `rabbitmq`   | RabbitMQ **driver** for the Event Bus — transports swap by file, like tools: drop the `*_driver.py` into `tools/event_bus/` and set `EVENT_BUS_DRIVER=rabbitmq` |
 
@@ -225,22 +231,30 @@ For full domains: follow `.agent/workflows/new-domain.md`.
 
 ## Testing
 
-Constructor injection makes mocking straightforward:
+Constructor injection makes tests **black-box**: inject real in-memory tools
+(SQLite `:memory:` with the domain migration applied, in-process event bus, real
+auth) and mock only the tool whose failure you are forcing. A failing test then
+pinpoints the plugin whose SQL or contract actually broke.
 
 ```python
 @pytest.mark.anyio
-async def test_create_user():
-    plugin = CreateUserPlugin(
-        http=MagicMock(),
-        db=AsyncMock(execute=AsyncMock(return_value=42)),
-        event_bus=AsyncMock(),
-        logger=MagicMock(),
-        auth=MagicMock(hash_password=MagicMock(return_value="hashed"))
+async def test_create_user_persists_and_publishes(db, bus, auth):
+    # db  = SqliteTool on ":memory:" with the users migration applied
+    # bus = in-process EventBusTool; auth = real AuthTool
+    plugin = CreateUserPlugin(http=MagicMock(), db=db, event_bus=bus,
+                              logger=MagicMock(), auth=auth)
+
+    result = await plugin.execute(
+        {"name": "Ana", "email": "ana@example.com", "password": "password123"}
     )
-    result = await plugin.execute({"name": "Test", "email": "a@b.com", "password": "p"})
+
     assert result["success"] is True
-    assert result["data"]["id"] == 42
+    row = await db.query_one("SELECT * FROM users WHERE id = $1", [result["data"]["id"]])
+    assert await auth.verify_password("password123", row["password_hash"])  # stored hashed, never plain
 ```
+
+Complete examples — happy paths, ownership (403), login throttling, error paths
+that never leak technical detail — live in `tests/domains/users/`.
 
 ---
 

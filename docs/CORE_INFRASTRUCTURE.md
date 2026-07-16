@@ -231,7 +231,7 @@ Both vars are **reset in the `finally` block** of each dispatch. They do not lea
 
 **Foreign keys**: `PRAGMA foreign_keys = ON` is set automatically. SQLite does not enforce foreign keys by default. This enables referential integrity constraints in migration files.
 
-**Placeholder normalization**: `$1, $2, $3...` (PostgreSQL style) are converted to `?` (SQLite native) transparently. This makes SQLite a drop-in replacement for the PostgreSQL tool — plugins never change.
+**Placeholder normalization**: `$1, $2, $3...` (PostgreSQL style) are converted to `?` (SQLite native) transparently. This makes SQLite a drop-in replacement for the PostgreSQL tool **at the tool-API level** — plugins never change. SQL text itself is never dialect-translated: migrations run verbatim on the active engine. Engine-specific SQL is a valid choice — it commits you to that engine; portable SQL (e.g. `CURRENT_TIMESTAMP`, not `NOW()`) keeps the swap free. Either way, an engine swap includes a review pass over all SQL (see ELASTIC_DEPLOYMENT.md, Stage 1).
 
 **Transaction Isolation**: uses an `asyncio.Lock` with `ContextVar` reentrancy tracking to ensure that concurrent write operations do not interfere with each other's atomic transactions, even during nested SAVEPOINTs.
 

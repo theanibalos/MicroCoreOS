@@ -11,6 +11,7 @@
 
 plan:
   domain: things
+  engine: sqlite                            # which db engine this plan's SQL targets (informative — migrations run verbatim)
 
   phase_0:                                  # OMIT if no new tables/tools
     migrations:
@@ -18,9 +19,9 @@ plan:
         tables: [things]
         columns:                            # full schema — phase 0 is built from this
           things:
-            id: "SERIAL PRIMARY KEY"
+            id: "INTEGER PRIMARY KEY"       # auto-increment PK spelling is engine-specific — match the declared engine
             name: "TEXT NOT NULL"
-            created_at: "TIMESTAMP DEFAULT NOW()"
+            created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     models:
       - domains/things/models/thing.py      # entity mirrors columns 1:1
     tools: []                               # new infra tools, only if needed

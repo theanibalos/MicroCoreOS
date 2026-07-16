@@ -1,10 +1,12 @@
 """
-SQLite Tool — Drop-in Replacement for PostgreSQL in MicroCoreOS
+SQLite Tool — PostgreSQL-Compatible `db` Tool for MicroCoreOS
 ================================================================
 
-100% COMPATIBLE with the PostgreSQL gold-standard contract.
+100% COMPATIBLE with the PostgreSQL gold-standard contract AT THE
+TOOL-API LEVEL: same methods, same PostgreSQL-style placeholders.
 Plugins write PostgreSQL-style SQL ($1, $2...) and this tool
 transparently converts placeholders to SQLite's native '?'.
+SQL text itself is NEVER dialect-translated (see migration note below).
 
 PUBLIC CONTRACT (IDENTICAL to PostgreSQL — same SQL, same swap):
 ─────────────────────────────────────────────────────────────────
@@ -25,11 +27,13 @@ PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
               This tool converts them internally to '?' for SQLite.
               This enables direct SQLite <-> PostgreSQL swap without changing a line.
 
-⚠ MIGRATION FILES ARE NOT CROSS-COMPATIBLE:
-  The .sql files in domains/*/migrations/ may contain engine-specific DDL
-  (e.g. PostgreSQL's SERIAL, TIMESTAMPTZ, JSONB vs SQLite's INTEGER PRIMARY KEY
-  AUTOINCREMENT, TEXT). When swapping engines, migration files will likely need
-  to be rewritten. This is by design — migration SQL is cheap to regenerate.
+⚠ MIGRATIONS RUN VERBATIM — NO DIALECT TRANSLATION:
+  Neither this tool nor the PostgreSQL tool translates SQL dialects. The .sql
+  files in domains/*/migrations/ are executed as-is on whichever engine is
+  active. Engine-specific SQL is a valid choice — it commits you to that
+  engine; portable SQL (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the
+  SQLite <-> PostgreSQL swap free. Either way, an engine swap includes a
+  review pass over all SQL (docs/ELASTIC_DEPLOYMENT.md, Stage 1).
 """
 
 import os
@@ -653,9 +657,10 @@ class SqliteTool(BaseTool):
     def get_interface_description(self) -> str:
         return """
         Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PURPOSE: PostgreSQL-compatible relational storage (drop-in swap at the
+          TOOL-API level: same methods, same placeholders). Accepts PostgreSQL-style
+          placeholders ($1, $2...) and converts them transparently to SQLite's
+          native '?'. SQL text itself is NEVER dialect-translated.
         - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
         - CAPABILITIES:
             - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
@@ -669,7 +674,10 @@ class SqliteTool(BaseTool):
             - await health_check() → bool: Verify database connectivity.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
-          topological sort (alphabetical by default). To declare that one migration must
+          topological sort (alphabetical by default). Migrations run VERBATIM (no
+          dialect translation). Engine-specific SQL commits you to that engine;
+          portable SQL (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the
+          SQLite <-> PostgreSQL swap free. To declare that one migration must
           run before another, add as the first comment line:
             "-- depends: other_domain/001_file.sql"
           Works for same-domain or cross-domain dependencies. .sql extension is optional.

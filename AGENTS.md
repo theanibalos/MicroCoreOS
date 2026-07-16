@@ -50,8 +50,8 @@ docker compose -f dev_infra/docker-compose.yml up -d    # Start dev infrastructu
 4. **DI by parameter name** — `__init__(self, http, db, logger)` injects tools named `http`, `db`, `logger`. No hardcoded imports.
 5. **Schemas inline** — Request, response, and event payload schemas go at the top of the plugin file, never in `models/`.
 6. **No cross-domain imports** — Domains communicate ONLY through the `event_bus`.
-7. **Return envelope** — Always return `{"success": bool, "data": ..., "error": ...}`.
-8. **SQL Placeholders** — Always `$1, $2, $3...` (PostgreSQL style; SQLite converts internally).
+7. **Return envelope** — `{"success": bool, "data": ..., "error": ...}`: `success` always present, `data` on success, `error` on failure. Responses serialize **as-is** — `response_model` does NOT backfill omitted keys, so an omitted key is absent from the JSON and consumers must never assume it exists.
+8. **SQL Placeholders & Verbatim Migrations** — Always `$1, $2, $3...` (PostgreSQL style; SQLite converts internally). Migration SQL runs **verbatim** on the active engine (no dialect translation). Engine-specific SQL is a valid choice — it commits you to that engine; portable SQL (e.g. `CURRENT_TIMESTAMP`, not `NOW()`) keeps the SQLite↔PostgreSQL swap free. Either way, the swap includes a review pass (ELASTIC_DEPLOYMENT.md, Stage 1).
 9. **Event Envelope Contract** — Subscribers receive `EventEnvelope` objects, not raw dicts. Access payload data via `event.payload`.
 10. **Typed Event Payloads** — Define `XxxPayload(BaseModel)` in the PUBLISHER plugin and publish using `XxxPayload(...).model_dump()` (bare call, no args). Consumers must never import it; they declare their own model with only the fields they read (tolerant reader).
 11. **Protected Endpoints**: Pass `auth_validator=self.auth.validate_token` to `add_endpoint` for non-public routes. Check ownership via `data["_auth"]["sub"]` inside the handler.
@@ -149,7 +149,7 @@ When writing a new feature, read these specific files under demand to copy their
 | **Protected Endpoint (JWT)** | `domains/users/plugins/get_me_plugin.py` |
 | **Auth, Cookies & Session** | `domains/users/plugins/login_plugin.py` |
 | **Minimal Plugin (No DB)** | `domains/ping/plugins/ping_plugin.py` |
-| **Database Migrations** | `domains/users/migrations/001_create_users_table.sql` |
+| **Database Migrations** | `domains/users/migrations/001_create_users.sql` |
 | **Dynamic Introspection** | `domains/system/plugins/system_status_plugin.py` |
 | **Black-Box Integration Tests** | `tests/domains/users/test_login_plugin.py` |
 
@@ -161,9 +161,9 @@ When tasked with infrastructure changes, read the specific guide in `docs/ELASTI
 
 | Operation | Guide Section |
 |---|---|
-| **Swap SQLite to PostgreSQL** | [ELASTIC_DEPLOYMENT.md (Stage 1)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L25-L48) |
-| **Swap In-Memory State to Redis** | [ELASTIC_DEPLOYMENT.md (Section 2.1)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L57-L74) |
-| **Scale Event Bus to Redis Streams** | [ELASTIC_DEPLOYMENT.md (Section 2.2)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L75-L100) |
-| **Disable/Configure Scheduler on Replicas** | [ELASTIC_DEPLOYMENT.md (Section 2.3)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L101-L118) |
-| **Production DB Migrations Pipeline** | [ELASTIC_DEPLOYMENT.md (Section 2.4)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L119-L135) |
+| **Swap SQLite to PostgreSQL** | [ELASTIC_DEPLOYMENT.md (Stage 1)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L25-L90) |
+| **Swap In-Memory State to Redis** | [ELASTIC_DEPLOYMENT.md (Section 2.1)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L98-L116) |
+| **Scale Event Bus to Redis Streams** | [ELASTIC_DEPLOYMENT.md (Section 2.2)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L117-L141) |
+| **Disable/Configure Scheduler on Replicas** | [ELASTIC_DEPLOYMENT.md (Section 2.3)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L142-L160) |
+| **Production DB Migrations Pipeline** | [ELASTIC_DEPLOYMENT.md (Section 2.4)](file:///home/anibalos/Documents/Original/MicroCoreOS/docs/ELASTIC_DEPLOYMENT.md#L161-L177) |
 

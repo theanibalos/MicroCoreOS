@@ -39,7 +39,49 @@ same API, so plugins are untouched at every stage.
    PG_DATABASE=...    # (microcoreos)
    PG_MIN_POOL=...    PG_MAX_POOL=...    # pool sizing
    ```
-3. **Run.** Migrations in `domains/*/migrations/*.sql` are applied on boot
+3. **Review the SQL — the honest step.** The `db` tool is NOT an ORM: it is a
+   thin layer that normalizes placeholders (`$1, $2` ↔ `?`) and nothing else.
+   Every migration and every plugin query is explicit SQL that will run
+   **verbatim** on the new engine. SQL is a mostly common language, but not
+   fully — so an engine swap includes a review pass, and because nothing is
+   generated or hidden, the review is complete by construction:
+   - **Migrations**: every file in `domains/*/migrations/*.sql`.
+   - **Plugin queries**: every SQL string in `domains/*/plugins/*_plugin.py`
+     (they only live there — grep for `db.query`, `db.query_one`,
+     `db.execute`, `db.execute_many`, `tx.`).
+
+   Rewrite anything the target engine does not accept identically. This
+   review is the deliberate trade: no ORM abstraction layer to maintain or
+   fight, in exchange for one explicit, fully-enumerable SQL pass per engine
+   swap — an infrequent, planned event.
+
+   How the pass runs (review first, behavior second):
+   1. **Enumerate mechanically**: every `domains/*/migrations/*.sql`, plus
+      every plugin whose `__init__` takes `db` (grep is exact — SQL lives
+      nowhere else).
+   2. **Parallel agent sweep**: one agent per domain (disjoint files, same
+      model as the write waves) verifies or rewrites each SQL string for the
+      target engine. Reading is required — it catches the *silent*
+      differences too (`LIKE` case-sensitivity, boolean representation,
+      SQLite's loose type affinity), which no error message will ever raise.
+   3. **Behavioral gate — the plugin black-box tests ARE the per-plugin
+      detector.** Each plugin test proves its contract end to end (input →
+      envelope, rows persisted/read on the declared tables), so a failing
+      test pinpoints the exact plugin whose query broke on the new engine.
+      Two conditions make this true:
+      - the test must run `db` as a REAL instance — tests that mock `db`
+        never execute their SQL and cannot detect anything here;
+      - the test instantiates the ACTIVE `db` tool (the one living in
+        `tools/`). The swap moves directories, so after it the active tool
+        IS the new engine — the same suite exercises it with zero extra
+        configuration.
+      Sequence: `tests/tools/test_db_parity.py` first (proves the tool
+      wrapper honors the db contract — it says nothing about plugins), then
+      the plugin suite against the target engine, then boot and exercise the
+      endpoints. Note: a behavior no test asserts (e.g. `LIKE` case
+      sensitivity in a search) can still differ silently — that is what the
+      agent sweep in step 2 exists to catch.
+4. **Run.** Migrations in `domains/*/migrations/*.sql` are applied on boot
    exactly as with SQLite (same topological sort, same `$1, $2` placeholders).
 
 A single replica may keep the in-memory `state` tool and the in-process

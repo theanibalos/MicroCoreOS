@@ -242,9 +242,10 @@ Key-Value State Tool (state):
 ### 🔧 Tool: `db` (Status: ✅)
 ```text
 Async SQLite Persistence Tool (sqlite):
-        - PURPOSE: Drop-in replacement for PostgreSQL. Lightweight relational data
-          storage using SQLite with async access. Accepts PostgreSQL-style placeholders
-          ($1, $2...) and converts them transparently to SQLite's native '?'.
+        - PURPOSE: PostgreSQL-compatible relational storage (drop-in swap at the
+          TOOL-API level: same methods, same placeholders). Accepts PostgreSQL-style
+          placeholders ($1, $2...) and converts them transparently to SQLite's
+          native '?'. SQL text itself is NEVER dialect-translated.
         - PLACEHOLDERS: Use $1, $2, $3... (SAME as PostgreSQL — swap-compatible).
         - CAPABILITIES:
             - await query(sql, params?) → list[dict]: Read multiple rows (SELECT).
@@ -258,7 +259,10 @@ Async SQLite Persistence Tool (sqlite):
             - await health_check() → bool: Verify database connectivity.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
-          topological sort (alphabetical by default). To declare that one migration must
+          topological sort (alphabetical by default). Migrations run VERBATIM (no
+          dialect translation). Engine-specific SQL commits you to that engine;
+          portable SQL (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the
+          SQLite <-> PostgreSQL swap free. To declare that one migration must
           run before another, add as the first comment line:
             "-- depends: other_domain/001_file.sql"
           Works for same-domain or cross-domain dependencies. .sql extension is optional.

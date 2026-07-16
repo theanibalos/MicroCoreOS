@@ -31,9 +31,11 @@ touching other domains or other tasks' files.
 2. **DI by parameter name** — `__init__(self, http, db, logger)` receives the
    tools named `http`, `db`, `logger`. Inject exactly the tools your feature
    uses. No hardcoded imports from `tools/`.
-3. **Return envelope** — always `{"success": bool, "data": ..., "error": ...}`.
-   All values in `data` must be JSON-serializable (`.model_dump()` Pydantic
-   instances before returning).
+3. **Return envelope** — `{"success": bool, "data": ..., "error": ...}`:
+   `success` always present, `data` on success, `error` on failure. Responses
+   serialize AS-IS — `response_model` does NOT backfill omitted keys, so an
+   omitted key is simply absent from the JSON. All values in `data` must be
+   JSON-serializable (`.model_dump()` Pydantic instances before returning).
 4. **SQL placeholders** — `$1, $2, $3...` (PostgreSQL style), only on tables
    your feature's `db:` contract declares.
 5. **Events** — publish exactly the events the plan declares, with a
@@ -111,7 +113,10 @@ class CreateThingPlugin(BasePlugin):
   a real in-memory instance (SQLite `:memory:` with your domain's migration
   applied, in-process event bus).
 - Prove the black-box contract: input → output envelope, DB effects on the
-  declared tables, published payloads with the declared keys.
+  declared tables, published payloads with the declared keys. Assert the keys
+  the envelope guarantees (`success`, plus `data` on success / `error` on
+  failure); the complementary key may be legitimately absent — use `.get()`
+  for it, never a bare `result["key"]`.
 - One error-path test: force a failure (mock that raises) and assert the
   technical detail does NOT reach the client response.
 - Mark async tests with `@pytest.mark.anyio` (add an `anyio_backend`

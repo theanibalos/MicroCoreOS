@@ -294,7 +294,7 @@ async def test_env():
     await db.setup()
     
     # Run the migrations needed for this domain
-    with open("domains/users/migrations/001_create_users_table.sql", "r") as f:
+    with open("domains/users/migrations/001_create_users.sql", "r") as f:
         await db.execute(f.read())
         
     bus = EventBusTool()
@@ -393,9 +393,9 @@ The `db` injection key is the contract. Plugins use `$1, $2...` placeholders. SQ
 The kernel **always** applies migrations via topological sort. Without `-- depends:`, the order is the discovery order (alphabetical by domain → alphabetical by filename). When a migration requires another to have run first, declare it on the first comment line:
 
 ```sql
--- depends: users/001_create_users_table.sql
+-- depends: users/001_create_users.sql
 CREATE TABLE IF NOT EXISTS orders (
-    id     SERIAL PRIMARY KEY,
+    id     INTEGER PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     ...
 );
