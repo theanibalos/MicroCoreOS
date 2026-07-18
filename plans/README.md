@@ -67,7 +67,7 @@ You are the Lead Architect (Planner AI). Your task is to design a self-contained
 ### INSTRUCTIONS:
 1. Your ENTIRE reading set is exactly two files — do not open anything else:
    - AI_CONTEXT.md — existing tables, routes, tools, and events.
-   - docs/PARALLEL_DEVELOPMENT.md — the formal plan format, "Plan sizing" rules, and the 14 validity rules.
+   - docs/PARALLEL_DEVELOPMENT.md — the formal plan format, "Plan sizing" rules, and the 15 validity rules.
    You must NOT read `domains/`, `tools/`, or `tests/` source code. Everything a plan needs is in those two files.
 2. Write the formal YAML plan to `plans/active_plan.yaml` following the "Formal plan format":
    - `phase_0.migrations` with `tables:` ownership AND `columns:` (every column name, SQL type, constraints).

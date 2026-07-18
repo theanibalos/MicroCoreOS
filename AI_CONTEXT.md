@@ -491,7 +491,6 @@ class ThingAuditPlugin(BasePlugin):
 
 ```python
 """Flow tests for <flow-name>: happy-path causal chain + DLQ sad path."""
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -499,6 +498,7 @@ import pytest
 from domains.things.plugins.create_thing_plugin import CreateThingPlugin
 from domains.things.plugins.thing_audit_plugin import ThingAuditPlugin
 from tools.event_bus.event_bus_tool import EventBusTool
+from tests.helpers.async_wait import wait_until
 from tests.helpers.trace_chains import build_tree, assert_chain
 
 pytestmark = pytest.mark.anyio
@@ -526,7 +526,8 @@ async def test_happy_path_chain(bus):
     await consumer.on_boot()
 
     await publisher.execute({"name": "widget"})
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: any(r.envelope.event == "thing.audited"
+                                 for r in bus.get_trace_history()))
 
     assert_chain(build_tree(bus.get_trace_history()),
                  ["thing.created", "thing.audited"])
@@ -541,7 +542,9 @@ async def test_sad_path_dlq(bus):
     logger.info.side_effect = RuntimeError("forced failure")
 
     await bus.publish("thing.created", {"id": 1, "name": "widget"})
-    await asyncio.sleep(0.3)  # covers the link's retries + backoff
+    # Poll for the DLQ event instead of sleeping through retries + backoff.
+    await wait_until(lambda: any(r.envelope.event == "_dlq.thing.created"
+                                 for r in bus.get_trace_history()))
 
     # _dlq.<event> is published inside the failing delivery's context, so it
     # appears as a child of the event that failed — same helper asserts it.
@@ -568,3 +571,8 @@ async def test_sad_path_dlq(bus):
   technical detail does NOT reach the client response.
 - Mark async tests with `@pytest.mark.anyio` (add an `anyio_backend`
   fixture returning `"asyncio"`).
+- **Never a fixed `asyncio.sleep()` to wait for async delivery** — it guesses
+  a duration and flakes under CI CPU contention. Poll the real condition with
+  `wait_until` from `tests.helpers.async_wait` (as in the flow-test template
+  above). The one exception is a negative check (asserting nothing arrives),
+  where a short fixed sleep is the only option.

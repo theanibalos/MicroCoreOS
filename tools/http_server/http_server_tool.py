@@ -268,6 +268,7 @@ class HttpServerTool(BaseTool):
         self._port: int = int(os.getenv("HTTP_PORT", 5000))
         self._server: Optional[uvicorn.Server] = None
         self._pending_endpoints: list[dict] = []
+        self._pre_mount_hooks: list[Callable] = []
         # Documentation-only security scheme: shows the "Authorize" button in
         # Swagger UI (/docs) and marks protected routes with a lock icon.
         # auto_error=False is critical — actual token validation still happens
@@ -335,6 +336,7 @@ class HttpServerTool(BaseTool):
         Endpoints are buffered (not registered immediately in add_endpoint) to allow
         FastAPI to sort static paths before parameterized paths, preventing routing conflicts.
         """
+        self._run_pre_mount_hooks()
         self._register_all_endpoints()
         host = os.getenv("HTTP_HOST", "127.0.0.1")
         log_level = os.getenv("HTTP_LOG_LEVEL", "warning")
@@ -387,8 +389,13 @@ class HttpServerTool(BaseTool):
                   await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
             - mount_static(path, directory_path): Serve static files from a directory.
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
-            - add_sse_endpoint(path, generator, tags=None, auth_validator=None): 
+            - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
                 Server-Sent Events. generator yields formatted strings: "data: {...}\\n\\n".
+            - register_pre_mount_hook(hook): hook(endpoints: list[dict]) is called once in
+                on_boot_complete(), before routes are mounted, with every buffered endpoint
+                (method, path, owner) — the first point where all plugins' add_endpoint()
+                calls are guaranteed to have run. Used for boot-time checks across ALL
+                registered routes (e.g. the architecture linter's route-collision scan).
         - HttpContext CAPABILITIES (inside handler):
             - context.set_status(code: int): Override HTTP status (default: 200).
             - context.redirect(url: str, status=302): Redirect to another URL.
@@ -428,6 +435,34 @@ class HttpServerTool(BaseTool):
             "auth_validator": auth_validator,
             "has_files": has_files,
         })
+
+    def register_pre_mount_hook(self, hook: Callable[[list[dict]], None]) -> None:
+        """
+        Registers a callback invoked once, in on_boot_complete(), with the full
+        list of buffered endpoints — the first point where every plugin's
+        add_endpoint() calls are guaranteed to have run (add_endpoint only
+        buffers; per-plugin on_boot() calls race each other, but they all
+        finish before any tool's on_boot_complete does).
+        Each endpoint dict has: method, path, owner (the registering plugin's
+        identity, or its handler's class name as a fallback).
+        Used by cross-cutting boot-time checks (e.g. the architecture linter's
+        route-collision scan) that need visibility into ALL endpoints, not
+        just the ones the calling plugin registered itself.
+        """
+        self._pre_mount_hooks.append(hook)
+
+    def _run_pre_mount_hooks(self) -> None:
+        if not self._pre_mount_hooks:
+            return
+        endpoints = []
+        for ep in self._pending_endpoints:
+            owner_obj = getattr(ep["handler"], "__self__", None)
+            owner = getattr(owner_obj, "_identity", None) or (
+                owner_obj.__class__.__name__ if owner_obj is not None else repr(ep["handler"])
+            )
+            endpoints.append({"method": ep["method"], "path": ep["path"], "owner": owner})
+        for hook in self._pre_mount_hooks:
+            hook(endpoints)
 
     def mount_static(self, path: str, directory_path: str) -> None:
         """Serves static files from a local directory."""

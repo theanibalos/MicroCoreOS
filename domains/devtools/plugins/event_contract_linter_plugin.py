@@ -20,6 +20,8 @@ class SystemLintData(BaseModel):
     arch_violations: list[str] = []
     drift_warnings: list[str] = []
     event_contract_violations: list[LintFinding] = []
+    route_collisions: list[str] = []
+    table_ownership_warnings: list[str] = []
 
 
 class SystemLintResponse(BaseModel):
@@ -407,6 +409,8 @@ class EventContractLinterPlugin(BasePlugin):
                 arch_violations=meta.get("arch_violations", []),
                 drift_warnings=meta.get("drift_warnings", []),
                 event_contract_violations=meta.get("event_contract_violations", []),
+                route_collisions=meta.get("route_collisions", []),
+                table_ownership_warnings=meta.get("table_ownership_warnings", []),
             )
             return {"success": True, "data": payload.model_dump()}
         except Exception as e:

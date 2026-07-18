@@ -370,6 +370,55 @@ def test_rule14_table_declared_nowhere():
     assert rule_hits(check(plan), 14)
 
 
+# ── Rule 15: checklist covers every declared task (advisory) ─────────────
+
+def check_with_checklist(plan_dict, checklist):
+    return PlanValidator(Plan(**plan_dict), LiveSnapshot(),
+                         checklist=checklist).validate()
+
+
+def test_rule15_full_coverage_is_silent():
+    checklist = "\n".join(f"- [ ] `{path}`" for path in [
+        "orders/001_create_orders.sql",
+        "domains/orders/models/order.py",
+        "domains/orders/plugins/create_order_plugin.py",
+        "tests/test_create_order.py",
+        "domains/orders/plugins/order_notifier_plugin.py",
+        "tests/test_order_notifier.py",
+        "tests/test_order_lifecycle_chain.py",
+        "tests/test_order_lifecycle_dlq.py",
+    ])
+    result = check_with_checklist(plan_copy(), checklist)
+    assert rule_hits(result, 15, "WARNING") == []
+
+
+def test_rule15_missing_task_warns_but_stays_valid():
+    checklist = "- [ ] `domains/orders/plugins/create_order_plugin.py`"
+    result = check_with_checklist(plan_copy(), checklist)
+    warnings = rule_hits(result, 15, "WARNING")
+    assert any("order_notifier_plugin.py" in w.detail for w in warnings)
+    assert result.valid  # advisory only — never invalidates the plan
+
+
+def test_rule15_basename_match_counts_as_covered():
+    # the checklist may use different path roots — basenames still match
+    checklist = "- [ ] Task P1: create_order_plugin.py and test_create_order.py"
+    result = check_with_checklist(plan_copy(), checklist)
+    flagged = [w.detail for w in rule_hits(result, 15, "WARNING")]
+    assert not any("create_order_plugin.py" in d or
+                   "'tests/test_create_order.py'" in d for d in flagged)
+
+
+def test_rule15_unrelated_checklist_is_skipped():
+    checklist = "- [ ] `domains/billing/plugins/invoice_plugin.py`"
+    result = check_with_checklist(plan_copy(), checklist)
+    assert rule_hits(result, 15, "WARNING") == []
+
+
+def test_rule15_no_checklist_is_skipped():
+    assert rule_hits(check(plan_copy()), 15, "WARNING") == []
+
+
 # ── Endpoint: input parsing and schema errors ────────────────────────────
 
 def make_plugin():
@@ -377,6 +426,7 @@ def make_plugin():
     container.registry.get_domain_metadata.return_value = {}
     plugin = PlanValidatorPlugin(container=container, http=MagicMock(), logger=MagicMock())
     plugin._live_snapshot = lambda: LiveSnapshot()
+    plugin._read_checklist = lambda: None  # hermetic: ignore the repo's real checklist
     return plugin
 
 
@@ -419,3 +469,19 @@ async def test_endpoint_rejects_missing_input():
     plugin = make_plugin()
     result = await plugin.validate_plan({})
     assert result["success"] is False
+
+
+@pytest.mark.anyio
+async def test_endpoint_reads_active_checklist(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plans").mkdir()
+    (tmp_path / "plans" / "active_plan.md").write_text(
+        "- [ ] `domains/orders/plugins/create_order_plugin.py`"
+    )
+    container = MagicMock()
+    container.registry.get_domain_metadata.return_value = {}
+    plugin = PlanValidatorPlugin(container=container, http=MagicMock(),
+                                 logger=MagicMock())
+    plugin._live_snapshot = lambda: LiveSnapshot()
+    result = await plugin.validate_plan({"plan": plan_copy()})
+    assert any(w["rule"] == 15 for w in result["data"]["warnings"])

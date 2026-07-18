@@ -20,6 +20,7 @@ These are the most frequent errors. Check these first before writing any code.
 | Expecting automatic Kernel retries | Handle your own exceptions or use Tool-level resilience | **ToolProxy NO LONGER retries automatically** to prevent duplicates |
 | `return {"success": False, "error": str(e)}` | `logger.error(e); return {"success": False, "error": "Generic Message"}` | `str(e)` leaks table names, paths, and internal logic |
 | `bus.publish("x.y", {"id": 1})` (raw dict) | Define `XyPayload(BaseModel)` and publish `XyPayload(id=1).model_dump()` | The publisher owns the event contract; raw dicts are flagged `UNTYPED_PAYLOAD` by `/system/lint` |
+| `await asyncio.sleep(0.1)` in a test, then asserting async delivery | `await wait_until(lambda: <condition>)` from `tests/helpers/async_wait.py` | A fixed sleep guesses a duration and flakes under CI CPU contention; polling passes as soon as delivery lands |
 
 ---
 
@@ -328,6 +329,26 @@ async def test_create_user_integration(test_env):
     assert len(users) == 1
     assert users[0]["name"] == "John Doe"
 ```
+
+### Waiting for Async Delivery (Events, Retries, DLQ)
+
+Never assert right after a fixed `await asyncio.sleep(...)`. A fixed sleep
+guesses how long delivery takes; under CI CPU contention the guess loses and
+the test flakes. Poll the real condition instead:
+
+```python
+from tests.helpers.async_wait import wait_until
+
+await bus.publish("user.created", payload)
+await wait_until(lambda: len(received) == 1)  # returns as soon as delivery lands
+```
+
+The one legitimate fixed sleep is a **negative check** (asserting that nothing
+arrives) — there is no condition to poll for, so a short fixed wait is correct
+there.
+
+For asserting a full event chain across domains (flow tests), use the chain
+helper in `tests/helpers/trace_chains.py`.
 
 ### 2. Isolated Unit Testing (For pure business logic / third-party mocks)
 If you only need to verify branch/flow logic or if you have complex external dependencies (e.g., third-party APIs):

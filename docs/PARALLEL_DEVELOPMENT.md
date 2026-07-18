@@ -43,7 +43,14 @@ in the plan** (`phase_0:` section, every table with its `columns`) and
 1. **Tools**, only if the plan requires new infrastructure. Tools are the one
    legitimate place for shared logic — if two features would need the same
    code, it is either duplicated (small) or promoted to a tool
-   (infrastructure).
+   (infrastructure). A NEW tool is written 1:1 from the plan's `contract:`
+   (method signatures + return shape) the same way migrations are written from
+   `columns:` — never inventing a method. The declaration is a handoff, not a
+   second source of truth: once the phase 0 boot regenerates `AI_CONTEXT.md`,
+   the tool's real interface is what the wave reads and the plan's `contract:`
+   has done its job. A REPLACEMENT tool declares no `contract:` — the reference
+   tool's header spec already is the contract (see
+   `.agent/workflows/new-tool.md`, case B).
 2. **Migrations** (`domains/{domain}/migrations/*.sql`) together with their
    **models** (`domains/{domain}/models/`), written 1:1 from the plan's
    `columns:` — never inventing a field. One author for the migrations
@@ -100,7 +107,15 @@ plan:
             created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     models:
       - domains/orders/models/order.py      # entity mirrors the columns above 1:1
-    tools: []                               # new infra tools, only if needed
+    tools:                                  # new infra tools, only if needed (usually [])
+      - name: payments                      # the DI injection key — the contract name
+        file: tools/payments/payments_tool.py
+        contract:                           # signatures + return shape ONLY — the phase 0 author
+                                            # writes the tool from this, never inventing a method
+                                            # (same rule as columns: for migrations)
+          - "await pay(user_id: int, amount: float, note: str) -> {success, charge_id}"
+          - "await refund(charge_id: str, order_id: int, note: str) -> {success}"
+        infra_errors: true                  # external backend -> connection-error class inherits ToolUnavailableError
 
   features:
     - plugin: CreateOrderPlugin
@@ -317,6 +332,14 @@ A plan is valid iff:
     domain (declared in `phase_0` or already present in
     `domains/{domain}/migrations/`). Cross-domain table access is forbidden —
     data crosses domains as events.
+15. Advisory: every task path the plan declares (feature `file:` + `test:`,
+    flow `e2e_test`/`sad_path_test`, phase 0 migrations/models/tools) appears
+    in the execution checklist (`plans/active_plan.md`). A task missing from
+    the checklist is never dispatched and never noticed — the checklist
+    reaches all-`[x]` with the feature silently absent. Matching is by path
+    or basename (no coupling to the checklist's format), and the whole check
+    skips itself when the on-disk checklist shares zero paths with the plan
+    being validated (it belongs to a different plan, e.g. a draft).
 
 These rules are executable, not aspirational: **`POST /system/plan/validate`**
 takes the plan (YAML or JSON) and returns `errors` (the plan is invalid) and

@@ -30,28 +30,6 @@ Generation now has an explicit spec to target instead of inferring what to test.
 
 ---
 
-**Issue 26 — 🟡 Route-collision linter**
-
-`add_endpoint` buffers endpoints without checking duplicates: two plugins
-registering the same `(method, path)` boot green, but Starlette routes to the
-first match and the second endpoint is silently unreachable. Missing: at
-`on_boot_complete`, warn listing both plugins for any duplicate route (same
-advisory pattern as the arch linter). ~15 lines; completes the namespace
-coverage described in `docs/PARALLEL_DEVELOPMENT.md`.
-
----
-
-**Issue 27 — 🟡 Table-ownership linter**
-
-Domain isolation is code-level; the DB table namespace is global. Two domains
-CREATE-ing the same table means the second `IF NOT EXISTS` silently no-ops and
-one of them runs against the wrong schema. Missing: scan `domains/*/migrations/*.sql`
-at boot, register table→domain ownership, warn on duplicate table declarations
-across domains. Pairs with the `tables:` ownership field of the formal plan
-format (`docs/PARALLEL_DEVELOPMENT.md`).
-
----
-
 **Issue 34 — 🟡 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12**
 
 The chaos extras cover boot-time failure; what's missing is **runtime** chaos
@@ -323,6 +301,43 @@ publish site's payload keys vs every subscriber's required keys, exposed at
   (helper `tests/helpers/trace_chains.py`). Four workflow levels in
   `.agent/workflows/`: feature-plan, new-domain, multi-domain-plan, new-tool.
 
+**Issue 26 — ✅ Route-collision linter (2026-07-17 session)**
+Implemented inside `ArchitectureLinterPlugin` (no new plugin). Timing was the
+real problem: plugins' `on_boot()` run concurrently (`asyncio.gather`), so a
+plugin-side check would race other plugins' `add_endpoint()` calls. Solution:
+a **generic** http-tool capability, `register_pre_mount_hook(hook)` — the tool
+invokes registered hooks once from its own `on_boot_complete()` (the first
+point where every plugin has definitely registered), passing the buffered
+endpoints as `{method, path, owner}` (owner = the `domain.ClassName` identity
+the Kernel stamps on every plugin). Duplicate `(method, path)` → warning
+listing both owners; registry metadata `route_collisions`; surfaced in
+`GET /system/lint`. Zero core changes. Runtime backstop for plan rule 1.
+
+**Issue 27 — ✅ Table-ownership linter (2026-07-17 session)**
+Also in `ArchitectureLinterPlugin`: scans `domains/*/migrations/*.sql` at
+boot, extracts `CREATE TABLE [IF NOT EXISTS]` names, warns when one table is
+declared by more than one domain (the second `IF NOT EXISTS` silently no-ops
+against the wrong schema). Registry metadata `table_ownership_warnings`;
+surfaced in `GET /system/lint`. Runtime backstop for plan rules 2/14 — it
+covers code written outside the plan workflow, which the plan validator
+cannot see.
+
+**Issue 35 — ✅ Plan `contract:` for phase-0 tools & checklist coverage (2026-07-17 session)**
+- **`contract:`** — a NEW tool in `phase_0.tools` now declares its method
+  signatures + return shapes in the plan, so the phase 0 author writes it
+  1:1 ("never inventing a method" — same rule as `columns:` for migrations).
+  It is a handoff, not a second source of truth: after the phase 0 boot,
+  `AI_CONTEXT.md` carries the real interface and is what the wave reads.
+  Replacements declare no contract (the reference tool's header spec is the
+  contract). Documented in `docs/PARALLEL_DEVELOPMENT.md` + `new-tool.md`.
+- **Validity rule 15 (advisory)** — `POST /system/plan/validate` now
+  cross-checks every task path the plan declares against the execution
+  checklist (`plans/active_plan.md`): a task missing from the checklist is
+  never dispatched and the checklist reaches all-`[x]` with the feature
+  silently absent. Path-or-basename matching, and the check skips itself for
+  checklists sharing zero paths with the plan (drafts). Zero new procedures —
+  it rides the validate call the orchestrator already makes.
+
 **Issue 32 — ✅ Plan format v3 (crash points, proofs) & mechanical plan validator (2026-07-12 session)**
 - **Format v3** (`docs/PARALLEL_DEVELOPMENT.md`): per-feature `db:` persistence
   contract (black-box contract = input + output + storage + events); per-flow
@@ -339,7 +354,7 @@ publish site's payload keys vs every subscriber's required keys, exposed at
   `assert_chain(tree, ["x", "_dlq.x"])` works with no new machinery.
 - **Validator**: `PlanValidatorPlugin` (devtools domain) —
   `POST /system/plan/validate` takes the plan (YAML or JSON) and executes all
-  14 validity rules against the plan AND the live system (routes via AST scan,
+  15 validity rules against the plan AND the live system (routes via AST scan,
   tables via migrations, events via registry metadata + bus subscribers,
   driver via env). ERRORS = invalid plan; WARNINGS = advisory (e.g. durable
   flow on `in_process`). "Mechanically checkable" became literal: the

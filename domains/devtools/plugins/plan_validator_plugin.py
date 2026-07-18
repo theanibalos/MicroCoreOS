@@ -1,5 +1,5 @@
 """
-POST /system/plan/validate — the executable form of the 14 plan validity
+POST /system/plan/validate — the executable form of the 15 plan validity
 rules in docs/PARALLEL_DEVELOPMENT.md ("Formal plan format").
 
 The orchestrator sends the formal plan (YAML or JSON) BEFORE dispatching any
@@ -218,9 +218,11 @@ def scan_live_tables(domains_dir: str = "domains") -> dict[str, str]:
 # ── The validator (pure — no I/O, fully testable) ──────────────────────────
 
 class PlanValidator:
-    def __init__(self, plan: Plan, live: LiveSnapshot):
+    def __init__(self, plan: Plan, live: LiveSnapshot,
+                 checklist: Optional[str] = None):
         self.plan = plan
         self.live = live
+        self.checklist = checklist
         self.errors: list[PlanViolation] = []
         self.warnings: list[PlanViolation] = []
         # event -> list of payload dicts declared by in-plan publishers
@@ -240,6 +242,7 @@ class PlanValidator:
         self._rules_9_12_sad_path_checklist()
         self._rule_13_durability_vs_driver()
         self._rule_14_db_contract_ownership()
+        self._rule_15_checklist_coverage()
         return ValidatePlanData(
             valid=not self.errors, errors=self.errors, warnings=self.warnings
         )
@@ -433,6 +436,44 @@ class PlanValidator:
                                 f"cross-domain table access is forbidden, "
                                 f"communicate via events")
 
+    # rule 15 — advisory: every task the plan declares appears in the execution
+    #           checklist. A task missing from the checklist is never dispatched
+    #           and never noticed: the checklist reaches all-[x] and the feature
+    #           silently does not exist.
+    def _rule_15_checklist_coverage(self):
+        if not self.checklist:
+            return
+        declared: list[tuple[str, str]] = []
+        for feature in self.plan.features:
+            declared.append((feature.plugin, feature.file))
+            if feature.test:
+                declared.append((feature.plugin, feature.test))
+        for flow in self.plan.flows:
+            for path in (flow.e2e_test, flow.sad_path_test):
+                if path:
+                    declared.append((flow.name, path))
+        for migration in self.plan.phase_0.migrations:
+            declared.append((migration.file, migration.file))
+        for path in self.plan.phase_0.models + self.plan.phase_0.tools:
+            declared.append((path, path))
+
+        def covered(path: str) -> bool:
+            # substring match, path or basename — no coupling to the
+            # checklist's markdown format or its choice of path roots
+            return path in self.checklist or os.path.basename(path) in self.checklist
+
+        # Auto-detect: a checklist sharing zero paths with this plan belongs to
+        # a different plan (e.g. validating a draft) — cross-checking it would
+        # be pure noise.
+        if not any(covered(path) for _, path in declared):
+            return
+        for where, path in declared:
+            if not covered(path):
+                self._warn(15, where,
+                           f"declared path '{path}' appears nowhere in the "
+                           f"execution checklist — the task would never be "
+                           f"dispatched")
+
     @staticmethod
     def _feature_domain(feature: PlanFeature) -> Optional[str]:
         parts = feature.file.split("/")
@@ -485,7 +526,8 @@ class PlanValidatorPlugin(BasePlugin):
                 return {"success": True,
                         "data": {"valid": False, "errors": schema_errors,
                                  "warnings": []}}
-            result = PlanValidator(plan, self._live_snapshot()).validate()
+            result = PlanValidator(plan, self._live_snapshot(),
+                                   checklist=self._read_checklist()).validate()
             return {"success": True, "data": result.model_dump()}
         except Exception as e:
             self.logger.error(f"[PlanValidator] Validation crashed: {e}")
@@ -507,6 +549,15 @@ class PlanValidatorPlugin(BasePlugin):
         if set(plan_dict.keys()) == {"plan"} and isinstance(plan_dict["plan"], dict):
             plan_dict = plan_dict["plan"]
         return plan_dict, None
+
+    CHECKLIST_PATH = "plans/active_plan.md"
+
+    def _read_checklist(self) -> Optional[str]:
+        try:
+            with open(self.CHECKLIST_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return None
 
     def _live_snapshot(self) -> LiveSnapshot:
         events: set[str] = set()

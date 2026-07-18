@@ -39,6 +39,10 @@ else about them exists so they can be swapped without touching a single plugin.
 
 The header spec + `get_interface_description()`. If this is case B, the
 contract already exists in the reference tool's header — read it, honor it.
+If the tool is phase 0 of a formal plan, the plan's `contract:` entry declares
+the signatures — honor it the way migrations honor `columns:`, never inventing
+a method. Keep the signatures backend-neutral: a payments contract that mirrors
+one provider's API makes the future swap cost what the abstraction saved.
 
 ### 2. Implement
 

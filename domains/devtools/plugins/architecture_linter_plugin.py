@@ -16,10 +16,11 @@ class ArchitectureLinterPlugin(BasePlugin):
     - Tool methods missing from get_interface_description() (anti-drift).
     """
 
-    def __init__(self, container, logger):
+    def __init__(self, container, logger, http):
         self.container = container
         self.registry = container.registry
         self.logger = logger
+        self.http = http
 
     async def on_boot(self):
         # 1. Domain Isolation Scan
@@ -39,6 +40,20 @@ class ArchitectureLinterPlugin(BasePlugin):
                 self.logger.warning(f"[ArchLinter] {w}")
         else:
             self.logger.info("[ArchLinter] Tool documentation verified. No drift found.")
+
+        # 3. Table Ownership Scan (Issue 27)
+        table_warnings = self._check_table_ownership()
+        if table_warnings:
+            self.registry.register_domain_metadata("devtools", "table_ownership_warnings", table_warnings)
+            for w in table_warnings:
+                self.logger.warning(f"[ArchLinter] {w}")
+        else:
+            self.logger.info("[ArchLinter] Table ownership verified. No duplicate declarations found.")
+
+        # 4. Route Collision Check (Issue 26) — deferred: add_endpoint only buffers
+        # endpoints, so this must run once every plugin has had a chance to
+        # register (http's on_boot_complete, after all plugin on_boot() calls).
+        self.http.register_pre_mount_hook(self._check_route_collisions)
 
     def _check_tool_drift(self) -> list[str]:
         warnings = []
@@ -131,3 +146,69 @@ class ArchitectureLinterPlugin(BasePlugin):
             target_domain = parts[1]
             return target_domain != current_domain
         return False
+
+    def _check_table_ownership(self) -> list[str]:
+        """
+        Scans domains/*/migrations/*.sql for CREATE TABLE statements and warns
+        when the same table name is declared by more than one domain — the DB
+        table namespace is global, so the second domain's IF NOT EXISTS silently
+        no-ops against the first domain's schema instead of creating its own.
+        """
+        table_owners: dict[str, set[str]] = {}
+        domains_dir = os.path.abspath("domains")
+        if not os.path.exists(domains_dir):
+            return []
+
+        for domain in sorted(os.listdir(domains_dir)):
+            migrations_dir = os.path.join(domains_dir, domain, "migrations")
+            if not os.path.isdir(migrations_dir):
+                continue
+            for filename in sorted(os.listdir(migrations_dir)):
+                if not filename.endswith(".sql"):
+                    continue
+                try:
+                    with open(os.path.join(migrations_dir, filename), "r", encoding="utf-8") as f:
+                        sql = f.read()
+                except Exception as e:
+                    self.logger.warning(f"[ArchLinter] Could not read {filename}: {e}")
+                    continue
+                for match in re.finditer(
+                    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?(\w+)[\"'`]?",
+                    sql, re.IGNORECASE,
+                ):
+                    table_owners.setdefault(match.group(1).lower(), set()).add(domain)
+
+        return [
+            f"Table '{table}' is declared by multiple domains: {', '.join(sorted(owners))} "
+            f"— the second CREATE TABLE IF NOT EXISTS silently no-ops."
+            for table, owners in table_owners.items()
+            if len(owners) > 1
+        ]
+
+    def _check_route_collisions(self, endpoints: list[dict]) -> None:
+        """
+        Groups the http tool's buffered endpoints by (method, path). Starlette
+        routes to the first match, so more than one plugin registering the same
+        route means every registration after the first is silently unreachable.
+        Called by the http tool as a pre-mount hook (see register_pre_mount_hook),
+        the first point where every plugin's add_endpoint() calls are guaranteed
+        to have run. Advisory only — never blocks boot.
+        """
+        owners_by_route: dict[tuple[str, str], set[str]] = {}
+        for ep in endpoints:
+            key = (ep["method"].upper(), ep["path"])
+            owners_by_route.setdefault(key, set()).add(ep["owner"])
+
+        collisions = [
+            f"Route collision: {method} {path} registered by {', '.join(sorted(owners))} "
+            f"— only the first match is reachable."
+            for (method, path), owners in owners_by_route.items()
+            if len(owners) > 1
+        ]
+
+        if collisions:
+            self.registry.register_domain_metadata("devtools", "route_collisions", collisions)
+            for c in collisions:
+                self.logger.warning(f"[ArchLinter] {c}")
+        else:
+            self.logger.info("[ArchLinter] No route collisions found.")

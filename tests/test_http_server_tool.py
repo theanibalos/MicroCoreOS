@@ -116,3 +116,36 @@ async def test_unhandled_exception_safety_intent(tool, client):
     assert resp.status_code == 500
     assert resp.json()["success"] is False
     assert "Internal server error" in resp.json()["error"]
+
+
+class _FakePlugin:
+    """Stand-in for a booted plugin: Kernel stamps `_identity` on real ones."""
+    def __init__(self, identity):
+        self._identity = identity
+
+    async def handler(self, data, context=None):
+        return {"success": True}
+
+
+def test_pre_mount_hook_receives_owner_per_endpoint(tool):
+    """
+    Issue 26 support: register_pre_mount_hook must be invoked once, before
+    mounting, with every buffered endpoint annotated with the registering
+    plugin's identity — this is what the architecture linter's
+    route-collision check consumes.
+    """
+    plugin_a = _FakePlugin("users.ProfilePlugin")
+    plugin_b = _FakePlugin("billing.AccountPlugin")
+
+    tool.add_endpoint("/users/me", "GET", plugin_a.handler)
+    tool.add_endpoint("/billing/invoice", "GET", plugin_b.handler)
+
+    received = []
+    tool.register_pre_mount_hook(received.append)
+    tool._run_pre_mount_hooks()
+
+    assert len(received) == 1
+    endpoints = received[0]
+    by_path = {ep["path"]: ep for ep in endpoints}
+    assert by_path["/users/me"]["owner"] == "users.ProfilePlugin"
+    assert by_path["/billing/invoice"]["owner"] == "billing.AccountPlugin"

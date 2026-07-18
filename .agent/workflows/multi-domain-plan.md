@@ -40,7 +40,7 @@ the sqlite/redis driver) and the sad-path checklist per link:
 - `rpc_links` (flow-level) — every `request()` call, with `timeout` and
   `on_timeout`
 
-Then run the 14 validity rules mechanically: `POST /system/plan/validate`
+Then run the 15 validity rules mechanically: `POST /system/plan/validate`
 with the plan (YAML or JSON) against the live system — zero `errors` before
 building anything. An invalid plan is a task-allocation error — fix the plan,
 never patch it in code.
@@ -48,7 +48,9 @@ never patch it in code.
 ## Phase 0 — Foundation (built FROM the plan; serial, one author)
 
 1. New **tools** only if the spec demands infrastructure that does not exist
-   → follow [new-tool.md](new-tool.md), parity suite included.
+   → follow [new-tool.md](new-tool.md), parity suite included. Written 1:1
+   from the plan's `contract:` (signatures + return shape), never inventing
+   a method — same rule as `columns:` for migrations.
 2. All **migrations** (`domains/*/migrations/*.sql`) with their **models**,
    written 1:1 from the plan's `columns:`, sequential numbering, `-- depends:`
    for cross-domain ordering.
