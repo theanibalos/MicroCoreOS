@@ -278,6 +278,12 @@ class HttpServerTool(BaseTool):
             auto_error=False,
             description="Paste the token as-is (JWT, no 'Bearer ' prefix — Swagger adds it).",
         )
+        # Chaos/ops pause (Issue 34): owner identities ("domain.Class", or a
+        # bare domain prefix) whose endpoints answer 503 without dispatching
+        # (routes stay mounted — the "service" is simply down for callers).
+        # Mirror of the event bus's set; mutated only by the chaos extras
+        # plugin via its sanctioned raw-tool introspection.
+        self._paused_owners: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -777,6 +783,15 @@ class HttpServerTool(BaseTool):
         )
 
         try:
+            # Chaos/ops pause (Issue 34): the paused owner's endpoints answer
+            # 503 before auth or dispatch — simulates the service being down.
+            if any(identity == p or identity.startswith(p + ".")
+                   for p in self._paused_owners):
+                return JSONResponse(
+                    status_code=503,
+                    content={"success": False, "error": "Service temporarily unavailable (paused)"},
+                )
+
             context = HttpContext()
 
             # ── Phase 3: Authentication ────────────────────────────────────────

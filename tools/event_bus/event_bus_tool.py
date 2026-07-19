@@ -235,6 +235,11 @@ class EventBusTool(BaseTool):
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._pending_tasks: Set[asyncio.Task] = set()
         self._sub_options: Dict[Tuple[str, Callable], SubOptions] = {}
+        # Chaos/ops pause (Issue 34): owner identities ("domain.Class", or a
+        # bare domain prefix) whose deliveries are held. Deliberately NOT
+        # public API (the contract is frozen — Issue 36): mutated only by the
+        # chaos extras plugin via its sanctioned raw-tool introspection.
+        self._paused_owners: Set[str] = set()
 
         # Bind the delivery hook (and OUR envelope class — see EventBusDriver.bind)
         self._driver.bind(self._deliver, EventEnvelope)
@@ -432,7 +437,19 @@ class EventBusTool(BaseTool):
 
     async def _do_deliver(self, envelope: EventEnvelope, callback: Callable):
         sub_name = self._get_name(callback)
-        
+
+        # Chaos/ops pause (Issue 34): hold the delivery while this
+        # subscriber's owner is paused — BEFORE the TTL check, so a message
+        # held past its TTL still expires honestly on resume. Drivers ack
+        # only after this task finishes, so a durable transport's reader
+        # stops claiming further messages: the backlog accumulates
+        # BROKER-side and drains on resume. (In-process: deliveries pile up
+        # as pending tasks in this process' memory — gone on a crash, like
+        # everything in-process.)
+        while any(sub_name == p or sub_name.startswith(p + ".")
+                  for p in self._paused_owners):
+            await asyncio.sleep(0.2)
+
         # Feature 1: TTL Check
         if envelope.ttl is not None:
             age = (datetime.now(timezone.utc) - envelope.timestamp).total_seconds()

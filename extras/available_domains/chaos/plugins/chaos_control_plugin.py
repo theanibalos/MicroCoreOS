@@ -13,21 +13,31 @@ plugin is for live experiments against a running system: "make the db 50%
 flaky for the billing plugin only, watch its real retries/DLQ react".
 MicroCoreBench drives it; any operator can.
 
-SEAM (single, deliberately narrow):
+SEAM (deliberately narrow):
 ────────────────────────────────────────────────────────────────────────────
-Zero changes to tools/event_bus/ or tools/http_server/ — nothing outside
-this file is touched. Everything here is built on the ALREADY-SANCTIONED
-meta-plugin introspection precedent (see ArchitectureLinterPlugin's
-container.get_raw_tools() for tool-drift scanning, ToolHealthPlugin's
-container.get() for proactive health checks): this plugin takes `container`
-and monkey-patches RAW tool methods (bypassing the ToolProxy at wrap time,
-but every call still traverses the ToolProxy at call time — see the
-DEVIATION note below), keeping the true originals for restore. The ROADMAP
-explicitly names wrapping as the preferred path and a first-class ToolProxy
-fault flag as only a fallback "if wrapping proves fragile" — it hasn't, so
-this plugin does ONLY wrapping.
+The TOOL-FAULT axes touch nothing outside this file: they are built on the
+ALREADY-SANCTIONED meta-plugin introspection precedent (see
+ArchitectureLinterPlugin's container.get_raw_tools() for tool-drift
+scanning, ToolHealthPlugin's container.get() for proactive health checks):
+this plugin takes `container` and monkey-patches RAW tool methods (bypassing
+the ToolProxy at wrap time, but every call still traverses the ToolProxy at
+call time — see the DEVIATION note below), keeping the true originals for
+restore. The ROADMAP explicitly names wrapping as the preferred path and a
+first-class ToolProxy fault flag as only a fallback "if wrapping proves
+fragile" — it hasn't, so this plugin does ONLY wrapping.
 
-Two independent axes of fault, composed on the SAME wrapping mechanism:
+The PLUGIN-PAUSE axis is different by design (ROADMAP: "the paused set is a
+Bus feature, the 503s are an http-tool feature"): the bus and http tools own
+a private `_paused_owners` set each — the bus HOLDS a paused owner's
+deliveries before ack (durable transports stop claiming → backlog
+accumulates broker-side and drains on resume; in-process piles up in memory,
+honest ephemerality), the http tool answers 503 for the paused owner's
+endpoints without unmounting routes. This plugin only MUTATES those two sets
+(same raw-tool introspection depth as the wrapper machinery) via
+POST /system/chaos/off {plugin} and /system/chaos/on {plugin}. Neither set
+is public API — the Bus contract stays frozen (Issue 36).
+
+Fault axes, composed on the SAME wrapping mechanism:
 
 1. GLOBAL tool fault — POST /system/chaos/tool {name, mode}
    mode: down (every call raises) | slow (injected asyncio.sleep, then a
@@ -156,9 +166,25 @@ class LatencyResponse(BaseModel):
     error: Optional[str] = None
 
 
+class PluginPauseRequest(BaseModel):
+    plugin: str = Field(min_length=1, description="Owner identity '<domain>.<ClassName>' — a bare domain prefix pauses the whole domain.")
+
+
+class PluginPauseData(BaseModel):
+    plugin: str
+    paused: bool
+
+
+class PluginPauseResponse(BaseModel):
+    success: bool
+    data: Optional[PluginPauseData] = None
+    error: Optional[str] = None
+
+
 class ResetData(BaseModel):
     cleared: int
     restored_tools: list[str]
+    resumed_plugins: list[str] = Field(default_factory=list)
 
 
 class ResetResponse(BaseModel):
@@ -179,6 +205,7 @@ class FaultSpecView(BaseModel):
 class ChaosStateData(BaseModel):
     faults: list[FaultSpecView]
     wrapped_tools: list[str]
+    paused_plugins: list[str] = Field(default_factory=list)
 
 
 class ChaosStateResponse(BaseModel):
@@ -208,6 +235,14 @@ class ChaosLatencyArmedPayload(BaseModel):
 
 class ChaosResetPayload(BaseModel):
     cleared: int
+
+
+class ChaosPluginPausedPayload(BaseModel):
+    plugin: str
+
+
+class ChaosPluginResumedPayload(BaseModel):
+    plugin: str
 
 
 class ChaosToolFaultError(RuntimeError):
@@ -292,6 +327,14 @@ class ChaosControlPlugin(BasePlugin):
         self.http.add_endpoint(
             "/system/chaos/latency", "POST", self.set_latency,
             tags=["Chaos"], request_model=LatencyRequest, response_model=LatencyResponse,
+        )
+        self.http.add_endpoint(
+            "/system/chaos/off", "POST", self.pause_plugin,
+            tags=["Chaos"], request_model=PluginPauseRequest, response_model=PluginPauseResponse,
+        )
+        self.http.add_endpoint(
+            "/system/chaos/on", "POST", self.resume_plugin,
+            tags=["Chaos"], request_model=PluginPauseRequest, response_model=PluginPauseResponse,
         )
         self.http.add_endpoint(
             "/system/chaos/reset", "POST", self.reset,
@@ -406,6 +449,54 @@ class ChaosControlPlugin(BasePlugin):
             self.logger.error(f"[ChaosControl] set_latency failed: {e}")
             return {"success": False, "error": "Could not set latency fault"}
 
+    # ── POST /system/chaos/off | /system/chaos/on (plugin pause) ────────────
+
+    def _paused_sets(self) -> list[set]:
+        """The bus's and http tool's paused-owner sets (raw-tool access, same
+        sanctioned introspection depth as the wrapper machinery). Falls back
+        to the injected instances so the plugin also works when those tools
+        are wired directly (tests, partial containers)."""
+        candidates = [self._find_raw_tool("event_bus"), self._find_raw_tool("http"),
+                      self.bus, self.http]
+        sets, seen = [], set()
+        for obj in candidates:
+            s = getattr(obj, "_paused_owners", None)
+            if isinstance(s, set) and id(s) not in seen:
+                seen.add(id(s))
+                sets.append(s)
+        return sets
+
+    async def pause_plugin(self, data: dict, context=None):
+        """POST /system/chaos/off — hold the owner's bus deliveries (durable
+        backlog accumulates, drains on resume) and 503 its HTTP endpoints."""
+        try:
+            req = PluginPauseRequest(**data)
+            for s in self._paused_sets():
+                s.add(req.plugin)
+            await self.bus.publish(
+                "system.chaos.plugin_paused",
+                ChaosPluginPausedPayload(plugin=req.plugin).model_dump(),
+            )
+            return {"success": True, "data": PluginPauseData(plugin=req.plugin, paused=True).model_dump()}
+        except Exception as e:
+            self.logger.error(f"[ChaosControl] pause_plugin failed: {e}")
+            return {"success": False, "error": "Could not pause plugin"}
+
+    async def resume_plugin(self, data: dict, context=None):
+        """POST /system/chaos/on — undo pause_plugin; the held backlog drains."""
+        try:
+            req = PluginPauseRequest(**data)
+            for s in self._paused_sets():
+                s.discard(req.plugin)
+            await self.bus.publish(
+                "system.chaos.plugin_resumed",
+                ChaosPluginResumedPayload(plugin=req.plugin).model_dump(),
+            )
+            return {"success": True, "data": PluginPauseData(plugin=req.plugin, paused=False).model_dump()}
+        except Exception as e:
+            self.logger.error(f"[ChaosControl] resume_plugin failed: {e}")
+            return {"success": False, "error": "Could not resume plugin"}
+
     # ── POST /system/chaos/reset ────────────────────────────────────────────
 
     async def reset(self, data: dict, context=None):
@@ -417,8 +508,13 @@ class ChaosControlPlugin(BasePlugin):
                 raw_tool = self._find_raw_tool(tool_name)
                 if raw_tool is not None:
                     self._restore_tool(tool_name, raw_tool)
+            resumed = sorted({p for s in self._paused_sets() for p in s})
+            for s in self._paused_sets():
+                s.clear()
             await self.bus.publish("system.chaos.reset", ChaosResetPayload(cleared=cleared).model_dump())
-            return {"success": True, "data": ResetData(cleared=cleared, restored_tools=restored).model_dump()}
+            return {"success": True, "data": ResetData(
+                cleared=cleared, restored_tools=restored, resumed_plugins=resumed,
+            ).model_dump()}
         except Exception as e:
             self.logger.error(f"[ChaosControl] reset failed: {e}")
             return {"success": False, "error": "Could not reset chaos state"}
@@ -430,6 +526,7 @@ class ChaosControlPlugin(BasePlugin):
             out = ChaosStateData(
                 faults=[s.to_view() for s in self._specs],
                 wrapped_tools=sorted(self._tool_originals.keys()),
+                paused_plugins=sorted({p for s in self._paused_sets() for p in s}),
             )
             return {"success": True, "data": out.model_dump()}
         except Exception as e:

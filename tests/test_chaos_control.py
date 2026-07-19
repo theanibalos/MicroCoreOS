@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from unittest.mock import AsyncMock, MagicMock
 
 from core.base_tool import BaseTool
+from tests.helpers.async_wait import wait_until
 from core.container import Container
 from tools.event_bus.event_bus_tool import EventBusTool
 from tools.http_server.http_server_tool import HttpServerTool
@@ -322,3 +323,126 @@ async def test_full_http_roundtrip(container):
 
         result = await proxy.record("restored")
         assert result == {"ok": True, "who": "restored"}
+
+
+# ── plugin pause/resume (Issue 34, second half) ─────────────────────────────
+
+
+class _Victim:
+    """Stands in for a kernel-loaded plugin: carries the stamped _identity the
+    bus and http tools derive owner names from."""
+
+    def __init__(self):
+        self._identity = "shop.VictimPlugin"
+        self.seen: list = []
+
+    async def on_evt(self, env):
+        self.seen.append(env.payload)
+
+    async def handle(self, data: dict, context=None):
+        return {"success": True}
+
+
+async def test_pause_holds_delivery_resume_drains(container, bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+    victim = _Victim()
+    await bus.subscribe("orders.created", victim.on_evt)
+
+    resp = await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
+    assert resp["success"] is True
+
+    await bus.publish("orders.created", {"n": 1})
+    await asyncio.sleep(0.4)
+    assert victim.seen == []          # held, not delivered
+
+    resp = await chaos.resume_plugin({"plugin": "shop.VictimPlugin"})
+    assert resp["success"] is True
+    await wait_until(lambda: victim.seen == [{"n": 1}])
+
+
+async def test_pause_accumulates_durable_backlog_and_drains(container, tmp_path, monkeypatch):
+    """The ROADMAP experiment: pause under traffic → durable backlog
+    accumulates (rows stay unacked); resume → it drains in order."""
+    import sqlite3 as _sqlite3
+    from tools.event_bus.sqlite_driver import SQLiteDriver
+
+    queue_path = tmp_path / "chaos_queue.db"
+    monkeypatch.setenv("EVENT_BUS_SQLITE_PATH", str(queue_path))
+    bus = EventBusTool(driver=SQLiteDriver())
+    await bus.setup()
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+    victim = _Victim()
+    try:
+        await bus.subscribe("orders.created", victim.on_evt)
+        await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
+
+        for n in range(3):
+            await bus.publish("orders.created", {"n": n})
+        await asyncio.sleep(0.5)
+        assert victim.seen == []
+        rows = _sqlite3.connect(queue_path).execute(
+            "SELECT COUNT(*) FROM deliveries").fetchone()[0]
+        assert rows == 3              # nothing acked: the backlog is ON DISK
+
+        await chaos.resume_plugin({"plugin": "shop.VictimPlugin"})
+        await wait_until(lambda: victim.seen == [{"n": 0}, {"n": 1}, {"n": 2}], timeout=5)
+
+        def _drained():
+            return _sqlite3.connect(queue_path).execute(
+                "SELECT COUNT(*) FROM deliveries").fetchone()[0] == 0
+        await wait_until(_drained, timeout=5)
+    finally:
+        await bus.shutdown()
+
+
+async def test_paused_plugin_http_returns_503(container, bus):
+    http = HttpServerTool()
+    chaos = ChaosControlPlugin(http=http, event_bus=bus, container=container, logger=MagicMock())
+    await chaos.on_boot()
+    victim = _Victim()
+    http.add_endpoint("/victim", "GET", victim.handle, tags=["Test"])
+    http._register_all_endpoints()
+
+    async with AsyncClient(transport=ASGITransport(app=http.app), base_url="http://test") as client:
+        assert (await client.get("/victim")).status_code == 200
+
+        resp = await client.post("/system/chaos/off", json={"plugin": "shop.VictimPlugin"})
+        assert resp.json()["success"] is True
+        r = await client.get("/victim")
+        assert r.status_code == 503   # routes stay mounted, service is "down"
+
+        # The chaos endpoints themselves are NOT paused — control stays up.
+        state = await client.get("/system/chaos")
+        assert state.status_code == 200
+        assert state.json()["data"]["paused_plugins"] == ["shop.VictimPlugin"]
+
+        resp = await client.post("/system/chaos/on", json={"plugin": "shop.VictimPlugin"})
+        assert resp.json()["success"] is True
+        assert (await client.get("/victim")).status_code == 200
+
+
+async def test_reset_also_resumes_paused_plugins(container, bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+    victim = _Victim()
+    await bus.subscribe("orders.created", victim.on_evt)
+    await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
+
+    resp = await chaos.reset({})
+    assert resp["data"]["resumed_plugins"] == ["shop.VictimPlugin"]
+
+    await bus.publish("orders.created", {"n": 1})
+    await wait_until(lambda: victim.seen == [{"n": 1}])
+
+
+async def test_domain_prefix_pauses_every_plugin_in_domain(container, bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+    victim = _Victim()
+    await bus.subscribe("orders.created", victim.on_evt)
+
+    await chaos.pause_plugin({"plugin": "shop"})   # bare domain prefix
+    await bus.publish("orders.created", {"n": 1})
+    await asyncio.sleep(0.4)
+    assert victim.seen == []
+
+    await chaos.resume_plugin({"plugin": "shop"})
+    await wait_until(lambda: victim.seen == [{"n": 1}])

@@ -30,7 +30,21 @@ Generation now has an explicit spec to target instead of inferring what to test.
 
 ---
 
-**Issue 34 — 🟡 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12**
+**Issue 34 — 🟢 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12, shipped 2026-07-19**
+
+✅ **Shipped complete** (`extras/available_domains/chaos/plugins/chaos_control_plugin.py`,
+suite `tests/test_chaos_control.py`): tool faults (`down`/`slow`/`flaky`,
+global and caller-scoped, via raw-method wrapping — zero core changes) AND
+plugin pause/resume (`POST /system/chaos/off|on {plugin}`; a bare domain
+prefix pauses the whole domain). Pause mechanics as designed: private
+`_paused_owners` sets in the bus and http tools (NOT public API — the Issue
+36 freeze holds), mutated only by the chaos plugin. One documented deviation
+from the letter below: in_process deliveries are HELD (accumulate as pending
+tasks, drain on resume) rather than dropped — uniform "backlog drains"
+semantics on every rung; ephemerality is preserved at crash level. Durable
+transports hold BEFORE ack, so the backlog accumulates broker-side (proven:
+sqlite rows stay on disk while paused, drain in order on resume). Paused
+owners' HTTP endpoints answer 503 with routes still mounted. Original design:
 
 The chaos extras cover boot-time failure; what's missing is **runtime** chaos
 for live experiments (MicroCoreBench drives it, but any operator can). Two
