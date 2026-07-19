@@ -78,14 +78,19 @@ Universal Event Bus (event_bus):
         DEAD-LETTER QUEUE (DLQ):
         - Final failures are published to '_dlq.<original_event>'.
         - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
-        - Loop protection: '_dlq.*', '_reply.*', and wildcard events are never dead-lettered.
+        - Loop protection: '_dlq.*' and '_reply.*' events are never dead-lettered.
         - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
 
         UNIVERSAL CAPABILITIES (kwargs):
-        - key: String. For strict ordering (Kafka/SQS).
+        - key: String. Strict ordering PER KEY. Without a key, do NOT assume
+          cross-event ordering: it varies by transport (total in-process,
+          partition-dependent on Kafka).
         - priority: Integer (1-10). Importance (RabbitMQ).
-        - delay: Integer (seconds). Delivery schedule.
-        - ttl: Float (seconds). Message expiration hint.
+        - delay: Integer (seconds). Delivery schedule. Crash-safe only when
+          the active transport claims delay=native (see ACTIVE TRANSPORT
+          in the live manifest).
+        - ttl: Float (seconds). Message expiration hint. Counted from PUBLISH
+          time and therefore INCLUDES any delay.
         - correlation_id: String. Cross-reference for RPC.
 
         RESILIENCE:

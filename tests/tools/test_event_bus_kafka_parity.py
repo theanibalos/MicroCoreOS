@@ -1,26 +1,26 @@
 """
-RabbitMQ transport — broker parity suite (Issue 22).
+Kafka transport — broker parity suite (Issue 22).
 
 Every EventBusDriver must pass the EXACT same suite as the in-process
 reference. This module re-runs `test_event_bus_broker_parity`'s test bodies
-against a RabbitMQDriver-backed bus, proving the RabbitMQ extra honours the
+against a KafkaDriver-backed bus, proving the Kafka extra honours the
 contract (retries, DLQ, RPC, TTL, poisoned-handler escalation, backoff).
 
 Skips itself if no broker is reachable:
-    docker run -d --rm --name rmq -p 5672:5672 rabbitmq:3.13-alpine
+    docker compose -f dev_infra/docker-compose.yml up -d kafka
 """
 
 import uuid
 import pytest
 
 from tools.event_bus.event_bus_tool import EventBusTool
-from extras.available_tools.rabbitmq.rabbitmq_driver import (
-    RabbitMQDriver,
+from extras.available_tools.kafka.kafka_driver import (
+    KafkaDriver,
     EventBusConnectionError,
 )
 
 # Re-use the canonical parity assertions verbatim — importing the test
-# functions registers them in THIS module, bound to the rabbitmq `bus` fixture
+# functions registers them in THIS module, bound to the kafka `bus` fixture
 # below. If a new parity test is added upstream, it is covered here for free.
 from tests.tools.test_event_bus_broker_parity import (  # noqa: F401
     test_ttl_expired,
@@ -46,13 +46,14 @@ def anyio_backend():
 
 
 async def test_delayed_survives_publisher_death(bus):
-    """The native-delay claim: a delayed message sits in a broker-side TTL
-    queue, so the publisher dying mid-delay does not lose it. (The in_bus
-    fallback would: the sleeping publish task dies with the process.)"""
+    """The native-delay claim: a delayed envelope is KAFKA-persisted, so the
+    publisher dying mid-delay does not lose it — a surviving replica's
+    scheduler promotes it when due. (The in_bus fallback would lose it: the
+    sleeping publish task dies with the process.)"""
     import asyncio
     from tests.helpers.async_wait import wait_until
 
-    survivor = EventBusTool(driver=RabbitMQDriver())
+    survivor = EventBusTool(driver=KafkaDriver())
     await survivor.setup()
     try:
         received = []
@@ -64,23 +65,25 @@ async def test_delayed_survives_publisher_death(bus):
         await bus.publish("jobs.due", {"job": 1}, delay=1)
         await asyncio.sleep(0.2)   # parked broker-side, not yet due
         await bus.shutdown()       # publisher "dies" with the delay pending
-        await wait_until(lambda: received == [{"job": 1}], timeout=10)
+        await wait_until(lambda: received == [{"job": 1}], timeout=20)
     finally:
         await survivor.shutdown()
 
 
 @pytest.fixture
 async def bus(monkeypatch):
-    # A unique exchange per test keeps durable group queues from leaking state
-    # between tests (queue names are derived as "{exchange}.{group}").
-    monkeypatch.setenv("RABBITMQ_BUS_EXCHANGE", f"bus_test_{uuid.uuid4().hex[:12]}")
-    b = EventBusTool(driver=RabbitMQDriver())
+    # A unique topic prefix per test keeps durable group offsets from leaking
+    # state between tests (topics AND group ids carry the prefix).
+    monkeypatch.setenv("KAFKA_BUS_TOPIC_PREFIX", f"bus_test_{uuid.uuid4().hex[:12]}.")
+    # Single partition: parity tests assert on delivery order across events.
+    monkeypatch.setenv("KAFKA_BUS_PARTITIONS", "1")
+    b = EventBusTool(driver=KafkaDriver())
     try:
         await b.setup()
     except EventBusConnectionError:
         pytest.skip(
-            "RabbitMQ not available — "
-            "docker run -d --rm -p 5672:5672 rabbitmq:3.13-alpine"
+            "Kafka not available — "
+            "docker compose -f dev_infra/docker-compose.yml up -d kafka"
         )
     yield b
     await b.shutdown()

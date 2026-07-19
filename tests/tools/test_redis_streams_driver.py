@@ -143,22 +143,6 @@ async def test_broadcast_flag_reaches_all_replicas(two_buses):
     assert sink_b == [1]
 
 
-async def test_wildcard_across_instances(two_buses):
-    """'*' subscribers consume the firehose stream, regardless of who published."""
-    bus_a, bus_b = two_buses
-    seen = []
-
-    async def auditor(env):
-        seen.append(env.event)
-
-    await bus_a.subscribe("*", auditor)
-    await bus_b.publish("orders.created", {"id": 1})
-    await bus_b.publish("orders.paid", {"id": 1})
-    await asyncio.sleep(0.3)
-
-    assert sorted(seen) == ["orders.created", "orders.paid"]
-
-
 async def test_driver_selected_by_env_var(monkeypatch):
     """EVENT_BUS_DRIVER=redis_streams swaps the transport with zero code changes."""
     monkeypatch.setenv("EVENT_BUS_DRIVER", "redis_streams")
@@ -194,3 +178,23 @@ async def test_driver_discovery_is_generic_drop_in(monkeypatch):
         assert type(EventBusTool()._driver).__name__ == "DummyDriver"
     finally:
         os.remove(dummy_file)
+
+
+async def test_delayed_survives_publisher_death(two_buses):
+    """The native-delay claim (Issue 30): a delayed envelope is parked in
+    Redis (bus:__delayed__), so the publisher dying mid-delay does not lose
+    it — the surviving replica's promoter fires it when due. (The in_bus
+    fallback would lose it: the sleeping publish task dies with the process.)"""
+    from tests.helpers.async_wait import wait_until
+
+    bus_a, bus_b = two_buses
+    received = []
+
+    async def on_due(env):
+        received.append(env.payload)
+
+    await bus_b.subscribe("jobs.due", on_due)
+    await bus_a.publish("jobs.due", {"job": 1}, delay=1)
+    await asyncio.sleep(0.2)   # parked in Redis, not yet due
+    await bus_a.shutdown()     # publisher "dies" with the delay pending
+    await wait_until(lambda: received == [{"job": 1}], timeout=10)

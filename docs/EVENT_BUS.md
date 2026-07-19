@@ -100,7 +100,7 @@ await self.bus.unsubscribe("order.placed", self.on_order_placed)
 result = await self.bus.request("user.validate", {"email": "a@b.com"}, timeout=5)
 ```
 
-Waits for the first non-wildcard subscriber to return a non-`None` dict. Raises `asyncio.TimeoutError` if no response arrives within the timeout.
+Waits for the first subscriber to return a non-`None` dict. Raises `asyncio.TimeoutError` if no response arrives within the timeout.
 
 > **Warning**: `request()` reintroduces coupling. Use only when a response is strictly required.
 
@@ -164,7 +164,7 @@ Used by: `EventDeliveryMonitorPlugin` to publish `event.delivery.failed`.
 When a delivery exhausts all retries, the bus automatically publishes a failure event to `_dlq.<original_event>`.
 
 - **Payload**: Includes the original envelope, subscriber identity, error message, and attempt count.
-- **Loop Protection**: Wildcards and `_dlq.*` events are never dead-lettered.
+- **Loop Protection**: `_dlq.*` and `_reply.*` events are never dead-lettered.
 - **Global Switch**: Controlled by `EVENT_BUS_DLQ_ENABLED=true` env var.
 
 ### Auto-unsubscribe after 5 consecutive FINAL failures
@@ -209,19 +209,33 @@ The `EventBusTool` decouples the brain (logic, tracing) from the transport via t
 |---|---|---|
 | `InProcessDriver` | Built-in | Default. Fast, local memory. Simulates groups and delays. |
 | `RedisStreamsDriver` | Built-in | Distributed transport across replicas. Activate with `EVENT_BUS_DRIVER=redis_streams`. |
-| `RabbitMQDriver` | Not included | Would add AMQP support. Implement `EventBusDriver` interface. |
-| `KafkaDriver` | Not included | Would add streaming and replayability. Implement `EventBusDriver` interface. |
+| `SQLiteDriver` | Built-in | Durable local queue without a broker. Activate with `EVENT_BUS_DRIVER=sqlite`. |
+| `RabbitMQDriver` | Extra | AMQP transport. Ships in `extras/available_tools/rabbitmq/` — drop into `tools/event_bus/` and set `EVENT_BUS_DRIVER=rabbitmq`. |
+| `KafkaDriver` | Extra | Kafka transport (partition-key ordering, consumer groups). Ships in `extras/available_tools/kafka/` — drop into `tools/event_bus/` and set `EVENT_BUS_DRIVER=kafka`. |
 
 ### RedisStreamsDriver (distributed mode)
 
 Set `EVENT_BUS_DRIVER=redis_streams` (plus the `REDIS_*` env vars if Redis is not on localhost) and start N replicas pointing at the same Redis — zero code changes:
 
-- Each event maps to a capped stream (`bus:user.created`), plus a firehose stream (`bus:*`) that powers wildcard subscribers.
+- Each event maps to a capped stream (`bus:user.created`).
 - `subscribe(..., group="workers")` becomes a real Redis consumer group: each message is delivered to exactly **one** consumer across the whole fleet (the Issue 19 scheduler pattern).
 - Without `group=`, every subscriber in every replica receives every event (broadcast), matching in-process semantics.
 - Retries, backoff, DLQ, RPC and tracing keep working untouched — they live in the Bus, not the transport.
 
 To use a custom driver, instantiate `EventBusTool(driver=MyDriver())` and register it. Plugins remain 100% unaffected because they only interact with `EventBusTool`'s public API. Every driver MUST pass the parity suite (`tests/tools/test_event_bus_broker_parity.py`), which runs parametrized over all built-in transports.
+
+### Capability claims (Issue 30)
+
+Each driver declares how it implements Bus semantics via `capabilities`:
+
+```python
+capabilities = {"delay": "native", "retries": "in_bus", "dlq": "in_bus"}
+```
+
+- `native` — the broker persists it: **crash-safe**. All durable/distributed drivers (SQLite, Redis Streams, RabbitMQ, Kafka) claim `delay: native`: a delayed event is parked broker-side immediately, so the publisher dying mid-delay does not lose it.
+- `in_bus` — the Bus runs the universal software fallback in this process' memory. This is the default (and all `InProcessDriver` has). `retries`/`dlq` are `in_bus` everywhere by design — they are already crash-safe because drivers ack only after the handler and its retries finish.
+
+The active driver and its claims appear in the SYSTEM MANIFEST (`get_interface_description()`'s `ACTIVE TRANSPORT` line), so plugin authors can see whether `delay=` is crash-safe on the mounted transport.
 
 ---
 
@@ -249,3 +263,12 @@ email.sent  /  payment.processed  /  user.created
 ```
 
 **`event.delivery.failed` loop protection**: `EventDeliveryMonitorPlugin` explicitly suppresses re-publishing when the failing event was itself `event.delivery.failed`.
+
+### Why there is no wildcard subscription
+
+`subscribe("*")` was removed on purpose (2026-07-19). System-wide observation has two proper homes, neither of which needs the bus to fan out every event twice:
+
+- **In-process (monolith)**: `add_listener()` / `add_failure_listener()` — publish-side sinks with zero transport cost. This is how the event stream viewer, traces stream and delivery monitor already work.
+- **Distributed (audit/event-store)**: the broker's own tooling — an external consumer reading the topics/streams directly (e.g. Kafka Connect), without going through the Bus at all.
+
+Removing it also removed the firehose double-write every distributed driver paid on every publish.

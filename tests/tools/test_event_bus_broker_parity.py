@@ -140,20 +140,23 @@ async def test_backoff_progression(bus):
         raise ValueError("Fail")
 
     recorded_sleeps = []
-    original_sleep = asyncio.sleep
 
-    async def mock_sleep(delay):
-        if delay == 0.1: # From test
-            await original_sleep(delay)
-        else:
+    class _AsyncioRecorder:
+        """asyncio stand-in for event_bus_tool's namespace ONLY: records the
+        retry-loop sleeps without sleeping. Patching asyncio.sleep itself
+        would mutate the SHARED asyncio module and leak into drivers and
+        their client libraries (e.g. Kafka group heartbeats sleep too)."""
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        @staticmethod
+        async def sleep(delay):
             recorded_sleeps.append(delay)
 
-    with patch("tools.event_bus.event_bus_tool.asyncio.sleep", side_effect=mock_sleep):
+    with patch("tools.event_bus.event_bus_tool.asyncio", _AsyncioRecorder()):
         await bus.subscribe("test.backoff", always_fail, retries=3, backoff=0.5)
         await bus.publish("test.backoff", {"msg": "backoff"})
-        # asyncio.sleep is patched module-wide above, so poll with the
-        # captured real sleep — the default would call the mock too.
-        await wait_until(lambda: len(recorded_sleeps) >= 3, sleep=original_sleep)
+        await wait_until(lambda: len(recorded_sleeps) >= 3)
 
         # Expected sleeps: 0.5 * 2^0 = 0.5, 0.5 * 2^1 = 1.0, 0.5 * 2^2 = 2.0
         assert recorded_sleeps == [0.5, 1.0, 2.0]
@@ -235,8 +238,56 @@ async def test_poisoned_escalation(bus):
 async def test_rpc_unaffected(bus):
     async def handler(env):
         return {"res": "pong"}
-    
+
     await bus.subscribe("ping", handler, retries=1)
-    
+
     res = await bus.request("ping", {"msg": "ping"})
     assert res == {"res": "pong"}
+
+async def test_delayed_delivery(bus):
+    """delay=n holds delivery for ~n seconds — never early, always eventually.
+
+    The UPPER bound is contractual too: it catches a driver that sleeps the
+    delay itself while leaving the default in_bus claim (the Bus would sleep
+    AGAIN — a double-delay bug the lower bound alone would never see)."""
+    handler = AsyncMock()
+    await bus.subscribe("test.delayed", handler)
+
+    start = asyncio.get_running_loop().time()
+    await bus.publish("test.delayed", {"msg": "later"}, delay=2)
+
+    await asyncio.sleep(0.8)
+    handler.assert_not_called()  # parked (broker-side or Bus fallback), not early
+
+    await wait_until(lambda: handler.called, timeout=10)
+    elapsed = asyncio.get_running_loop().time() - start
+    assert 1.9 <= elapsed < 3.5, f"delay=2 delivered at {elapsed:.2f}s"
+
+async def test_capabilities_declared(bus):
+    """Issue 30: every driver claims its semantics, and the manifest shows them."""
+    caps = bus._driver.capabilities
+    assert set(caps) >= {"delay", "retries", "dlq"}
+    assert all(v in ("native", "in_bus") for v in caps.values())
+
+    desc = bus.get_interface_description()
+    assert bus._driver.__class__.__name__ in desc  # ACTIVE TRANSPORT line
+
+def test_public_contract_frozen():
+    """The Bus semantic contract is CLOSED (Issue 36 admission rule).
+
+    A new public method here means a new universal semantic that EVERY driver
+    must honor forever. That is a ROADMAP decision, not a code change: new
+    capabilities enter as plugin-layer compositions or driver capability
+    claims. If you consciously extend the contract, update this set in the
+    same commit as the ROADMAP issue that justifies it."""
+    public = {n for n in dir(EventBusTool) if not n.startswith("_")}
+    assert public == {
+        # BaseTool lifecycle
+        "name", "setup", "get_interface_description", "on_boot_complete",
+        "on_instrument", "shutdown",
+        # The Bus semantic contract
+        "subscribe", "unsubscribe", "publish", "request",
+        # Observability
+        "get_trace_history", "get_subscribers", "add_listener",
+        "add_failure_listener", "SUBSCRIBER_DROPPED_EVENT",
+    }

@@ -32,11 +32,9 @@ TRANSPORT MAPPING:
         durable delivery row per matching group (RabbitMQ queue model; groups
         are matched at publish time). Multiple callbacks on one group are
         COMPETING consumers: rows are claimed atomically, exactly one gets it.
-    subscribe(group=None) → ephemeral, in-memory only (broadcast: wildcards,
-        RPC replies, broadcast=True). Deliberately NOT persisted — a reply or
+    subscribe(group=None) → ephemeral, in-memory only (broadcast: RPC
+        replies, broadcast=True). Deliberately NOT persisted — a reply or
         a cache-invalidation replayed after reboot would be wrong.
-    wildcard "*"          → a durable group on "*" receives every event;
-        ephemeral wildcards are delivered in memory.
     delay                 → stored as due_at (now + delay): DURABLE — a
         pending delay fires after a restart, at its stored due time.
     key / priority        → accepted but no-ops (the queue is totally ordered,
@@ -80,16 +78,20 @@ class _Subscription:
     """One consumer: (event, group, callback). Durable ones own a reader task."""
 
     def __init__(self, event: str, group: Optional[str], callback: Callable,
-                 is_wildcard: bool, ephemeral: bool):
+                 ephemeral: bool):
         self.event = event
         self.group = group
         self.callback = callback
-        self.is_wildcard = is_wildcard
         self.ephemeral = ephemeral
         self.task: Optional[asyncio.Task] = None
 
 
 class SQLiteDriver(EventBusDriver):
+    # delay=native: stored as due_at, fires after a restart (see header).
+    # (Ephemeral broadcasts still sleep in-process — they never survive
+    # a reboot by design, so there is nothing to persist.)
+    capabilities = {"delay": "native", "retries": "in_bus", "dlq": "in_bus"}
+
     PRUNE_EVERY = 128  # publishes between approximate MAXLEN prunes
 
     def __init__(self) -> None:
@@ -114,7 +116,7 @@ class SQLiteDriver(EventBusDriver):
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS deliveries ("
                 "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  event TEXT NOT NULL,"        # the SUBSCRIPTION key ('*' for wildcard groups)
+                "  event TEXT NOT NULL,"        # the SUBSCRIPTION key
                 "  grp TEXT NOT NULL,"
                 "  envelope TEXT NOT NULL,"
                 "  due_at REAL NOT NULL,"
@@ -165,7 +167,7 @@ class SQLiteDriver(EventBusDriver):
         def _stage() -> list:
             with self._db_lock:
                 matched = self._conn.execute(
-                    "SELECT event, grp FROM groups WHERE event IN (?, '*')",
+                    "SELECT event, grp FROM groups WHERE event = ?",
                     (envelope.event,),
                 ).fetchall()
                 for sub_event, grp in matched:
@@ -188,8 +190,8 @@ class SQLiteDriver(EventBusDriver):
         if delay:
             await asyncio.sleep(delay)
         for sub in [s for s in self._subs
-                    if s.ephemeral and s.event in (envelope.event, "*")]:
-            asyncio.create_task(self._deliver_hook(envelope, sub.callback, sub.is_wildcard))
+                    if s.ephemeral and s.event == envelope.event]:
+            asyncio.create_task(self._deliver_hook(envelope, sub.callback))
 
     def _prune(self, matched: list) -> None:
         with self._db_lock:
@@ -205,9 +207,8 @@ class SQLiteDriver(EventBusDriver):
     # ─── TRANSPORT: subscribe / readers ───────────────────
 
     async def subscribe(self, event_name: str, group: Optional[str], callback: Callable):
-        is_wildcard = event_name == "*"
         ephemeral = group is None
-        sub = _Subscription(event_name, group, callback, is_wildcard, ephemeral)
+        sub = _Subscription(event_name, group, callback, ephemeral)
 
         if not ephemeral:
             # Registering the group is the "$" moment: fan-out starts with the
@@ -260,7 +261,7 @@ class SQLiteDriver(EventBusDriver):
             row_id, raw = row
             try:
                 envelope = self._envelope_cls.model_validate_json(raw)
-                delivery = await self._deliver_hook(envelope, sub.callback, sub.is_wildcard)
+                delivery = await self._deliver_hook(envelope, sub.callback)
                 if delivery is not None:
                     # Ack (DELETE) only AFTER the handler and its Bus-side
                     # retries finish: a process dying here leaves the row

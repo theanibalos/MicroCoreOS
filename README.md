@@ -24,8 +24,7 @@ load demands it.
 
 Proven today: SQLite ↔ PostgreSQL swap with identical plugin code, and a transport-driver
 interface (`EventBusDriver`) where retries, DLQ, RPC and tracing are broker-agnostic —
-Redis Streams, RabbitMQ and a durable SQLite transport already shipped. Kafka is
-tracked in the [roadmap](ROADMAP.md).
+Redis Streams, RabbitMQ, Kafka and a durable SQLite transport already shipped.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -271,9 +270,9 @@ Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
 
 - **Monolith track**: route-collision & table-ownership linters, automatic test
   generation, `uv add microcoreos` (Core as an installable package)
-- **Distributed track**: Kafka event bus driver (Redis Streams, RabbitMQ and
-  the durable SQLite transport already shipped), driver capability
-  negotiation, event ACLs, runtime contracts via the schema catalog,
+- **Distributed track**: event ACLs (Redis Streams, RabbitMQ, Kafka and the
+  durable SQLite transport already shipped, all with crash-safe native
+  delay via capability claims), runtime contracts via the schema catalog,
   distributed observability (export local, aggregate outside), transactional
   outbox (deferred until a real chain needs it)
 - Official tool packages — `microcoreos-redis`, `microcoreos-postgres`

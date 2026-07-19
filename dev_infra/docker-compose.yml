@@ -67,6 +67,31 @@ services:
       timeout: 5s
       retries: 5
 
+  # ─── Kafka (KRaft, single node) ───────────────────────────
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: microcoreos_kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      # Single-node KRaft: the container is broker AND controller.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
   # ─── RustFS (S3-compatible object storage) ────────────────
   rustfs:
     image: rustfs/rustfs:latest
@@ -108,4 +133,5 @@ volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  kafka_data:
   rustfs_data:

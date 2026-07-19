@@ -37,10 +37,16 @@ TRANSPORT MAPPING:
     subscribe(group=None) → exclusive, auto-delete, server-named queue
         (broadcast: each subscriber gets its own copy; the queue dies on
         unsubscribe). Only broadcast subscriptions reach the driver without a
-        group: wildcards, RPC replies, broadcast=True.
-    wildcard "*"          → queue bound with topic key "#" (matches everything)
+        group: RPC replies, broadcast=True.
     priority              → message priority (queues declared x-max-priority 10)
-    delay                 → applied driver-side before publish (sleep)
+    delay                 → NATIVE (capability claim, Issue 30) via the
+        TTL + dead-letter pattern, stock broker only: a delayed publish goes
+        to the wait queue "{exchange}.delay.{n}" (x-message-ttl = n seconds,
+        x-dead-letter-exchange = the bus exchange, no consumers). On expiry
+        the broker republishes it to the bus exchange with its original
+        routing key — the delay is BROKER-persisted and survives a publisher
+        crash. One wait queue per distinct delay value (all messages in a
+        queue share the TTL, so head-of-queue expiry is strictly FIFO).
     key                   → accepted but a no-op (a queue is already ordered)
     ttl                   → enforced Bus-side at delivery (age check), NOT via
         broker message expiration: the Bus must still RECEIVE the message to
@@ -83,10 +89,9 @@ class EventBusConnectionError(ToolUnavailableError):
 class _Subscription:
     """One consumer: (event, callback) draining a queue bound to the exchange."""
 
-    def __init__(self, event: str, callback: Callable, is_wildcard: bool, ephemeral: bool):
+    def __init__(self, event: str, callback: Callable, ephemeral: bool):
         self.event = event
         self.callback = callback
-        self.is_wildcard = is_wildcard
         self.ephemeral = ephemeral  # broadcast queues are exclusive/auto-delete
         self.channel: Optional[AbstractRobustChannel] = None
         self.queue = None
@@ -95,6 +100,8 @@ class _Subscription:
 
 class RabbitMQDriver(EventBusDriver):
     MAX_PRIORITY = 10
+
+    capabilities = {"delay": "native", "retries": "in_bus", "dlq": "in_bus"}
 
     def __init__(self) -> None:
         self._host: str = os.getenv("RABBITMQ_HOST", "localhost")
@@ -144,10 +151,34 @@ class RabbitMQDriver(EventBusDriver):
 
     # ─── TRANSPORT: publish ───────────────────────────────
 
-    async def publish(self, envelope) -> None:
-        if envelope.delay and envelope.delay > 0:
-            await asyncio.sleep(envelope.delay)
+    async def _delay_exchange(self, delay_s: int) -> AbstractExchange:
+        """Wait-queue infra for one delay value.
 
+        A topic exchange + TTL'd queue pair named "{exchange}.delay.{n}".
+        Publishing THROUGH the exchange (binding "#") preserves the event's
+        routing key, so on expiry the dead-letter republish routes normally.
+
+        Deliberately re-declared on EVERY delayed publish (no cache):
+        declaration counts as "usage" for x-expires, so the broker reaps a
+        wait queue only delay+1h after the LAST publish of that value — by
+        then every parked message has long expired and been forwarded. This
+        keeps arbitrary delay values from accumulating queues forever."""
+        name = f"{self._exchange_name}.delay.{delay_s}"
+        exchange = await self._pub_channel.declare_exchange(
+            name, aio_pika.ExchangeType.TOPIC, durable=True
+        )
+        queue = await self._pub_channel.declare_queue(
+            name, durable=True,
+            arguments={
+                "x-message-ttl": delay_s * 1000,
+                "x-dead-letter-exchange": self._exchange_name,
+                "x-expires": delay_s * 1000 + 3_600_000,
+            },
+        )
+        await queue.bind(name, routing_key="#")
+        return exchange
+
+    async def publish(self, envelope) -> None:
         priority = None
         if envelope.priority is not None:
             priority = max(0, min(self.MAX_PRIORITY, int(envelope.priority)))
@@ -162,15 +193,19 @@ class RabbitMQDriver(EventBusDriver):
             # A robust channel survives reconnects but is not safe for
             # concurrent publishers — the Bus fires publishes as parallel tasks.
             async with self._pub_lock:
-                await self._pub_exchange.publish(message, routing_key=envelope.event)
+                if envelope.delay and envelope.delay > 0:
+                    # Native delay: park it broker-side NOW (crash-safe); the
+                    # TTL expiry dead-letters it into the bus exchange.
+                    exchange = await self._delay_exchange(int(envelope.delay))
+                else:
+                    exchange = self._pub_exchange
+                await exchange.publish(message, routing_key=envelope.event)
         except (aio_pika.exceptions.AMQPError, OSError) as e:
             raise EventBusConnectionError(f"RabbitMQ broker unreachable: {e}") from e
 
     # ─── TRANSPORT: subscribe / consumers ─────────────────
 
     async def subscribe(self, event_name: str, group: Optional[str], callback: Callable):
-        is_wildcard = event_name == "*"
-        binding_key = "#" if is_wildcard else event_name
         ephemeral = group is None
 
         channel = await self._connection.channel()
@@ -189,9 +224,9 @@ class RabbitMQDriver(EventBusDriver):
                 self._queue_name(group), durable=True,
                 arguments={"x-max-priority": self.MAX_PRIORITY},
             )
-        await queue.bind(self._exchange_name, routing_key=binding_key)
+        await queue.bind(self._exchange_name, routing_key=event_name)
 
-        sub = _Subscription(event_name, callback, is_wildcard, ephemeral)
+        sub = _Subscription(event_name, callback, ephemeral)
         sub.channel = channel
         sub.queue = queue
 
@@ -218,7 +253,7 @@ class RabbitMQDriver(EventBusDriver):
     async def _on_message(self, sub: _Subscription, message) -> None:
         try:
             envelope = self._envelope_cls.model_validate_json(message.body.decode())
-            delivery = await self._deliver_hook(envelope, sub.callback, sub.is_wildcard)
+            delivery = await self._deliver_hook(envelope, sub.callback)
             if delivery is not None:
                 # Ack AFTER the handler (and its Bus-side retries) finishes: a
                 # replica dying mid-handler leaves the message unacked and the

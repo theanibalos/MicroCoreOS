@@ -81,7 +81,7 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 
 ## 🌐 Distributed Track — active
 
-**Issue 18 — 🟢 Distributed Event Bus drivers (Redis Streams ✅ / Kafka / RabbitMQ)**
+**Issue 18 — 🟢 Distributed Event Bus drivers (Redis Streams ✅ / Kafka ✅ / RabbitMQ ✅)**
 
 The EventBusTool is NOT rewritten: the `EventBusDriver` interface is implemented
 (transport only). Retries, DLQ, RPC and tracing are agnostic and live in the Bus.
@@ -89,10 +89,10 @@ The EventBusTool is NOT rewritten: the `EventBusDriver` interface is implemented
 ✅ **RedisStreamsDriver** (`tools/event_bus/redis_streams_driver.py`):
 - Zero-code activation: `EVENT_BUS_DRIVER=redis_streams`. N replicas against the
   same Redis share transport; `group=` is a real consumer group
-  (exactly-one-consumer across the fleet); wildcard via firehose stream.
+  (exactly-one-consumer across the fleet).
 - Passes the full parity suite (`test_event_bus_broker_parity.py`, now
   parameterized over both transports) + its own distributed tests
-  (`test_redis_streams_driver.py`: 2 instances, cross-delivery, groups, firehose).
+  (`test_redis_streams_driver.py`: 2 instances, cross-delivery, groups).
 - Validated end to end: real system booted with the driver, `user.created`
   → WelcomeService traveling through Redis with the causal tree intact.
 - Design note: `EventBusDriver.bind()` now also injects the Bus's
@@ -100,16 +100,25 @@ The EventBusTool is NOT rewritten: the `EventBusDriver` interface is implemented
   by path and an imported copy is a different class to Pydantic).
 
 ✅ **RabbitMQDriver** (`extras/available_tools/rabbitmq/rabbitmq_driver.py`):
-groups → competing-consumer queues, wildcard → topic `#`, at-least-once via
+groups → competing-consumer queues, at-least-once via
 ack-after-handler. Parity suite: `test_event_bus_rabbitmq_parity.py`.
 Activation: drop the file into `tools/event_bus/` + `EVENT_BUS_DRIVER=rabbitmq`
 (driver discovery is generic since 2026-07-11 — file placement IS the
 installation, same swap standard as the db tool).
 
-Pending: **Kafka driver** (same steps, documented in the header of
-`tools/event_bus/event_bus_tool.py`; formal requirement: pass the parity
-suite). Design Issue 30 (capability negotiation) first — Kafka is the driver
-that would exploit it most (retry topics, scheduler topics, partition keys).
+✅ **KafkaDriver** (`extras/available_tools/kafka/kafka_driver.py`, 2026-07-19):
+groups → real Kafka consumer groups (commit-after-handler, at-least-once),
+`key` → partition key (per-key strict ordering — unkeyed events are
+round-robined across partitions, so cross-event order is not total),
+RPC replies → shared topic `bus.__replies__`
+(one topic per request would litter the cluster; the driver filters by exact
+event name). Broadcast subscriptions are standalone consumers (no group, no
+join latency). Parity suite: `test_event_bus_kafka_parity.py`; broker for dev
+in `dev_infra/docker-compose.yml` (single-node KRaft). Activation: drop the
+file into `tools/event_bus/` + `EVENT_BUS_DRIVER=kafka`. Since Issue 30
+(2026-07-19) it claims `delay: native` — delayed envelopes are parked in
+`bus.__delayed__` and promoted by a fleet-wide scheduler group, so a
+publisher crash never loses them.
 
 **Update 2026-07-11**: the Kafka driver's contract side is already prepared —
 `GET /system/events/schemas` serves the full catalog (event → JSON Schema,
@@ -118,18 +127,38 @@ what the broker's Schema Registry ingests, with zero plugin changes.
 
 ---
 
-**Issue 30 — 🟡 Driver capability negotiation (prerequisite for the Kafka driver)**
+**Issue 30 — 🟢 Driver capability negotiation (shipped 2026-07-19: mechanism + native delay)**
 
 The contract is semantic; the implementation is free: a driver may implement
 any Bus semantic with its broker's native machinery, as long as the parity
 suite still passes (the same rule that lets the SQLite tool translate `$1`
-to `?`). Today the Bus implements everything in software as the universal
-fallback; drivers should be able to CLAIM capabilities and take over:
+to `?`). The Bus implements everything in software as the universal
+fallback; drivers CLAIM capabilities and take over:
 
 ```python
 class RabbitMQDriver(EventBusDriver):
-    capabilities = {"delay": "native", "dlq": "native", "retries": "in_bus"}
+    capabilities = {"delay": "native", "retries": "in_bus", "dlq": "in_bus"}
 ```
+
+✅ **Shipped**: `EventBusDriver.capabilities` (default: everything `in_bus`),
+the Bus consults the claim (`_transport_publish`), and the ACTIVE TRANSPORT
+line in `get_interface_description()` surfaces the active driver's claims in
+the manifest. **`delay` is now native in every durable/distributed driver** —
+the crash-window (a publisher dying mid-sleep lost the event) is closed:
+- SQLite: `due_at` row (already was — it defined the pattern).
+- Redis Streams: parked in the ZSET `bus:__delayed__`, promoted by an atomic
+  Lua script every replica polls.
+- RabbitMQ: TTL wait-queue + dead-letter-exchange per delay value (stock
+  broker, no plugins).
+- Kafka: parked in `bus.__delayed__`, promoted by a fleet-wide scheduler
+  group (holds uncommitted with paused polls — arbitrarily long delays
+  without group eviction).
+Each proves it with a `test_delayed_survives_publisher_death` (publisher
+shuts down mid-delay; a surviving replica still receives), plus the parity
+tests `test_delayed_delivery` / `test_capabilities_declared` for all drivers.
+`retries`/`dlq` stay `in_bus` **by design**: they are already crash-safe
+(drivers ack only after handler + retries finish), so native retry topics /
+DLX routing remain optional future work, not a gap.
 
 Native implementations per broker, same observable contract:
 
@@ -146,6 +175,45 @@ suite. Broker-exclusive features enter ONLY through: (a) universal hints
 (best-effort, degraded where unsupported — like `priority` today), (b) driver
 env config (like `RABBITMQ_PREFETCH`), or (c) promotion to a Bus semantic
 with a software fallback. Never a plugin talking to the broker directly.
+
+---
+
+**Issue 36 — 🟢 Bus contract freeze (admission rule) + deferred driver optimizations**
+
+The Bus semantic contract is **CLOSED**. It already covers a full broker
+feature set (groups, retries, DLQ, RPC, TTL, delay, priority, key, broadcast,
+tracing, poisoned-handler escalation); anything new must enter as:
+(a) a **plugin-layer composition** (like the Outbox, Issue 28 — never Bus code),
+(b) a **driver capability claim** over an EXISTING semantic (Issue 30), or
+(c) a new ROADMAP issue arguing why it must be universal — accepted only by
+    consciously updating `test_public_contract_frozen` in the parity suite,
+    which pins `EventBusTool`'s exact public surface, in the same commit.
+This is the structural answer to god-component drift: the public API cannot
+grow by accident, and driver complexity stays quarantined (a driver cannot
+add API surface; worst case its file is deleted).
+
+First application of the rule, in reverse (2026-07-19): **wildcard
+subscriptions (`subscribe("*")`) were REMOVED** — capability without a use
+case. In-process observation is `add_listener()`'s job (publish-side sink,
+zero transport cost — how the event viewer/traces/delivery monitor already
+work); distributed audit belongs to the broker's own tooling (an external
+consumer on the topics/streams). Removing it also removed the firehose
+double-write every distributed driver paid on EVERY publish (Redis `bus:*`,
+Kafka `bus.__all__`) and the `is_wildcard` plumbing across the Bus and all
+four drivers. If a fleet-wide observer plugin ever becomes real, the parity
+suite documents exactly what to restore.
+
+Deferred driver optimizations — each with its written trigger, none is a gap:
+- **Kafka delay bucket topics** (`bus.__delayed__.{bucket}`): removes the
+  head-of-line wait between different delay values that hash to the same
+  partition. Trigger: a real workload mixing long and short delays at volume.
+- **Kafka multiplexed RPC replies**: one persistent reply consumer per
+  instance routing by correlation_id, instead of one ephemeral consumer per
+  request. Driver-internal, zero Bus changes. Trigger: RPC over Kafka
+  becomes a hot path.
+- **Idempotency helper**: an opt-in plugin-layer decorator deduplicating by
+  `envelope.id` (state-tool backed). Plugin layer, NOT Bus code (rule (a)).
+  Trigger: the first handler whose natural implementation is not idempotent.
 
 ---
 
@@ -184,9 +252,10 @@ fleet. No custom aggregator gets built here** (same discipline as Issue 13:
 don't rebuild what the platform layer already solves). By signal:
 
 - **Causal tree**: in distributed mode every event transits the shared broker,
-  so a dedicated **observer replica** (wildcard/firehose subscription, same
-  system-domain plugins, zero new code) sees fleet-wide causality. Verified:
-  envelopes carry `id`/`parent_id` across instances intact.
+  so fleet-wide causality is read at the broker itself — an external consumer
+  over the topics/streams (since the 2026-07-19 wildcard removal, Issue 36,
+  this is broker tooling, not a Bus subscription). Verified: envelopes carry
+  `id`/`parent_id` across instances intact.
 - **Spans & tool metrics**: genuinely per-process → OTel (already integrated)
   exports per replica; Jaeger/Tempo/Prometheus aggregate. Building our own
   aggregator would be rebuilding Tempo.

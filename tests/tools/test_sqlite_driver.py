@@ -117,11 +117,11 @@ async def test_backlog_accumulates_while_consumer_is_away(queue_path):
 
 
 async def test_broadcasts_and_replies_are_never_persisted(queue_path):
-    """Ephemeral subscriptions (wildcards, RPC replies) leave no rows behind."""
+    """Ephemeral subscriptions (broadcast=True, RPC replies) leave no rows behind."""
     seen = []
 
     bus_a = await make_bus()
-    await bus_a.subscribe("*", make_handler(seen))          # broadcast
+    await bus_a.subscribe("cache.invalidate", make_handler(seen), broadcast=True)
     await bus_a.publish("cache.invalidate", {"k": "x"})
     await asyncio.sleep(0.2)
     await bus_a.shutdown()
