@@ -15,6 +15,62 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
 ## 🛠️ Available Tools
 Check method signatures before implementation.
 
+### 🔧 Tool: `http` (Status: ✅)
+```text
+HTTP Server Tool (http):
+        - PURPOSE: FastAPI-powered HTTP gateway. Supports REST, static files, WebSockets and SSE.
+        - HANDLER SIGNATURE: async def execute(self, data: dict, context: HttpContext) -> dict
+          'data' = flat merge of [path params] + [query params] + [body/form fields].
+          Special keys in 'data':
+            - data["_auth"]: contains the payload from auth_validator if successful.
+            - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
+        - SECURITY DEFAULTS:
+            - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
+            - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
+            - Swagger UI (/docs): endpoints with auth_validator show a lock icon and accept
+              tokens via the "Authorize" button (documentation-only; real check unaffected).
+        - CAPABILITIES:
+            - add_endpoint(path, method, handler, tags=None, request_model=None,
+                           response_model=None, auth_validator=None, has_files=False):
+                - has_files: if True, enables multipart/form-data. Request model fields 
+                  become Form fields. To use a file: file = data["_files"][0]; 
+                  await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
+            - mount_static(path, directory_path): Serve static files from a directory.
+            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
+            - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
+                Server-Sent Events. generator yields formatted strings: "data: {...}\n\n".
+            - register_pre_mount_hook(hook): hook(endpoints: list[dict]) is called once in
+                on_boot_complete(), before routes are mounted, with every buffered endpoint
+                (method, path, owner) — the first point where all plugins' add_endpoint()
+                calls are guaranteed to have run. Used for boot-time checks across ALL
+                registered routes (e.g. the architecture linter's route-collision scan).
+        - HttpContext CAPABILITIES (inside handler):
+            - context.set_status(code: int): Override HTTP status (default: 200).
+            - context.redirect(url: str, status=302): Redirect to another URL.
+            - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
+            - context.set_header(key, value): Add custom response header.
+            - context.set_binary_response(content: bytes, media_type: str): Return raw file.
+        - RESPONSE CONTRACT:
+            - Standard: return {"success": bool, "data": ..., "error": ...}
+            - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 
+              instances are NOT serializable — always call .model_dump() before returning.
+```
+
+### 🔧 Tool: `config` (Status: ✅)
+```text
+Configuration Tool (config):
+        - PURPOSE: Validated access to environment variables for plugins.
+          Tools read their own env vars with os.getenv() — this tool is for plugins.
+        - CAPABILITIES:
+            - get(key, default=None, required=False) -> str | None:
+                Returns the value of the environment variable.
+                If required=True and the variable is not set, raises EnvironmentError.
+            - require(*keys) -> None:
+                Validates that all specified variables are set.
+                Call in on_boot() to fail early with a clear error message.
+                Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
+```
+
 ### 🔧 Tool: `auth` (Status: ✅)
 ```text
 Authentication Tool (auth):
@@ -35,19 +91,30 @@ Authentication Tool (auth):
                 if valid, or None if expired/invalid. Ideal for middleware guards.
 ```
 
-### 🔧 Tool: `config` (Status: ✅)
+### 🔧 Tool: `telemetry` (Status: ✅)
 ```text
-Configuration Tool (config):
-        - PURPOSE: Validated access to environment variables for plugins.
-          Tools read their own env vars with os.getenv() — this tool is for plugins.
+Telemetry Tool (telemetry):
+        - PURPOSE: OpenTelemetry distributed tracing. Auto-instruments all tool calls via ToolProxy.
+          No changes needed in plugins or existing tools to get basic spans.
+        - ACTIVATION: Set OTEL_ENABLED=true. Degrades gracefully if disabled or packages missing.
+        - ENV VARS:
+            - OTEL_ENABLED: "true" to activate (default: "false").
+            - OTEL_SERVICE_NAME: Service name in traces (default: "microcoreos").
+            - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP/gRPC endpoint (e.g. "http://jaeger:4317").
+              If not set, traces are printed to console (development mode).
         - CAPABILITIES:
-            - get(key, default=None, required=False) -> str | None:
-                Returns the value of the environment variable.
-                If required=True and the variable is not set, raises EnvironmentError.
-            - require(*keys) -> None:
-                Validates that all specified variables are set.
-                Call in on_boot() to fail early with a clear error message.
-                Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
+            - get_tracer(scope: str) -> Tracer: Named tracer for custom spans inside a plugin.
+                Usage: tracer = self.telemetry.get_tracer("my_plugin")
+                       with tracer.start_as_current_span("my_operation"): ...
+                Returns a no-op tracer if OTel is disabled — safe to use unconditionally.
+        - AUTO-INSTRUMENTATION (zero config):
+            Every tool call (db.execute, event_bus.publish, auth.create_token, etc.)
+            gets a span automatically via ToolProxy. No plugin changes needed.
+        - DRIVER-LEVEL INSTRUMENTATION (optional, per tool):
+            Tools can implement on_instrument(tracer_provider) in BaseTool to add
+            framework-specific spans (SQL query text, HTTP route, etc.).
+        - INSTALL:
+            uv add opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
 ### 🔧 Tool: `event_bus` (Status: ✅)
@@ -87,10 +154,10 @@ Universal Event Bus (event_bus):
           partition-dependent on Kafka).
         - priority: Integer (1-10). Importance (RabbitMQ).
         - delay: Integer (seconds). Delivery schedule. Crash-safe only when
-          the active transport claims delay=native (see ACTIVE TRANSPORT
-          in the live manifest).
+          the active transport claims delay=native (see ACTIVE TRANSPORT).
         - ttl: Float (seconds). Message expiration hint. Counted from PUBLISH
-          time and therefore INCLUDES any delay.
+          time and therefore INCLUDES any delay (delay=60 + ttl=30 expires
+          before it can ever be delivered).
         - correlation_id: String. Cross-reference for RPC.
 
         RESILIENCE:
@@ -98,68 +165,23 @@ Universal Event Bus (event_bus):
         - Each auto-unsubscribe publishes 'system.subscriber.dropped'
           (payload: event, subscriber, error, consecutive_failures) so the drop
           is observable — subscribe to it for alerting/monitoring.
+
+        ACTIVE TRANSPORT: InProcessDriver — capability claims: {'delay': 'in_bus', 'retries': 'in_bus', 'dlq': 'in_bus'}
+        ("native" = the broker implements it, crash-safe; "in_bus" = software
+        fallback in this process' memory).
 ```
 
-### 🔧 Tool: `http` (Status: ✅)
+### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
-HTTP Server Tool (http):
-        - PURPOSE: FastAPI-powered HTTP gateway. Supports REST, static files, WebSockets and SSE.
-        - HANDLER SIGNATURE: async def execute(self, data: dict, context: HttpContext) -> dict
-          'data' = flat merge of [path params] + [query params] + [body/form fields].
-          Special keys in 'data':
-            - data["_auth"]: contains the payload from auth_validator if successful.
-            - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
-        - SECURITY DEFAULTS:
-            - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
-            - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
-            - Swagger UI (/docs): endpoints with auth_validator show a lock icon and accept
-              tokens via the "Authorize" button (documentation-only; real check unaffected).
+Context Manager Tool (context_manager):
+        - PURPOSE: Automatically manages and generates live AI contextual documentation.
         - CAPABILITIES:
-            - add_endpoint(path, method, handler, tags=None, request_model=None,
-                           response_model=None, auth_validator=None, has_files=False):
-                - has_files: if True, enables multipart/form-data. Request model fields 
-                  become Form fields. To use a file: file = data["_files"][0]; 
-                  await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
-            - mount_static(path, directory_path): Serve static files from a directory.
-            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
-            - add_sse_endpoint(path, generator, tags=None, auth_validator=None): 
-                Server-Sent Events. generator yields formatted strings: "data: {...}\n\n".
-        - HttpContext CAPABILITIES (inside handler):
-            - context.set_status(code: int): Override HTTP status (default: 200).
-            - context.redirect(url: str, status=302): Redirect to another URL.
-            - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
-            - context.set_header(key, value): Add custom response header.
-            - context.set_binary_response(content: bytes, media_type: str): Return raw file.
-        - RESPONSE CONTRACT:
-            - Standard: return {"success": bool, "data": ..., "error": ...}
-            - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 
-              instances are NOT serializable — always call .model_dump() before returning.
-```
-
-### 🔧 Tool: `telemetry` (Status: ✅)
-```text
-Telemetry Tool (telemetry):
-        - PURPOSE: OpenTelemetry distributed tracing. Auto-instruments all tool calls via ToolProxy.
-          No changes needed in plugins or existing tools to get basic spans.
-        - ACTIVATION: Set OTEL_ENABLED=true. Degrades gracefully if disabled or packages missing.
-        - ENV VARS:
-            - OTEL_ENABLED: "true" to activate (default: "false").
-            - OTEL_SERVICE_NAME: Service name in traces (default: "microcoreos").
-            - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP/gRPC endpoint (e.g. "http://jaeger:4317").
-              If not set, traces are printed to console (development mode).
-        - CAPABILITIES:
-            - get_tracer(scope: str) -> Tracer: Named tracer for custom spans inside a plugin.
-                Usage: tracer = self.telemetry.get_tracer("my_plugin")
-                       with tracer.start_as_current_span("my_operation"): ...
-                Returns a no-op tracer if OTel is disabled — safe to use unconditionally.
-        - AUTO-INSTRUMENTATION (zero config):
-            Every tool call (db.execute, event_bus.publish, auth.create_token, etc.)
-            gets a span automatically via ToolProxy. No plugin changes needed.
-        - DRIVER-LEVEL INSTRUMENTATION (optional, per tool):
-            Tools can implement on_instrument(tracer_provider) in BaseTool to add
-            framework-specific spans (SQL query text, HTTP route, etc.).
-        - INSTALL:
-            uv add opentelemetry-sdk opentelemetry-exporter-otlp
+            - Reads the system registry.
+            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
+            - Embeds the plugin authoring guide (tools/context/authoring_guide.md):
+              executor rules plus one complete template per deliverable type, so the
+              manifest alone is enough to write a plugin or its tests.
+            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅)
@@ -174,6 +196,27 @@ Logging Tool (logger):
                 Sink signature: callback(level: str, message: str, timestamp: str, identity: str)
                 'identity' is the current plugin/tool context (from current_identity_var).
                 Use it to attribute errors to specific plugins for health tracking.
+```
+
+### 🔧 Tool: `state` (Status: ✅)
+```text
+Key-Value State Tool (state):
+        - PURPOSE: Share volatile global data between plugins safely.
+        - IDEAL FOR: Counters, temporary caches, rate-limit windows, business semaphores.
+        - CONTRACT: All methods are async. Values must be JSON-serializable so the
+          tool can be swapped for a distributed store (Redis) without touching plugins.
+        - TTL: optional expiry in seconds. Expired keys behave like missing keys.
+          On increment(), the TTL only applies when the key is created (fixed window).
+        - CAPABILITIES:
+            - await set(key, value, namespace='default', ttl=None): Store a value.
+            - await get(key, default=None, namespace='default'): Retrieve a value (None if missing).
+            - await has(key, namespace='default'): Returns True if key exists.
+            - await keys(namespace='default'): Returns list of all live keys in the namespace.
+            - await get_all(namespace='default'): Returns a deep copy of all live key-value pairs.
+            - await increment(key, amount=1, namespace='default', ttl=None): Atomic increment.
+              Starts at 0. Returns the new value.
+            - await delete(key, namespace='default'): Delete a key (no-op if missing).
+            - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
 ### 🔧 Tool: `registry` (Status: ✅)
@@ -212,40 +255,6 @@ Systems Registry Tool (registry):
             - update_tool_status(name, status, message=None): Manually override a tool's health status.
                 status: "OK" | "FAIL" | "DEAD".
                 Intended for health-check plugins that verify tools proactively.
-```
-
-### 🔧 Tool: `context_manager` (Status: ✅)
-```text
-Context Manager Tool (context_manager):
-        - PURPOSE: Automatically manages and generates live AI contextual documentation.
-        - CAPABILITIES:
-            - Reads the system registry.
-            - Exports active tools, health status, and domain models to AI_CONTEXT.md.
-            - Embeds the plugin authoring guide (tools/context/authoring_guide.md):
-              executor rules plus one complete template per deliverable type, so the
-              manifest alone is enough to write a plugin or its tests.
-            - Regenerates AI_CONTEXT.md on every boot — always up to date with the live system.
-```
-
-### 🔧 Tool: `state` (Status: ✅)
-```text
-Key-Value State Tool (state):
-        - PURPOSE: Share volatile global data between plugins safely.
-        - IDEAL FOR: Counters, temporary caches, rate-limit windows, business semaphores.
-        - CONTRACT: All methods are async. Values must be JSON-serializable so the
-          tool can be swapped for a distributed store (Redis) without touching plugins.
-        - TTL: optional expiry in seconds. Expired keys behave like missing keys.
-          On increment(), the TTL only applies when the key is created (fixed window).
-        - CAPABILITIES:
-            - await set(key, value, namespace='default', ttl=None): Store a value.
-            - await get(key, default=None, namespace='default'): Retrieve a value (None if missing).
-            - await has(key, namespace='default'): Returns True if key exists.
-            - await keys(namespace='default'): Returns list of all live keys in the namespace.
-            - await get_all(namespace='default'): Returns a deep copy of all live key-value pairs.
-            - await increment(key, amount=1, namespace='default', ttl=None): Atomic increment.
-              Starts at 0. Returns the new value.
-            - await delete(key, namespace='default'): Delete a key (no-op if missing).
-            - await clear(namespace='default'): Remove all keys in the namespace.
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
@@ -503,7 +512,7 @@ import pytest
 from domains.things.plugins.create_thing_plugin import CreateThingPlugin
 from domains.things.plugins.thing_audit_plugin import ThingAuditPlugin
 from tools.event_bus.event_bus_tool import EventBusTool
-from tests.helpers.async_wait import wait_until
+from tests.helpers.async_wait import wait_for_dlq, wait_until
 from tests.helpers.trace_chains import build_tree, assert_chain
 
 pytestmark = pytest.mark.anyio
@@ -547,14 +556,55 @@ async def test_sad_path_dlq(bus):
     logger.info.side_effect = RuntimeError("forced failure")
 
     await bus.publish("thing.created", {"id": 1, "name": "widget"})
-    # Poll for the DLQ event instead of sleeping through retries + backoff.
-    await wait_until(lambda: any(r.envelope.event == "_dlq.thing.created"
-                                 for r in bus.get_trace_history()))
+    # DLQ fires only after retries exhaust their exponential backoff, which
+    # can exceed wait_until's default timeout. wait_for_dlq derives its
+    # deadline from the retries/backoff the subscribers declared — always
+    # use it for DLQs, never plain wait_until, never a hand-picked timeout.
+    await wait_for_dlq(bus, "thing.created")
 
     # _dlq.<event> is published inside the failing delivery's context, so it
     # appears as a child of the event that failed — same helper asserts it.
     assert_chain(build_tree(bus.get_trace_history()),
                  ["thing.created", "_dlq.thing.created"])
+```
+
+#### Mocking tool methods used as `async with` (async context managers)
+
+Rule: on a mocked tool, any method the plugin uses as
+`async with tool.method() as x:` must be overridden with `MagicMock`.
+A bare `AsyncMock()` breaks there — every method call on an `AsyncMock`
+returns a coroutine, which has no `__aenter__`/`__aexit__`, so the test
+crashes with `TypeError: 'coroutine' object does not support the
+asynchronous context manager protocol`. These methods are *sync* calls that
+return an async context manager; `MagicMock` handles them because it
+auto-configures `__aenter__`/`__aexit__` as `AsyncMock`.
+
+For `db.transaction()` never build the nested mock by hand — use the
+prefabricated helpers from `tests.helpers.mock_db`:
+
+```python
+from tests.helpers.mock_db import TxMock, FailingTxMock
+
+db = AsyncMock()
+
+# Happy path: stub and assert on the tx instance itself.
+tx = TxMock()
+tx.execute.return_value = 1
+db.transaction = MagicMock(return_value=tx)
+# ... exercise the plugin ...
+tx.execute.assert_awaited_with("INSERT INTO ...", [...])
+
+# Sad path (rollback / DLQ): every tx operation raises RuntimeError.
+db.transaction = MagicMock(return_value=FailingTxMock())
+```
+
+For any *other* tool method entered with `async with` (no prefab helper),
+override it with a bare `MagicMock` and remember the object bound by
+`as x:` is `__aenter__`'s return value — NOT `method.return_value`:
+
+```python
+tool.method = MagicMock()  # sync call returning an async context manager
+x = tool.method.return_value.__aenter__.return_value  # bound by `as x:`
 ```
 
 ### Test rules
@@ -567,6 +617,16 @@ async def test_sad_path_dlq(bus):
   (`unittest.mock.AsyncMock` / `MagicMock`); run every other injected tool as
   a real in-memory instance (SQLite `:memory:` with your domain's migration
   applied, in-process event bus).
+- On a mocked tool, every method the plugin uses as `async with` must be
+  overridden with `MagicMock` — a bare `AsyncMock` crashes there. For
+  `db.transaction()` always use `TxMock` / `FailingTxMock` from
+  `tests.helpers.mock_db`; for other tools see "Mocking tool methods used as
+  `async with`" above.
+- Always wait for DLQ events with `wait_for_dlq` from
+  `tests.helpers.async_wait`, never with plain `wait_until`: the DLQ only
+  fires after retries exhaust their exponential backoff, which can exceed
+  `wait_until`'s default timeout. Do not pass a timeout — the helper derives
+  the deadline from the retries/backoff the subscribers declared.
 - Prove the black-box contract: input → output envelope, DB effects on the
   declared tables, published payloads with the declared keys. Assert the keys
   the envelope guarantees (`success`, plus `data` on success / `error` on

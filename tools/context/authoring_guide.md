@@ -158,7 +158,7 @@ import pytest
 from domains.things.plugins.create_thing_plugin import CreateThingPlugin
 from domains.things.plugins.thing_audit_plugin import ThingAuditPlugin
 from tools.event_bus.event_bus_tool import EventBusTool
-from tests.helpers.async_wait import wait_until
+from tests.helpers.async_wait import wait_for_dlq, wait_until
 from tests.helpers.trace_chains import build_tree, assert_chain
 
 pytestmark = pytest.mark.anyio
@@ -202,14 +202,55 @@ async def test_sad_path_dlq(bus):
     logger.info.side_effect = RuntimeError("forced failure")
 
     await bus.publish("thing.created", {"id": 1, "name": "widget"})
-    # Poll for the DLQ event instead of sleeping through retries + backoff.
-    await wait_until(lambda: any(r.envelope.event == "_dlq.thing.created"
-                                 for r in bus.get_trace_history()))
+    # DLQ fires only after retries exhaust their exponential backoff, which
+    # can exceed wait_until's default timeout. wait_for_dlq derives its
+    # deadline from the retries/backoff the subscribers declared — always
+    # use it for DLQs, never plain wait_until, never a hand-picked timeout.
+    await wait_for_dlq(bus, "thing.created")
 
     # _dlq.<event> is published inside the failing delivery's context, so it
     # appears as a child of the event that failed — same helper asserts it.
     assert_chain(build_tree(bus.get_trace_history()),
                  ["thing.created", "_dlq.thing.created"])
+```
+
+#### Mocking tool methods used as `async with` (async context managers)
+
+Rule: on a mocked tool, any method the plugin uses as
+`async with tool.method() as x:` must be overridden with `MagicMock`.
+A bare `AsyncMock()` breaks there — every method call on an `AsyncMock`
+returns a coroutine, which has no `__aenter__`/`__aexit__`, so the test
+crashes with `TypeError: 'coroutine' object does not support the
+asynchronous context manager protocol`. These methods are *sync* calls that
+return an async context manager; `MagicMock` handles them because it
+auto-configures `__aenter__`/`__aexit__` as `AsyncMock`.
+
+For `db.transaction()` never build the nested mock by hand — use the
+prefabricated helpers from `tests.helpers.mock_db`:
+
+```python
+from tests.helpers.mock_db import TxMock, FailingTxMock
+
+db = AsyncMock()
+
+# Happy path: stub and assert on the tx instance itself.
+tx = TxMock()
+tx.execute.return_value = 1
+db.transaction = MagicMock(return_value=tx)
+# ... exercise the plugin ...
+tx.execute.assert_awaited_with("INSERT INTO ...", [...])
+
+# Sad path (rollback / DLQ): every tx operation raises RuntimeError.
+db.transaction = MagicMock(return_value=FailingTxMock())
+```
+
+For any *other* tool method entered with `async with` (no prefab helper),
+override it with a bare `MagicMock` and remember the object bound by
+`as x:` is `__aenter__`'s return value — NOT `method.return_value`:
+
+```python
+tool.method = MagicMock()  # sync call returning an async context manager
+x = tool.method.return_value.__aenter__.return_value  # bound by `as x:`
 ```
 
 ### Test rules
@@ -222,6 +263,16 @@ async def test_sad_path_dlq(bus):
   (`unittest.mock.AsyncMock` / `MagicMock`); run every other injected tool as
   a real in-memory instance (SQLite `:memory:` with your domain's migration
   applied, in-process event bus).
+- On a mocked tool, every method the plugin uses as `async with` must be
+  overridden with `MagicMock` — a bare `AsyncMock` crashes there. For
+  `db.transaction()` always use `TxMock` / `FailingTxMock` from
+  `tests.helpers.mock_db`; for other tools see "Mocking tool methods used as
+  `async with`" above.
+- Always wait for DLQ events with `wait_for_dlq` from
+  `tests.helpers.async_wait`, never with plain `wait_until`: the DLQ only
+  fires after retries exhaust their exponential backoff, which can exceed
+  `wait_until`'s default timeout. Do not pass a timeout — the helper derives
+  the deadline from the retries/backoff the subscribers declared.
 - Prove the black-box contract: input → output envelope, DB effects on the
   declared tables, published payloads with the declared keys. Assert the keys
   the envelope guarantees (`success`, plus `data` on success / `error` on

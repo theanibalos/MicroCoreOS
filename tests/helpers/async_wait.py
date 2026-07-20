@@ -27,3 +27,32 @@ async def wait_until(predicate: Callable[[], bool], timeout: float = 2.0, interv
         if loop.time() >= deadline:
             raise AssertionError(f"condition not met within {timeout}s: {predicate}")
         await sleep(interval)
+
+
+async def wait_for_dlq(bus, event_name: str, timeout: float | None = None) -> None:
+    """Wait for `_dlq.<event_name>` to appear in the bus trace history.
+
+    A DLQ event only fires after every retry has exhausted its exponential
+    backoff (`backoff * 2**(attempt-1)`), so it can appear well past
+    `wait_until`'s 2.0s default — waiting for a DLQ with plain `wait_until`
+    fails even when the plugin is correct.
+
+    By default the deadline is not guessed: it is derived from the
+    retries/backoff the subscribers of `event_name` actually declared, plus
+    the standard 2.0s delivery slack — so it stays correct whatever a flow
+    declares (3, 5 or 10 retries) with no number to keep in sync. Pass
+    `timeout` only to override that computed ceiling.
+    """
+    if timeout is None:
+        schedule = 0.0
+        for (ev, _cb), opts in getattr(bus, "_sub_options", {}).items():
+            if ev == event_name and opts.retries > 0:
+                total = sum(opts.backoff * (2 ** (attempt - 1))
+                            for attempt in range(1, opts.retries + 1))
+                schedule = max(schedule, total)
+        timeout = schedule + 2.0
+    dlq_event = f"_dlq.{event_name}"
+    await wait_until(
+        lambda: any(r.envelope.event == dlq_event for r in bus.get_trace_history()),
+        timeout=timeout,
+    )

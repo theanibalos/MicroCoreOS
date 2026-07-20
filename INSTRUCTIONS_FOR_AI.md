@@ -337,11 +337,17 @@ guesses how long delivery takes; under CI CPU contention the guess loses and
 the test flakes. Poll the real condition instead:
 
 ```python
-from tests.helpers.async_wait import wait_until
+from tests.helpers.async_wait import wait_for_dlq, wait_until
 
 await bus.publish("user.created", payload)
 await wait_until(lambda: len(received) == 1)  # returns as soon as delivery lands
 ```
+
+For **DLQ events** always use `wait_for_dlq(bus, "user.created")`, never plain
+`wait_until` and never a hand-picked timeout: the DLQ only fires after retries
+exhaust their exponential backoff, which can exceed `wait_until`'s default
+timeout — the helper derives its deadline from the retries/backoff the
+subscribers declared.
 
 The one legitimate fixed sleep is a **negative check** (asserting that nothing
 arrives) — there is no condition to poll for, so a short fixed wait is correct
@@ -354,6 +360,11 @@ helper in `tests/helpers/trace_chains.py`.
 If you only need to verify branch/flow logic or if you have complex external dependencies (e.g., third-party APIs):
 - Mock the specific tools using `unittest.mock.AsyncMock` or `MagicMock`.
 - Keep assertions focused on inputs/outputs and mock side-effects.
+- Any method the plugin uses as `async with` must be overridden with
+  `MagicMock` — a bare `AsyncMock` yields a coroutine there and crashes. For
+  `db.transaction()` use the prefab helpers:
+  `db.transaction = MagicMock(return_value=TxMock())` (happy path) or
+  `FailingTxMock()` (sad path), from `tests.helpers.mock_db`.
 
 Example:
 ```python
