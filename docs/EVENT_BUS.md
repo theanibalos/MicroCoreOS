@@ -167,6 +167,20 @@ When a delivery exhausts all retries, the bus automatically publishes a failure 
 - **Loop Protection**: `_dlq.*` and `_reply.*` events are never dead-lettered.
 - **Global Switch**: Controlled by `EVENT_BUS_DLQ_ENABLED=true` env var.
 
+**Provoking a DLQ deliberately (chaos testing)**: this is about a *live*
+subscriber whose handler keeps failing — not a process crash (that gap is
+the Transactional Outbox's, Issue 28) and not a paused subscriber
+(`chaos/off {plugin}` just accumulates a durable backlog with zero retries
+and zero DLQ — it drains in full on resume, nothing was ever attempted). To
+force `_dlq.<event>` deterministically, use `chaos/tool {mode:"down"}` on a
+dependency the handler calls — every call fails, so the first event that
+passes through exhausts its retries immediately. `mode:"flaky", rate` is for
+realistic noise, not for demonstrating DLQ on demand: a delivery only
+reaches DLQ if *every* attempt fails, so with `retries: N` the probability
+per event is `rate^(N+1)` (e.g. `retries: 3, rate: 0.3` → ≈0.8% per event —
+seeing zero DLQ entries over a handful of requests is the expected outcome,
+not a sign anything is broken).
+
 ### Auto-unsubscribe after 5 consecutive FINAL failures
 
 If the same subscriber reaches **5 consecutive final failures** (after all retries are exhausted), the bus permanently removes it from all subscriptions. Each failure is logged as:

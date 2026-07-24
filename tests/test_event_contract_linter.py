@@ -321,7 +321,26 @@ class DlqPlugin:
 
 
 @pytest.mark.anyio
-async def test_plugin_boot_registers_metadata_and_endpoint():
+async def test_plugin_boot_registers_metadata_and_endpoint(tmp_path, monkeypatch):
+    # Synthetic domain, isolated from any real business domain — this plugin
+    # scans `domains/` generically and must be tested that way, never pinned
+    # to a specific example domain that a fork may delete.
+    plugins_dir = tmp_path / "domains" / "fixture" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "sample_publisher.py").write_text('''
+from pydantic import BaseModel
+
+
+class SamplePayload(BaseModel):
+    id: int
+
+
+class SamplePublisherPlugin:
+    async def execute(self, data, context=None):
+        await self.bus.publish("sample.created", SamplePayload(id=1).model_dump())
+''')
+    monkeypatch.chdir(tmp_path)
+
     container = MagicMock()
     registry = MagicMock()
     container.registry = registry
@@ -339,7 +358,7 @@ async def test_plugin_boot_registers_metadata_and_endpoint():
     assert isinstance(registered["event_contract_violations"], list)
     # Typed publishers are exported for EventSchemasPlugin (event -> model + file).
     models = registered["event_payload_models"]
-    assert any(m["event"] == "user.created" and m["model"] == "UserCreatedPayload"
+    assert any(m["event"] == "sample.created" and m["model"] == "SamplePayload"
                for m in models)
 
     endpoint_args, endpoint_kwargs = http.add_endpoint.call_args

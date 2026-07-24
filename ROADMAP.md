@@ -316,6 +316,31 @@ compose in the plugin layer):**
 if the process dies between commit and publish?"* (payments, orders, billing).
 The formal plan format carries that checkbox per chain (`atomic_with_db`).
 
+**Known trade-offs of the pattern itself (true of any correct implementation,
+not an implementation bug):**
+- **Breaks `parent_id` causality across that one hop.** The relay publishes
+  from its own cron tick, not from inside the original request's context —
+  so the event it relays becomes a new causal root in `/system/traces/tree`
+  instead of nesting under the transaction that produced it. It stays
+  correlatable by whatever business key is in its payload (e.g. `order_id`),
+  just not by `parent_id`. Gaining commit+publish atomicity costs the direct
+  causal edge for that specific hop; every other hop keeps nesting normally.
+- **The relay only sees what existed at query time.** A chain of N links that
+  are all `atomic_with_db` needs N relay ticks to fully resolve — each link
+  only writes the next link's outbox row after its own tick already read its
+  batch. Under sustained failures this can stretch out unpredictably with no
+  way to ask "how many ticks are left to drain." A natural low-cost
+  complement when this ships: `GET /system/outbox/pending` (count + oldest
+  unpublished row).
+- **Atomicity on the publish side doesn't imply atomicity on the consume
+  side.** `atomic_with_db` only protects the commit→publish segment;
+  `idempotent: true` on the receiving link is a separate, unenforced claim.
+  If the dedupe check behind it lives in process memory (not a persisted
+  read/write against a table), a restart resets it exactly like a
+  non-atomic publish would lose an event — the same durability requirement
+  that motivates the outbox applies symmetrically to the consumer's own
+  idempotency check.
+
 ---
 
 ## ✅ Decision Log (completed)

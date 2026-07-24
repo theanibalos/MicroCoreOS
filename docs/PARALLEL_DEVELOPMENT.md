@@ -368,11 +368,27 @@ themselves. Because the preamble is byte-identical, any engine with prefix
 caching — a local model's KV cache, Anthropic/OpenAI prompt caching, vLLM —
 processes the shared block **once** and reuses it for every agent in the
 wave. Never insert per-agent content before or inside the shared block: a
-single differing byte breaks the reuse for everything after it. Dispatch the
-first agent, let it start responding, then fire the rest (a cache entry being
-written is not yet readable — N simultaneous cold requests ALL pay the full
-prefix). On an engine with no prefix caching, fall back to pasting only the
-feature's slice plus the `AI_CONTEXT.md` sections for the tools it injects.
+single differing byte breaks the reuse for everything after it. On an engine
+with no prefix caching, fall back to pasting only the feature's slice plus
+the `AI_CONTEXT.md` sections for the tools it injects.
+
+**Dispatch order is a hard rule, not a suggestion — first alone, then the
+rest.** A cache entry being written is not yet readable, so N simultaneous
+cold requests ALL pay the full prefix; the whole saving requires the first
+agent to start responding before any sibling is sent. This is easy to break
+without noticing when the dispatch mechanism is a tool that accepts several
+calls in one turn (e.g. issuing N parallel subagent invocations in a single
+message): sending all N together from the start is exactly the simultaneous-cold
+case, regardless of how identical the prefix is. Dispatch the first agent
+alone, wait for it to begin responding, THEN dispatch the remaining N-1 —
+together is fine at that point, even in one message. This rule is about the
+*order* of dispatch; it does not require observing or measuring the cache in
+real time to follow it correctly. If you do want to confirm cache-hits
+happened, most agent harnesses don't expose `cache_control`/`usage` per
+request directly, but each agent's own transcript (wherever the harness logs
+it) carries the real `cache_creation_input_tokens`/`cache_read_input_tokens`
+per turn and can be read after the fact — that's a verification step, not a
+prerequisite for dispatching correctly.
 
 **Executors are dispatched write-only, scoped to their two files.** "Agents
 never open the plan or `AI_CONTEXT.md` themselves" is a property of the
