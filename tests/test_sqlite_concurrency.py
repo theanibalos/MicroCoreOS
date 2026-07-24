@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from tools.sqlite.sqlite_tool import SqliteTool
+from tools.sqlite.sqlite_tool import SqliteTool, DatabaseError
 
 pytestmark = pytest.mark.anyio
 
@@ -46,3 +46,34 @@ async def test_sqlite_transaction_isolation(db):
 
     final_row = await db.query_one("SELECT val FROM counts")
     assert final_row["val"] == 2
+
+
+async def test_db_execute_inside_transaction_joins_it_not_commits_early(db):
+    """
+    Regression test: calling the TOP-LEVEL db.execute() (instead of
+    tx.execute()) from inside an open db.transaction() block must NOT
+    commit anything early. Before the fix, _do_execute() unconditionally
+    called self._db.commit() even when the reentrancy check detected we
+    were already inside an outer transaction's SAVEPOINT — and SQLite's
+    COMMIT closes the WHOLE underlying transaction regardless of how many
+    SAVEPOINTs are open. That silently finalized the outer transaction
+    early: a LATER failure in the same block would ROLLBACK TO SAVEPOINT
+    against an already-committed connection, doing nothing, and every
+    statement so far (including ones correctly issued via tx.execute())
+    would survive the "rollback" instead of being undone.
+    """
+    await db.execute("CREATE TABLE IF NOT EXISTS accounts (name TEXT)")
+
+    with pytest.raises(DatabaseError):
+        async with db.transaction() as tx:
+            await tx.execute("INSERT INTO accounts (name) VALUES ($1)", ["via tx"])
+            # Mistake a plugin could make: reaching for the injected `db`
+            # instead of `tx` while inside the transaction block.
+            await db.execute("INSERT INTO accounts (name) VALUES ($1)", ["via db"])
+            raise DatabaseError("forced failure to trigger rollback")
+
+    rows = await db.query("SELECT name FROM accounts")
+    assert rows == [], (
+        f"Expected the whole transaction to roll back (including the row "
+        f"inserted via db.execute()), but found: {rows}"
+    )

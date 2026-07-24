@@ -55,10 +55,10 @@ RESPONSE CONTRACT:
     # Success (HTTP 200 by default)
     return {"success": True, "data": {...}}
 
-    # Business error (HTTP 200 — client checks the 'success' field)
+    # Business error (HTTP 400 by default — set_status() was never called)
     return {"success": False, "error": "User not found"}
 
-    # Explicit HTTP status override via context
+    # More specific status: set_status() always wins over the default
     context.set_status(404)
     return {"success": False, "error": "User not found"}
 
@@ -81,7 +81,9 @@ RESPONSE CONTRACT:
 HttpContext API:
 ────────────────────────────────────────────────────────────────────────────────
 
-    context.set_status(code: int)           → Override HTTP status code (default: 200)
+    context.set_status(code: int)           → Override HTTP status code
+                                               (default: 200 on success, 400 on
+                                               success:false unless overridden)
     context.set_cookie(key, value, ...)     → Set a response cookie
     context.set_header(key, value)          → Add a custom response header
     context.redirect(url, status=302)       → Redirect to another URL
@@ -116,7 +118,10 @@ REPLACEMENT STANDARD (implement this to swap the backend):
     4. Handler contract: handler(data: dict, context: HttpContext) → dict
        - data: flat merge of path params + query params + body (+ _files if applicable)
        - context: instance of HttpContext (or a compatible duck-type)
-    5. Honor context.status_code and context.binary_content for the HTTP response
+    5. Honor context.status_code and context.binary_content for the HTTP response.
+       If the handler never called context.set_status() and the result dict has
+       success: False, default to HTTP 400 instead of 200 (context._status_explicit
+       tracks whether set_status() was called).
     6. For auth: call auth_validator(token), inject payload into data["_auth"]
     7. On auth failure: return HTTP 401 with {"success": False, "error": "..."}
     8. On unhandled exception: return HTTP 500 with {"success": False, "error": "Internal server error"}
@@ -168,12 +173,18 @@ class HttpContext:
 
     def __init__(self) -> None:
         self._status_code: int = 200
+        self._status_explicit: bool = False
         self._cookies: list[dict] = []
         self._headers: dict[str, str] = {}
 
     def set_status(self, code: int) -> None:
         """
-        Override the HTTP response status code. Default is 200.
+        Override the HTTP response status code.
+
+        Default: 200 if the handler returns {"success": True, ...}; 400 if
+        it returns {"success": False, ...} and set_status() was never called.
+        Call this to pick a more specific code (404, 409, 403...) for a
+        business error — it always wins over the success-based default.
 
         Examples:
             context.set_status(201)  # Created
@@ -181,6 +192,7 @@ class HttpContext:
             context.set_status(204)  # No Content
         """
         self._status_code = code
+        self._status_explicit = True
 
     def set_cookie(
         self,
@@ -403,7 +415,8 @@ class HttpServerTool(BaseTool):
                 calls are guaranteed to have run. Used for boot-time checks across ALL
                 registered routes (e.g. the architecture linter's route-collision scan).
         - HttpContext CAPABILITIES (inside handler):
-            - context.set_status(code: int): Override HTTP status (default: 200).
+            - context.set_status(code: int): Override HTTP status. Default is 200 on
+              success:true; 400 on success:false unless set_status() is called.
             - context.redirect(url: str, status=302): Redirect to another URL.
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
@@ -820,9 +833,13 @@ class HttpServerTool(BaseTool):
             else:
                 result = await run_in_threadpool(handler, data, context)
 
+            status_code = context.status_code
+            if not context._status_explicit and isinstance(result, dict) and result.get("success") is False:
+                status_code = 400
+
             print(
                 f"[HttpServer] ← {request.method} {request.url.path}"
-                f"  req={request_id[:8]}  status={context.status_code}"
+                f"  req={request_id[:8]}  status={status_code}"
             )
 
             # ── Phase 5: Response ──────────────────────────────────────────────
@@ -845,7 +862,7 @@ class HttpServerTool(BaseTool):
                 context.apply_to(response)
                 return response
 
-            json_response = JSONResponse(status_code=context.status_code, content=_serialize(result))
+            json_response = JSONResponse(status_code=status_code, content=_serialize(result))
             context.apply_to(json_response)
             return json_response
 

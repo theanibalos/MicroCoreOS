@@ -528,32 +528,47 @@ class SqliteTool(BaseTool):
 
     async def execute(self, sql: str, params: list | None = None) -> int | None:
         sql, params = _normalize_sql(sql, params)
-        
+
         # Reentrancy check: if the lock is already held by this task, don't acquire it again
         if _write_lock_held_var.get():
-            return await self._do_execute(sql, params)
+            # Nested inside an active db.transaction(): join it instead of
+            # committing here. SQLite's COMMIT closes the WHOLE underlying
+            # transaction regardless of how many SAVEPOINTs are open, so a
+            # commit at this point would silently finalize the outer
+            # transaction early — the outer block's later ROLLBACK TO
+            # SAVEPOINT (on a subsequent failure) would then have nothing
+            # left to undo, breaking atomicity for every statement it already
+            # ran. The outer Transaction.__aexit__ owns commit/rollback here.
+            return await self._do_execute(sql, params, commit=False)
 
         async with self._write_lock:
             token = _write_lock_held_var.set(True)
             try:
-                return await self._do_execute(sql, params)
+                return await self._do_execute(sql, params, commit=True)
             finally:
                 _write_lock_held_var.reset(token)
 
-    async def _do_execute(self, sql: str, params: list | None) -> int | None:
-        """Internal execution logic with retry capability."""
+    async def _do_execute(self, sql: str, params: list | None, commit: bool = True) -> int | None:
+        """Internal execution logic with retry capability.
+
+        commit=False when called from within an already-open outer
+        transaction (see the reentrancy branch in execute()) — the caller
+        owns finalizing the transaction in that case.
+        """
         for attempt in range(3):
             try:
                 if re.search(r"\bRETURNING\b", sql.upper()):
                     cursor = await self._db.execute(sql, params)
                     row = await cursor.fetchone()
-                    await self._db.commit()
+                    if commit:
+                        await self._db.commit()
                     if row is not None:
                         return row[0]
                     return None
                 else:
                     cursor = await self._db.execute(sql, params)
-                    await self._db.commit()
+                    if commit:
+                        await self._db.commit()
                     if sql.strip().upper().startswith("INSERT"):
                         return cursor.lastrowid
                     return cursor.rowcount
@@ -585,24 +600,31 @@ class SqliteTool(BaseTool):
 
     async def execute_many(self, sql: str, params_list: list[list]) -> None:
         sql, params_list = _normalize_sql_many(sql, params_list)
-        
+
         # Reentrancy check
         if _write_lock_held_var.get():
-            await self._do_execute_many(sql, params_list)
+            # See execute()'s reentrancy branch: join the outer transaction
+            # instead of committing here.
+            await self._do_execute_many(sql, params_list, commit=False)
             return
 
         async with self._write_lock:
             token = _write_lock_held_var.set(True)
             try:
-                await self._do_execute_many(sql, params_list)
+                await self._do_execute_many(sql, params_list, commit=True)
             finally:
                 _write_lock_held_var.reset(token)
 
-    async def _do_execute_many(self, sql: str, params_list: list[list]) -> None:
-        """Internal batch execution logic."""
+    async def _do_execute_many(self, sql: str, params_list: list[list], commit: bool = True) -> None:
+        """Internal batch execution logic.
+
+        commit=False when called from within an already-open outer
+        transaction — the caller owns finalizing it in that case.
+        """
         try:
             await self._db.executemany(sql, params_list)
-            await self._db.commit()
+            if commit:
+                await self._db.commit()
         except Exception as e:
             raise DatabaseError(f"Execute many failed: {e}") from e
 

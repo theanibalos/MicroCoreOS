@@ -45,3 +45,8 @@ verification*.log
 # OS files
 .DS_Store
 Thumbs.db
+
+# Stray Node.js artifacts (this is a Python project — these should never
+# appear here; ignored defensively in case a tool/agent creates them again)
+node_modules/
+package-lock.json

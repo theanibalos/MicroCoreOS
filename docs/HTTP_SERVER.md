@@ -76,7 +76,11 @@ async def get_profile(self, data: dict, context: HttpContext):
 
 ### Response Manipulation (`HttpContext`)
 The `context` object allows controlling the raw HTTP response:
-- `context.set_status(201)`: Change status code.
+- `context.set_status(201)`: Change status code. If never called, the default
+  is 200 for `success: true` and **400 for `success: false`** — a business
+  error that never picks a more specific code (404, 409, 403...) still gets a
+  real 4xx, never a bare 200. Call `set_status()` explicitly whenever a more
+  precise code applies; it always wins over the default.
 - `context.set_header("X-App", "Core")`: Add custom header.
 - `context.set_cookie("access_token", value, max_age=3600)`: Set a secure cookie (`HttpOnly=True`, `Secure=True`, `SameSite=Lax` by default).
 - `context.redirect("/dashboard", status=302)`: Redirect the browser. The handler's return value is ignored.
@@ -87,7 +91,8 @@ The `context` object allows controlling the raw HTTP response:
 ## Response Contract
 
 Every endpoint (unless binary) MUST return a JSON envelope:
-- **Success**: `{"success": True, "data": {...}}`
-- **Error**: `{"success": False, "error": "Reason"}`
+- **Success**: `{"success": True, "data": {...}}` — HTTP 200 by default.
+- **Error**: `{"success": False, "error": "Reason"}` — HTTP 400 by default,
+  or whatever `context.set_status()` set explicitly (404, 409, 403...).
 
 The tool automatically catches unhandled exceptions and returns a consistent `500 Internal server error` to the client while logging the real cause server-side.
