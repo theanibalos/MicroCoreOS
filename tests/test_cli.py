@@ -5,6 +5,7 @@ These are the checks that the console script behaves like `uv run main.py`
 even though it starts from a completely different sys.path.
 """
 
+import io
 import os
 import sys
 
@@ -14,6 +15,22 @@ from microcoreos import cli
 def test_help_exits_zero(capsys):
     assert cli.main(["--help"]) == 0
     assert "microcoreos" in capsys.readouterr().out
+
+
+def test_it_prints_emoji_to_a_cp1252_stream(tmp_path, monkeypatch):
+    """
+    Windows encodes a redirected stdout as cp1252, and this CLI's success
+    messages are full of emoji and em dashes. Before `main` reconfigured the
+    stream, `microcoreos new` raised UnicodeEncodeError on its own last line —
+    every time its output was piped, which is what CI does.
+    """
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+
+    assert cli.main(["new", str(tmp_path / "app"), "--no-ai-kit"]) == 0
+
+    sys.stdout.flush()
+    assert "✅" in raw.getvalue().decode("utf-8")
 
 
 def test_unknown_command_exits_two(capsys):
@@ -73,7 +90,7 @@ def test_env_is_loaded_from_the_project_not_from_the_package(tmp_path, monkeypat
     one.
     """
     monkeypatch.delenv("MICROCOREOS_ENV_PROBE", raising=False)
-    (tmp_path / ".env").write_text("MICROCOREOS_ENV_PROBE=from-the-project\n")
+    (tmp_path / ".env").write_text("MICROCOREOS_ENV_PROBE=from-the-project\n", encoding="utf-8")
 
     cli._load_project_env(str(tmp_path))
 

@@ -140,7 +140,7 @@ async def active_db(monkeypatch, *migration_dirs: Path):
     try:
         for migrations_dir in migration_dirs:
             for migration in sorted(migrations_dir.glob("*.sql")):
-                sql = migration.read_text()
+                sql = migration.read_text(encoding="utf-8")
                 tables.extend(_CREATE_TABLE_RE.findall(sql))
                 for statement in _statements(sql):
                     await tool.execute(statement)

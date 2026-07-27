@@ -38,7 +38,7 @@ async def test_migration_topological_sort_intent(db, tmp_path, monkeypatch):
     # Domain A: users (no dependencies)
     users_dir = domains_dir / "users" / "migrations"
     users_dir.mkdir(parents=True)
-    (users_dir / "001_create_users.sql").write_text("CREATE TABLE users (id int);")
+    (users_dir / "001_create_users.sql").write_text("CREATE TABLE users (id int);", encoding="utf-8")
     
     # Domain B: profiles (depends on users)
     profiles_dir = domains_dir / "profiles" / "migrations"
@@ -46,7 +46,8 @@ async def test_migration_topological_sort_intent(db, tmp_path, monkeypatch):
     # Note the 000 prefix: alphabetically it goes first, but the dependency moves it last
     (profiles_dir / "000_create_profiles.sql").write_text(
         "-- depends: users/001_create_users.sql\n"
-        "CREATE TABLE profiles (user_id int, FOREIGN KEY(user_id) REFERENCES users(id));"
+        "CREATE TABLE profiles (user_id int, FOREIGN KEY(user_id) REFERENCES users(id));",
+        encoding="utf-8",
     )
     
     # Change into the temp directory so the tool finds 'domains/'
@@ -79,7 +80,7 @@ async def test_db_auto_migrate_false_skips_migrations(db, tmp_path, monkeypatch)
     domains_dir = tmp_path / "domains"
     users_dir = domains_dir / "users" / "migrations"
     users_dir.mkdir(parents=True)
-    (users_dir / "001_create_users.sql").write_text("CREATE TABLE users (id int);")
+    (users_dir / "001_create_users.sql").write_text("CREATE TABLE users (id int);", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
@@ -103,7 +104,8 @@ async def test_migration_transaction_safety_intent(db, tmp_path, monkeypatch):
     # This migration creates a table and then fails
     (blog_dir / "001_fail.sql").write_text(
         "CREATE TABLE blog_posts (id int);\n"
-        "INVALID SQL STATEMENT;"
+        "INVALID SQL STATEMENT;",
+        encoding="utf-8",
     )
     
     monkeypatch.chdir(tmp_path)

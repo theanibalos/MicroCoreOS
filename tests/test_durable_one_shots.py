@@ -48,7 +48,7 @@ async def db(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "test.db"))
     tool = SqliteTool()
     await tool.setup()
-    await tool.execute(MIGRATION.read_text())  # the domain's real migration
+    await tool.execute(MIGRATION.read_text(encoding="utf-8"))  # the domain's real migration
     yield tool
     await tool.shutdown()
 

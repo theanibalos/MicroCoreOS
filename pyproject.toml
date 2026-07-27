@@ -87,6 +87,17 @@ markers = [
 [tool.ruff.lint]
 # E701 (one-line `if x: return y`) is an accepted idiom in this codebase.
 ignore = ["E701"]
+# PLW1514: `open`/`read_text`/`write_text` without an explicit encoding. On
+# Linux the default is UTF-8 and the omission is invisible; on Windows it is
+# cp1252, and any file with an em dash in it fails to read. Windows CI caught
+# this once across 82 sites in tests/ — the rule is here so it stays caught.
+# It is still a preview rule, hence the flag.
+# `select` is pinned to ruff's current default set plus that one rule: preview
+# mode also widens the default selection, and this project is not opting into
+# the other few hundred rules today.
+select = ["E4", "E7", "E9", "F", "PLW1514"]
+preview = true
+explicit-preview-rules = true
 
 [dependency-groups]
 dev = [

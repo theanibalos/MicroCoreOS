@@ -15,7 +15,7 @@ def make_plugin():
 def _write_plugin(root, domain, filename, source):
     plugins_dir = root / "domains" / domain / "plugins"
     plugins_dir.mkdir(parents=True, exist_ok=True)
-    (plugins_dir / filename).write_text(source)
+    (plugins_dir / filename).write_text(source, encoding="utf-8")
 
 
 CREATE_SRC = """
@@ -178,13 +178,15 @@ async def test_waived_declaration_drops_out_of_the_comparison(tmp_path, monkeypa
     (plugins / "create_user_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class CreateUserRequest(BaseModel):\n"
-        "    password: str = Field(min_length=8)\n"
+        "    password: str = Field(min_length=8)\n",
+        encoding="utf-8",
     )
     (plugins / "login_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class LoginRequest(BaseModel):\n"
         "    password: str = Field(min_length=1, "
-        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n"
+        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
@@ -200,17 +202,20 @@ async def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path, monkey
         "from pydantic import BaseModel, Field\n"
         "class LoginRequest(BaseModel):\n"
         "    password: str = Field(min_length=1, "
-        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n"
+        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n",
+        encoding="utf-8",
     )
     (plugins / "create_user_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class CreateUserRequest(BaseModel):\n"
-        "    password: str = Field(min_length=8)\n"
+        "    password: str = Field(min_length=8)\n",
+        encoding="utf-8",
     )
     (plugins / "update_user_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class UpdateUserRequest(BaseModel):\n"
-        "    password: str = Field(min_length=6)\n"
+        "    password: str = Field(min_length=6)\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
@@ -230,12 +235,14 @@ async def test_a_waiver_with_no_reason_is_not_honoured(tmp_path, monkeypatch):
     (plugins / "create_user_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class CreateUserRequest(BaseModel):\n"
-        "    password: str = Field(min_length=8)\n"
+        "    password: str = Field(min_length=8)\n",
+        encoding="utf-8",
     )
     (plugins / "login_plugin.py").write_text(
         "from pydantic import BaseModel, Field\n"
         "class LoginRequest(BaseModel):\n"
-        "    password: str = Field(min_length=1, json_schema_extra={'divergence_ok': ''})\n"
+        "    password: str = Field(min_length=1, json_schema_extra={'divergence_ok': ''})\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)

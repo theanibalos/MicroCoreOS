@@ -26,7 +26,8 @@ async def test_detects_cross_domain_import(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "orders" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "place_order_plugin.py").write_text(
-        "from domains.users.models.user import UserEntity\n"
+        "from domains.users.models.user import UserEntity\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
@@ -45,7 +46,8 @@ async def test_same_domain_import_is_allowed(tmp_path, monkeypatch):
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "create_user_plugin.py").write_text(
         "from microcoreos import BasePlugin\n"
-        "from domains.users.models.user import DEFAULT_ROLES\n"
+        "from domains.users.models.user import DEFAULT_ROLES\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
@@ -57,7 +59,8 @@ async def test_detects_hardcoded_tool_import(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "users" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "create_user_plugin.py").write_text(
-        "from tools.sqlite.sqlite_tool import SqliteTool\n"
+        "from tools.sqlite.sqlite_tool import SqliteTool\n",
+        encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
@@ -71,7 +74,7 @@ async def test_detects_hardcoded_tool_import(tmp_path, monkeypatch):
 async def test_on_boot_publishes_violations_to_registry(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "orders" / "plugins"
     plugins_dir.mkdir(parents=True)
-    (plugins_dir / "place_order_plugin.py").write_text("import domains.users.models.user\n")
+    (plugins_dir / "place_order_plugin.py").write_text("import domains.users.models.user\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     container = MagicMock()

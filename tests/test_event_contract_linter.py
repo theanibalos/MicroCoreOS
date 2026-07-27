@@ -338,7 +338,7 @@ class SamplePayload(BaseModel):
 class SamplePublisherPlugin:
     async def execute(self, data, context=None):
         await self.bus.publish("sample.created", SamplePayload(id=1).model_dump())
-''')
+''', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     container = MagicMock()

@@ -59,7 +59,7 @@ def test_new_writes_env_and_pyproject_when_absent(tmp_path):
     cli.main(["new", str(target)])
 
     assert (target / ".env").is_file()
-    assert "microcoreos" in (target / "pyproject.toml").read_text()
+    assert "microcoreos" in (target / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_new_never_clobbers_an_existing_env_or_pyproject(tmp_path):
@@ -67,12 +67,12 @@ def test_new_never_clobbers_an_existing_env_or_pyproject(tmp_path):
     pyproject and that .env belong to the user."""
     target = tmp_path / "demo"
     target.mkdir()
-    (target / ".env").write_text("AUTH_SECRET_KEY=mine\n")
-    (target / "pyproject.toml").write_text('[project]\nname = "mine"\n')
+    (target / ".env").write_text("AUTH_SECRET_KEY=mine\n", encoding="utf-8")
+    (target / "pyproject.toml").write_text('[project]\nname = "mine"\n', encoding="utf-8")
 
     assert cli.main(["new", str(target)]) == 0
-    assert (target / ".env").read_text() == "AUTH_SECRET_KEY=mine\n"
-    assert (target / "pyproject.toml").read_text() == '[project]\nname = "mine"\n'
+    assert (target / ".env").read_text(encoding="utf-8") == "AUTH_SECRET_KEY=mine\n"
+    assert (target / "pyproject.toml").read_text(encoding="utf-8") == '[project]\nname = "mine"\n'
 
 
 def test_new_refuses_to_overwrite_existing_source(tmp_path, capsys):
@@ -124,7 +124,7 @@ def test_new_writes_a_human_readme_named_after_the_project(tmp_path):
     target = tmp_path / "my_shop"
     cli.main(["new", str(target)])
 
-    readme = (target / "README.md").read_text()
+    readme = (target / "README.md").read_text(encoding="utf-8")
     assert readme.startswith("# my-shop")
     # The plugin example is full of dict literals — proof the template is not
     # run through .format().
@@ -136,7 +136,7 @@ def test_new_never_clobbers_an_existing_readme(tmp_path):
     """`uv init` leaves one behind, and it is the user's."""
     target = tmp_path / "demo"
     target.mkdir()
-    (target / "README.md").write_text("# mine\n")
+    (target / "README.md").write_text("# mine\n", encoding="utf-8")
 
     cli.main(["new", str(target)])
-    assert (target / "README.md").read_text() == "# mine\n"
+    assert (target / "README.md").read_text(encoding="utf-8") == "# mine\n"

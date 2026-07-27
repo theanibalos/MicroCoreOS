@@ -476,7 +476,8 @@ async def test_endpoint_reads_active_checklist(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "plans").mkdir()
     (tmp_path / "plans" / "active_plan.md").write_text(
-        "- [ ] `domains/orders/plugins/create_order_plugin.py`"
+        "- [ ] `domains/orders/plugins/create_order_plugin.py`",
+        encoding="utf-8",
     )
     container = MagicMock()
     container.registry.get_domain_metadata.return_value = {}

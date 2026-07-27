@@ -92,10 +92,26 @@ Linux — plus the filesystem-facing suites. `tests/test_upgrade.py` pins the
 same assertion so it fails locally too, though only the Windows job gives it
 teeth.
 
+**It paid for itself on its first run**, and not with the backslash it was
+written to catch. Two locale bugs came out instead, both invisible on Linux
+because there the default encoding *is* UTF-8:
+
+- 82 `read_text()` / `write_text()` / `open()` calls across `tests/` had no
+  explicit encoding. On Windows that is cp1252, and the first scaffolded file
+  with an em dash in it fails to decode. All 82 now pass `encoding="utf-8"`,
+  and ruff's `PLW1514` is selected in `pyproject.toml` so the next one cannot
+  merge. (Shipped code was already explicit throughout; this was tests only.)
+- Worse, and never reached because the suite failed first: the CLI itself
+  crashed. Every success message it prints carries an emoji or an em dash, and
+  a redirected stdout on Windows — a pipe, a file, CI — encodes as cp1252, so
+  `microcoreos new` raised `UnicodeEncodeError` on its own last line.
+  `cli._stdio_speaks_unicode()` reconfigures the stream at entry; a real
+  Windows console already reports utf-8, so it is a no-op there and everywhere
+  else. `tests/test_cli.py` pins it against a cp1252 stream, on any platform.
+
 **Still not covered:** *booting* on Windows. The job stops at the CLI and
 filesystem surface on purpose — the boot half needs service containers Windows
-runners do not offer. And this is CI added, not CI observed: it is verified on
-the next push, not in the session that wrote it.
+runners do not offer.
 
 ---
 

@@ -13,7 +13,7 @@ def make_plugin():
 def _write_migration(root, domain, filename, sql):
     migrations = root / "domains" / domain / "migrations"
     migrations.mkdir(parents=True, exist_ok=True)
-    (migrations / filename).write_text(sql)
+    (migrations / filename).write_text(sql, encoding="utf-8")
 
 
 @pytest.mark.anyio

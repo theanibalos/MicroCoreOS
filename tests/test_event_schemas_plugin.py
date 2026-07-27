@@ -26,7 +26,7 @@ def anyio_backend():
 def fixture_domain(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "fixture" / "plugins"
     plugins_dir.mkdir(parents=True)
-    (plugins_dir / "sample_publisher.py").write_text(FIXTURE_SOURCE)
+    (plugins_dir / "sample_publisher.py").write_text(FIXTURE_SOURCE, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
 

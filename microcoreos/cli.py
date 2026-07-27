@@ -102,6 +102,7 @@ def _looks_like_a_project(root: str) -> bool:
 
 def run(argv: list[str]) -> int:
     """Boot the Kernel. With --boot-tool, boot ONE tool in isolation and exit."""
+    _stdio_speaks_unicode()  # Reached without `main` as the reload child of `dev`.
     root = _ensure_project_on_path()
     if not _looks_like_a_project(root):
         # The Kernel would otherwise discover nothing and announce "System
@@ -135,6 +136,7 @@ def run(argv: list[str]) -> int:
 
 def dev(argv: list[str]) -> int:
     """Boot with auto-reload. watchfiles is a dev dependency, hence the lazy import."""
+    _stdio_speaks_unicode()  # Reached without `main` as the root `cli.py` shim.
     try:
         from watchfiles import run_process
     except ImportError:
@@ -158,7 +160,31 @@ def dev(argv: list[str]) -> int:
 COMMANDS = {"new": new, "add": add, "upgrade": upgrade, "run": run, "dev": dev}
 
 
+def _stdio_speaks_unicode() -> None:
+    """Every message this CLI prints contains an emoji or an em dash.
+
+    On Windows that is not decoration, it is a crash: when stdout is a pipe or a
+    file rather than a console, Python encodes it as cp1252 and `print("✅")`
+    raises UnicodeEncodeError before the command does any work. Redirecting
+    output is exactly what CI, `| tee` and editors' terminals do.
+
+    A real Windows console already reports utf-8, so this is a no-op there and
+    everywhere on Linux and macOS. `backslashreplace` is the belt to the braces:
+    whatever the stream turns out to be, printing must never be the thing that
+    fails.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None) or ""
+        if encoding.lower().replace("-", "").replace("_", "") == "utf8":
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, OSError, ValueError):
+            pass  # Not a reconfigurable text stream; nothing to do but try.
+
+
 def main(argv: list[str] | None = None) -> int:
+    _stdio_speaks_unicode()
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if argv and argv[0] in ("-h", "--help", "help"):

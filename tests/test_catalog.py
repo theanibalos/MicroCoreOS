@@ -55,7 +55,7 @@ def test_add_moves_tool_and_domain_and_writes_env(project):
     assert (project / "domains" / "scheduler" / "plugins").is_dir()
     # Moved, not copied: the catalog must not offer it twice.
     assert not (project / "extras" / "available_tools" / "scheduler").exists()
-    assert "SCHEDULER_ENABLED=true" in (project / ".env").read_text()
+    assert "SCHEDULER_ENABLED=true" in (project / ".env").read_text(encoding="utf-8")
 
 
 def test_add_installs_a_driver_into_the_event_bus(project):
@@ -64,15 +64,15 @@ def test_add_installs_a_driver_into_the_event_bus(project):
 
     assert (project / "tools" / "event_bus" / "kafka_driver.py").is_file()
     assert not (project / "tools" / "kafka").exists()
-    assert "EVENT_BUS_DRIVER=kafka" in (project / ".env").read_text()
+    assert "EVENT_BUS_DRIVER=kafka" in (project / ".env").read_text(encoding="utf-8")
 
 
 def test_add_never_overwrites_a_setting_you_already_chose(project):
-    (project / ".env").write_text("PG_PASSWORD=the-one-i-typed\n")
+    (project / ".env").write_text("PG_PASSWORD=the-one-i-typed\n", encoding="utf-8")
 
     cli.main(["add", "postgres", "--no-install"])
 
-    env = (project / ".env").read_text()
+    env = (project / ".env").read_text(encoding="utf-8")
     assert "PG_PASSWORD=the-one-i-typed" in env
     assert "PG_PASSWORD=postgres" not in env
     assert "PG_HOST=localhost" in env  # the ones that were missing still land
@@ -80,10 +80,10 @@ def test_add_never_overwrites_a_setting_you_already_chose(project):
 
 def test_add_is_idempotent(project):
     cli.main(["add", "postgres", "--no-install"])
-    first = (project / ".env").read_text()
+    first = (project / ".env").read_text(encoding="utf-8")
 
     assert cli.main(["add", "postgres", "--no-install"]) == 0
-    assert (project / ".env").read_text() == first
+    assert (project / ".env").read_text(encoding="utf-8") == first
 
 
 def test_add_refuses_an_unknown_extra(project, capsys):
