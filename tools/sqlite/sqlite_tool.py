@@ -23,6 +23,22 @@ PUBLIC CONTRACT (IDENTICAL to PostgreSQL — same SQL, same swap):
 
     ok = await db.health_check()
 
+ERRORS (IDENTICAL to PostgreSQL — same classification, same swap):
+─────────────────────────────────────────────────────────────────
+    Every failure raises DatabaseError carrying `kind` from a CLOSED
+    vocabulary (see ERROR_KINDS), plus best-effort `table` / `columns`:
+
+        try:
+            await db.execute("INSERT INTO users (email) VALUES ($1)", [email])
+        except Exception as e:
+            if getattr(e, "kind", None) == "unique_violation":
+                ...
+
+    Plugins branch on `kind`, NEVER on str(e): the message text is
+    engine-specific ("UNIQUE constraint failed: users.email" here,
+    'duplicate key value violates unique constraint "users_email_key"' on
+    PostgreSQL), so text matching breaks silently on the swap.
+
 PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
               This tool converts them internally to '?' for SQLite.
               This enables direct SQLite <-> PostgreSQL swap without changing a line.
@@ -57,9 +73,61 @@ _write_lock_held_var: ContextVar[bool] = ContextVar("sqlite_write_lock_held", de
 # EXCEPTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Error-kind vocabulary — CLOSED, shared VERBATIM with the PostgreSQL tool.
+# Same idea as the describe_schema type vocabulary, applied to failures: each
+# engine reports constraint violations its own way (SQLite: message text,
+# PostgreSQL: SQLSTATE), so the tool classifies and every db tool exposes the
+# SAME set of values. Adding a value here means adding it to EVERY db tool.
+ERROR_KINDS = (
+    "unique_violation",
+    "foreign_key_violation",
+    "not_null_violation",
+    "check_violation",
+    "unknown",
+)
+
+
 class DatabaseError(Exception):
-    """Generic database error. Wraps aiosqlite exceptions."""
-    pass
+    """Generic database error. Wraps aiosqlite exceptions.
+
+    Carries the engine-independent classification of the failure:
+
+        kind:    one of ERROR_KINDS — ALWAYS present.
+        table:   table the violation happened on, or None.
+        columns: tuple of column names involved, possibly empty.
+
+    Plugins branch on `kind`, NEVER on str(e) — the message text is
+    engine-specific and changes under your feet on an engine swap:
+
+        except Exception as e:
+            if getattr(e, "kind", None) == "unique_violation":
+                return {"success": False, "error": "Email already in use"}
+
+    Duck-typed on purpose: a plugin CANNOT import this class (importing from
+    tools/ is an architecture violation — see the architecture linter), so the
+    contract is "an exception carrying these attributes", which any db tool
+    satisfies without plugins knowing which engine is active.
+
+    `table`/`columns` are populated ONLY where EVERY supported engine can
+    supply them: unique and NOT NULL violations. SQLite reports no target
+    whatsoever for FOREIGN KEY / CHECK failures ("FOREIGN KEY constraint
+    failed", full stop), so those carry `kind` only on BOTH engines — better a
+    field that is always empty than one that exists on PostgreSQL and silently
+    vanishes after a swap. The raw engine message stays in str(e) for logs.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "unknown",
+        table: str | None = None,
+        columns: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.table = table
+        self.columns = tuple(columns)
 
 
 class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
@@ -69,6 +137,70 @@ class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
     (infrastructure failure), unlike plain DatabaseError (likely business error).
     """
     pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ERROR CLASSIFICATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# SQLite reports constraint failures ONLY as message text (no error codes
+# reachable through sqlite3/aiosqlite). The formats below are stable and
+# English regardless of locale:
+#
+#   "UNIQUE constraint failed: users.email"       (multi-column: ", "-joined)
+#   "NOT NULL constraint failed: users.name"
+#   "FOREIGN KEY constraint failed"               (never carries a target)
+#   "CHECK constraint failed: age_positive"       (constraint name, not a column)
+#
+
+_UNIQUE_RE = re.compile(r"UNIQUE constraint failed:\s*(?P<targets>[^\n]+)")
+_NOT_NULL_RE = re.compile(r"NOT NULL constraint failed:\s*(?P<targets>[^\n]+)")
+_FOREIGN_KEY_RE = re.compile(r"FOREIGN KEY constraint failed")
+_CHECK_RE = re.compile(r"CHECK constraint failed")
+
+
+def _parse_targets(raw: str) -> tuple[str | None, tuple[str, ...]]:
+    """'users.email, users.tenant' → ('users', ('email', 'tenant'))."""
+    table: str | None = None
+    columns: list[str] = []
+    for target in raw.split(","):
+        target = target.strip()
+        if not target:
+            continue
+        if "." in target:
+            target_table, _, column = target.rpartition(".")
+            table = table or target_table
+            columns.append(column)
+        else:
+            columns.append(target)
+    return table, tuple(columns)
+
+
+def _classify_error(exc: Exception) -> dict:
+    """Maps a sqlite3/aiosqlite exception to the shared error contract.
+
+    Returns the kwargs for DatabaseError. Unrecognized failures map to
+    "unknown" — the contract never guesses.
+    """
+    message = str(exc)
+
+    match = _UNIQUE_RE.search(message)
+    if match:
+        table, columns = _parse_targets(match.group("targets"))
+        return {"kind": "unique_violation", "table": table, "columns": columns}
+
+    match = _NOT_NULL_RE.search(message)
+    if match:
+        table, columns = _parse_targets(match.group("targets"))
+        return {"kind": "not_null_violation", "table": table, "columns": columns}
+
+    if _FOREIGN_KEY_RE.search(message):
+        return {"kind": "foreign_key_violation"}
+
+    if _CHECK_RE.search(message):
+        return {"kind": "check_violation"}
+
+    return {"kind": "unknown"}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -226,7 +358,7 @@ class Transaction:
             rows = await cursor.fetchall()
             return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
-            raise DatabaseError(f"Transaction query failed: {e}") from e
+            raise DatabaseError(f"Transaction query failed: {e}", **_classify_error(e)) from e
 
     async def query_one(self, sql: str, params: list | None = None) -> dict | None:
         """SELECT a single record within the transaction. Returns dict or None."""
@@ -237,7 +369,7 @@ class Transaction:
             row = await cursor.fetchone()
             return dict(zip(columns, row)) if row is not None else None
         except Exception as e:
-            raise DatabaseError(f"Transaction query_one failed: {e}") from e
+            raise DatabaseError(f"Transaction query_one failed: {e}", **_classify_error(e)) from e
 
     async def execute(self, sql: str, params: list | None = None) -> int | None:
         """
@@ -262,7 +394,7 @@ class Transaction:
                     return cursor.lastrowid
                 return cursor.rowcount
         except Exception as e:
-            raise DatabaseError(f"Transaction execute failed: {e}") from e
+            raise DatabaseError(f"Transaction execute failed: {e}", **_classify_error(e)) from e
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -455,7 +587,7 @@ class SqliteTool(BaseTool):
                     # transaction __aexit__ will COMMIT
             except Exception as e:
                 # transaction __aexit__ will ROLLBACK
-                raise DatabaseError(f"Migration failed for {key}: {e}") from e
+                raise DatabaseError(f"Migration failed for {key}: {e}", **_classify_error(e)) from e
 
             print(f"  [Migration] ✅ Applied {key}")
 
@@ -500,9 +632,9 @@ class SqliteTool(BaseTool):
                     if attempt < 2:
                         await asyncio.sleep(0.05 * (attempt + 1))
                         continue
-                raise DatabaseError(f"Query failed: {e}") from e
+                raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
             except Exception as e:
-                raise DatabaseError(f"Query failed: {e}") from e
+                raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: query_one() ──────────────────────────
     #
@@ -534,9 +666,9 @@ class SqliteTool(BaseTool):
                     if attempt < 2:
                         await asyncio.sleep(0.05 * (attempt + 1))
                         continue
-                raise DatabaseError(f"Query failed: {e}") from e
+                raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
             except Exception as e:
-                raise DatabaseError(f"Query failed: {e}") from e
+                raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: execute() ────────────────────────────
     #
@@ -622,9 +754,9 @@ class SqliteTool(BaseTool):
                     if attempt < 2:
                         await asyncio.sleep(0.05 * (attempt + 1))
                         continue
-                raise DatabaseError(f"Execute failed: {e}") from e
+                raise DatabaseError(f"Execute failed: {e}", **_classify_error(e)) from e
             except Exception as e:
-                raise DatabaseError(f"Execute failed: {e}") from e
+                raise DatabaseError(f"Execute failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: execute_many() ───────────────────────
     #
@@ -671,7 +803,7 @@ class SqliteTool(BaseTool):
             if commit:
                 await self._db.commit()
         except Exception as e:
-            raise DatabaseError(f"Execute many failed: {e}") from e
+            raise DatabaseError(f"Execute many failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: transaction() ────────────────────────
     #
