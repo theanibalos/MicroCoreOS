@@ -1,5 +1,4 @@
 import ast
-import pytest
 from tools.context.context_tool import ContextTool
 
 
