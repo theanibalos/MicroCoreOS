@@ -45,7 +45,8 @@ HTTP Server Tool (http):
                 calls are guaranteed to have run. Used for boot-time checks across ALL
                 registered routes (e.g. the architecture linter's route-collision scan).
         - HttpContext CAPABILITIES (inside handler):
-            - context.set_status(code: int): Override HTTP status (default: 200).
+            - context.set_status(code: int): Override HTTP status. Default is 200 on
+              success:true; 400 on success:false unless set_status() is called.
             - context.redirect(url: str, status=302): Redirect to another URL.
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
@@ -275,6 +276,13 @@ Async SQLite Persistence Tool (sqlite):
             - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
               Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
             - await health_check() → bool: Verify database connectivity.
+            - await describe_schema() → dict: Live schema of the active database:
+              {table: {internal, columns, unique, foreign_keys}}.
+              Column types are normalized to a closed vocabulary
+              (text/int/float/bool/timestamp/json/blob) so the same migration
+              yields the same description on any engine.
+              Tables whose name starts with "_" are marked internal;
+              engine-owned tables are excluded.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
           topological sort (alphabetical by default). Migrations run VERBATIM (no
@@ -322,7 +330,14 @@ Scheduler Tool (scheduler):
 
 ### `devtools`
 - **Tables**: none
-- **Endpoints**: GET /system/events/schemas, GET /system/lint, POST /system/plan/validate
+- **Endpoints**:
+  - `GET /system/events/schemas`
+    - **res**: EventSchemasData(schemas: dict)
+  - `GET /system/lint`
+    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str])
+  - `POST /system/plan/validate`
+    - **req**: plan: Optional[dict], plan_yaml: Optional[str]
+    - **res**: ValidatePlanData(valid: bool, errors: list[PlanViolation(rule: int, severity: str, where: str, detail: str)], warnings: list[PlanViolation(rule: int, severity: str, where: str, detail: str)])
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
@@ -330,23 +345,61 @@ Scheduler Tool (scheduler):
 
 ### `ping`
 - **Tables**: none
-- **Endpoints**: GET /ping
+- **Endpoints**:
+  - `GET /ping`
+    - **res**: PingData(status: str, message: str)
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: http, logger
 - **Plugins**: ping.PingPlugin
 
 ### `system`
-- **Table `scheduler_one_shot`**: job_id (str), run_at_epoch (float), event (str), payload (str)
-- **Endpoints**: GET /system/events, GET /system/metrics, GET /system/status, GET /system/traces/flat, GET /system/traces/tree, SSE /system/events/stream, SSE /system/logs/stream, SSE /system/metrics/stream, SSE /system/traces/stream
+- **Table `scheduler_one_shots`** (storage): job_id (text, PK), run_at_epoch (float, NOT NULL), event (text, NOT NULL), payload (text, NOT NULL)
+- **Model `SchedulerOneShotEntity`** (domain vocabulary): job_id: str, run_at_epoch: float, event: str, payload: str
+- **Endpoints**:
+  - `GET /system/events`
+    - **res**: SystemEventsData(events: list[EventEntry(event: str, subscribers: list[str], last_emitters: list[str], times_fired: int)])
+  - `GET /system/metrics`
+    - **res**: list[MetricRecord(tool: str, method: str, duration_ms: float, success: bool, timestamp: float)]
+  - `GET /system/status`
+    - **res**: SystemStatusData(tools: list[ToolStatus(name: str, status: str, message: Optional[str])], plugins: list[PluginStatus(name: str, domain: Optional[str], status: str, error: Optional[str], tools: list[str])])
+  - `GET /system/traces/flat`
+    - **res**: list[TraceFlatNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int])]
+  - `GET /system/traces/tree`
+    - **res**: list[TraceNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int], children: list['TraceNode'])]
+  - `SSE /system/events/stream`
+  - `SSE /system/logs/stream`
+  - `SSE /system/metrics/stream`
+  - `SSE /system/traces/stream`
 - **Events emitted**: `event.delivery.failed` (attempts, error, event, event_id, subscriber)
 - **Events consumed**: system.one_shot.cancel, system.one_shot.schedule
 - **Dependencies**: config, container, db, event_bus, http, logger, registry, scheduler
 - **Plugins**: system.DurableOneShotsPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
-- **Table `user`**: name (str), email (EmailStr), password_hash (any), roles (list[str])
-- **Endpoints**: DELETE /users/{user_id}, GET /users, GET /users/me, GET /users/{user_id}, POST /auth/login, POST /auth/logout, POST /users, PUT /users/{user_id}
+- **Table `users`** (storage): id (int, PK), name (text, NOT NULL), email (text, NOT NULL), password_hash (text, NOT NULL), roles (text, NOT NULL, default '["user"]') — UNIQUE(email)
+- **Model `UserEntity`** (domain vocabulary): id: int | None, name: str, email: EmailStr, roles: list[str]
+- **Endpoints**:
+  - `DELETE /users/{user_id}`
+    - **res**: None
+  - `GET /users`
+    - **req**: limit: int, offset: int
+    - **res**: ListUsersData(users: List[UserData(id: int, name: str, email: EmailStr)], limit: int, offset: int)
+  - `GET /users/me`
+    - **res**: UserData(id: int, name: str, email: EmailStr, roles: list[str])
+  - `GET /users/{user_id}`
+    - **res**: UserData(id: int, name: str, email: EmailStr)
+  - `POST /auth/login`
+    - **req**: email: EmailStr, password: str
+    - **res**: LoginData(token: str)
+  - `POST /auth/logout`
+    - **res**: None
+  - `POST /users`
+    - **req**: name: str, email: EmailStr, password: str
+    - **res**: CreatedUserData(id: int, name: str, email: EmailStr, roles: list[str])
+  - `PUT /users/{user_id}`
+    - **req**: name: str | None, email: EmailStr | None, password: str | None
+    - **res**: None
 - **Events emitted**: `user.created` (email, id, roles), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
 - **Events consumed**: user.created
 - **Dependencies**: auth, db, event_bus, http, logger, state
@@ -410,6 +463,22 @@ follow-ups.
    ownership via `data["_auth"]["sub"]`.
 9. **Always pass `response_model=`** to `add_endpoint`, and `Field(...)`
    constraints on every request field.
+10. **Field names are not yours to invent.** Anything backed by a table column
+    carries that column's EXACT name — the `Table` lines above are the source
+    (they are read from the live database, so they are the real names). Never
+    rename in transit: `email` stays `email`, `user_id` stays `user_id`.
+    For the fields nothing else pins, use these spellings and no synonyms:
+
+    | Purpose | Use | Never |
+    |---|---|---|
+    | pagination | `limit`, `offset` | `page`, `per_page`, `take`, `skip` |
+    | free-text search | `q` | `query`, `search`, `term` |
+    | list totals (inside `data`) | `total`, `has_more` | `total_count`, `count`, `next_cursor` |
+    | sorting | `sort_by`, `order` (`asc`/`desc`) | `sort`, `orderBy`, `direction` |
+
+    Every executor in a wave reads this same table, which is what keeps the API
+    coherent without any of you coordinating: your feature is written in
+    isolation, but its vocabulary is shared.
 
 ### Templates — one per deliverable type, copy the one your task matches
 

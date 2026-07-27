@@ -11,6 +11,11 @@ def anyio_backend():
 async def db(monkeypatch, tmp_path):
     db_file = tmp_path / "test.db"
     monkeypatch.setenv("SQLITE_DB_PATH", str(db_file))
+    # setup() now applies migrations itself, so chdir BEFORE it: otherwise the
+    # fixture would migrate the real repo's domains/ into the temp database.
+    # tmp_path has no domains/ yet, so the fixture's own run is a no-op and each
+    # test builds its scenario and triggers _run_migrations() explicitly.
+    monkeypatch.chdir(tmp_path)
     tool = SqliteTool()
     await tool.setup()
     yield tool
@@ -48,7 +53,7 @@ async def test_migration_topological_sort_intent(db, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     
     # Run boot (which applies migrations)
-    await db.on_boot_complete(None)
+    await db._run_migrations()
     
     # Verify BOTH tables exist (if ordering failed, the profiles FK would error because users would not exist)
     tables = await db.query("SELECT name FROM sqlite_master WHERE type='table'")
@@ -79,7 +84,7 @@ async def test_db_auto_migrate_false_skips_migrations(db, tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
 
-    await db.on_boot_complete(None)
+    await db._run_migrations()
 
     tables = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
     assert tables == []
@@ -104,7 +109,7 @@ async def test_migration_transaction_safety_intent(db, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     
     with pytest.raises(Exception):
-        await db.on_boot_complete(None)
+        await db._run_migrations()
         
     # The blog_posts table must NOT exist (rollback)
     tables = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='blog_posts'")

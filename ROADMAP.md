@@ -87,6 +87,273 @@ is free observability: sustained injected failures end in
 
 ---
 
+**Issue 37 — 🟡 Field-constraint divergence linter (the third cross-feature invariant)**
+
+`1 file = 1 feature` trades duplication for locality — a deliberate and correct
+trade when the writer is an agent: rewriting 120 lines is cheaper than
+refactoring an abstraction, and "change it in 40 places" stopped being work the
+moment traversing the repo became a 10-minute job. **The residual cost is not
+effort, it is detection**: nobody greps for a rule they forgot exists.
+
+The failure mode is **semantic divergence** — not duplicated code, a duplicated
+*decision* that later drifts apart:
+
+- three plugins validate price as `gt=0`, `ge=0` and `> 0`; three tests pass;
+  the system now holds three definitions of "valid price" and nothing is red.
+- two consumers of the same event re-declare tolerant-reader models, one reads
+  `total_cents`, the other `total`; the publisher renames; one breaks loudly,
+  the other silently takes a default.
+
+**Why no existing check sees it:** a black-box test proves that a feature
+honors ITS contract, never that two features honor THE SAME contract.
+Divergence is a property *between* features, so no per-feature test can observe
+it, by construction rather than by omission. This is the same species as
+**Issue 26 (route collisions)** and **Issue 27 (table ownership)** — cross-feature
+invariants, invisible from inside any single plugin, and both solved the same
+way. This is the third one.
+
+**Mechanism** — inside `ArchitectureLinterPlugin` (no new plugin, same as 26/27),
+static AST scan of `domains/*/plugins/*_plugin.py` at boot, same timing as the
+table-ownership scan (no pre-mount hook needed: unlike routes, nothing here is
+registered at runtime). Collect every `pydantic.Field(...)` constraint per field
+name, group, and warn when the same name carries different constraints. Registry
+metadata `field_divergence_warnings`; surfaced in `GET /system/lint`; warn-only
+at boot, hard gate in CI (Issue 33). Zero core changes.
+
+**The design constraint that decides whether it is useful or noise:** a shared
+NAME is not a shared CONCEPT — `name` in users and `name` in products differ
+legitimately, and a naive global comparison produces enough false positives to
+be ignored, which is worse than not shipping it. Scoping rule:
+
+1. **Event payload keys → compare fleet-wide.** Here the contract genuinely IS
+   shared (the publisher owns it, Issue 29), so any divergence is a real defect
+   and pairs with the existing event-contract linter.
+2. **Request/response fields → compare within a domain only.** Same domain,
+   same name, different constraints is almost always a mistake.
+3. **Cross-domain request fields → silent by default**, opt-in via an explicit
+   list of names declared as system-wide (`email`, `price`, `currency`...).
+
+Out of scope by decision: divergence expressed in SQL predicates
+(`deleted_at IS NULL` vs `status = 'active'` for "active user"). That is semantic
+equivalence of queries, not constraint comparison — a different and much harder
+problem, and pretending to cover it would make the linter dishonest about what
+it checks.
+
+**Trigger:** the first time two plugins are found disagreeing on a constraint in
+a real project. The `Examples/` products are where that shows up — same
+discipline as every other issue here: the pattern is specified now, the code
+ships when a real chain demands it.
+
+---
+
+**Issue 38 — 🟡 API vocabulary consistency: the plan pins routes but not fields**
+
+**The gap, stated exactly.** A `features:` entry declares `route: {method, path}`,
+`db:`, `publishes.payload: {id: int, user_id: int}` — exact keys AND types for
+every EVENT — but **nothing for the HTTP body**. There is no `request:` and no
+`response:` key in the format. `docs/PARALLEL_DEVELOPMENT.md` line 200 states the
+intent ("the plan pins down what a feature exposes: request in, response out")
+and the YAML has no mechanism for it. So a wave executor receives
+`POST /orders` plus a one-line `function:` and invents the field names itself.
+
+**What is actually at risk — and what is NOT.** An executor inventing the *shape*
+of the feature it owns is fine and deliberate: that is local design freedom, and
+the black-box test proves it honors what it declared. The hazard is **vocabulary
+divergence across plugins for the SAME data**: every plugin internally coherent,
+every test green, and the API incoherent. The black-box test cannot see it —
+it proves a feature honors ITS contract, never that two features name the same
+thing the same way (same species as Issues 26/27/37).
+
+**But most fields are already anchored, which is why this has never bitten.**
+Two of the three places are pinned by the existing format: `db: {writes: [...]}`
+forces the SQL to use the real column names, and `publishes.payload: {...}` /
+`consumes.requires: [...]` pin the event keys exactly. Only the HTTP body is
+free — and when a plugin must store `user_id` in the `user_id` column and
+publish it as `user_id`, naming the request field anything else is extra work.
+**The name propagates by gravity.** `user_id` vs `client_id` for the same column
+is therefore a theoretical risk, not the real one.
+
+**The real exposure is the UNANCHORED fields** — the ones with no column and no
+payload key behind them, where nothing pulls the name into place:
+
+- pagination: `limit`/`offset` vs `page`/`per_page` vs `take`/`skip`
+- search & filters: `q` vs `query` vs `search`
+- pure inputs that never reach a column under that name: `password`
+  (stored as `password_hash`), `confirm`, `remember_me`
+- response envelope extras: `total_count` vs `total` vs `count`, `has_more`
+  vs `next_cursor`
+
+This is why CRUD-plus-event-chain builds never surfaced it: nearly every field
+there is anchored. It appears the first time several domains grow list
+endpoints with pagination and filtering — the fields no contract mentions.
+
+The cost lands later and hard — it is the API's public surface, so fixing it
+after clients exist means a breaking change, unlike an internal duplication.
+
+**Why phase 0 already almost solves it.** The instinct behind writing migrations
+and models BEFORE any plugin was right: phase 0 is exactly where the shared
+vocabulary is fixed, because **the column names ARE the vocabulary**. What is
+missing is stating that they bind the API layer too.
+
+Three options, cheapest first:
+
+1. **House vocabulary for the unanchored fields (recommended, and the only one
+   that targets the real exposure).** Anchored fields need no rule — gravity
+   already handles them; writing one down (*an API field backed by a column
+   carries the column's name*) costs a line in `AGENTS.md` and is worth having,
+   but it is a backstop, not the fix. What actually needs deciding ONCE and
+   living in `tools/context/authoring_guide.md` — which every executor receives
+   embedded in the manifest — is the vocabulary nothing else pins:
+   ```
+   pagination: limit + offset       (never page/per_page, never take/skip)
+   search:     q                    (never query, never search)
+   envelope:   total, has_more      (never total_count, never count)
+   ```
+   Five lines, zero mechanism, and it reaches every executor in the wave through
+   the prefix they already read. The linter for it (compare request/response
+   field names across plugins, flag near-synonyms) is the same family as Issues
+   26/27/37 and can wait for evidence; the column list it would need already
+   exists via `db.describe_schema()` (2026-07-26).
+2. **`request:` / `response:` in the plan (heavier, explicit).** Symmetric with
+   `publishes.payload:`, including constraints — which is where divergence
+   actually lives (`gt=0` vs `ge=0`):
+   ```yaml
+   route:    { method: POST, path: /orders }
+   request:  { user_id: int, total: "float>0", note: "str(0..500)?" }
+   response: { id: int, total: float }        # the contents of data{}
+   ```
+   Plus a validity rule: a feature with a `route` declares `response`; a
+   POST/PUT/PATCH route declares `request`. This is plan format v4 — it touches
+   `docs/PARALLEL_DEVELOPMENT.md`, `PlanValidatorPlugin` and the authoring guide.
+   Correct, but it moves work back onto the planner for every feature, including
+   the ones where invention is harmless.
+3. **Both**, with (2) reserved for genuinely new shapes and (1) as the backstop.
+
+**Manifest side (complementary, needed by either option).** The manifest lists
+endpoints as method+path only, while events already carry their payload keys
+(AST-extracted by `_scan_published_events`). A planner writing plugins 4 and 5
+on an EXISTING domain therefore cannot see what the existing API exposes, and
+reinvents it. The fix is the same technique applied to
+`add_endpoint(request_model=…, response_model=…)`: resolve the class in the same
+file and list its fields. Derived from code, so it cannot drift — and it also
+gives Issue 37 the per-field data it needs.
+
+Note the division of labour once both exist: the **table** section describes
+STORAGE (write SQL from it), the **endpoint** section describes the API
+(stay consistent with it), and the plan declares what the NEW feature exposes.
+`users.roles` is `text` in storage and `list[str]` over the wire — both true,
+both visible, neither derived from a hand-written mirror.
+
+---
+
+### The chosen answer: a `language:` section in the plan (design, 2026-07-26)
+
+The entity model is the domain's **ubiquitous language** — not a mirror of the
+table. Storage and vocabulary answer different questions and are allowed to
+differ: `password_hash` is a column and must NEVER be a model field (it never
+leaves the system), `roles` is `TEXT` on disk and `list[str]` in the domain.
+Applied already to `domains/users/models/user.py` (2026-07-26), and the manifest
+now publishes both lines per domain:
+
+```
+- **Table `users`** (storage): id (int, PK), …, password_hash (text, NOT NULL), roles (text, …)
+- **Model `UserEntity`** (domain vocabulary): id: int | None, name: str, email: EmailStr, roles: list[str]
+```
+
+**Why it needs a plan section.** The vocabulary is a DECISION, not something
+derivable from code — no introspection can know whether the business says
+`client` or `customer`. `phase_0.models` covers only the plan that CREATES a
+domain; the 4th plan adding three plugins to an existing domain has no `phase_0`
+and therefore no way to amend the language. Today it would silently invent one.
+
+**Shape.** Top-level `language:`, independent of `phase_0` so it works in any
+plan. Omitted entirely when the plan does not touch the vocabulary — most
+feature plans will not have it (Plan sizing rule).
+
+```yaml
+language:
+  # NEW concept — the domain gains an entity
+  - model: OrderEntity
+    domain: orders
+    op: new
+    table: orders                       # the table that backs it
+    fields: { id: "int?", user_id: int, total: float, status: str }
+    internal: [payment_token]           # columns deliberately NOT in the language
+
+  # CHANGE — additive, the common case
+  - model: UserEntity
+    domain: users
+    op: add_field
+    fields: { phone: "str?" }
+    backed_by: users.phone              # must exist, or be declared in this plan's phase_0
+
+  # RENAME — breaking, the dangerous case
+  - model: OrderEntity
+    domain: orders
+    op: rename_field
+    from: client_id
+    to: user_id
+    breaking: true                      # MANDATORY on rename/remove
+    affects: [GET /orders, POST /orders]  # endpoints that speak the old name
+    reason: "the domain says user, never client"
+
+  # DELETE
+  - model: UserEntity
+    domain: users
+    op: remove_field
+    field: legacy_code
+    breaking: true
+    affects: [GET /users/{user_id}]
+    reason: "dropped with the 2026-08 migration"
+```
+
+**What this buys that documentation alone does not:** `rename_field` and
+`remove_field` are breaking changes to a public API, and today NOTHING makes
+anyone notice. Requiring `breaking: true` plus `affects:` turns a silent rename
+into an explicit act with a blast radius written down.
+
+**New validity rules for `PlanValidatorPlugin`** (it already cross-checks routes,
+tables and events against the live system; these ride the same call):
+
+- Every `new` / `add_field` field must resolve to a real column — either present
+  in `db.describe_schema()` (2026-07-26) or declared in this plan's
+  `phase_0.migrations.columns`. A vocabulary field with nothing behind it is an
+  error, not a style issue.
+- A model field's name must equal its column's name (rule 10, one level up).
+  Projections of TYPE are free (`text` → `list[str]`); projections of NAME are not.
+- `rename_field` / `remove_field` without `breaking: true` → ERROR.
+- `internal:` columns are the declared exceptions: they exist in storage and are
+  deliberately absent from the language. This is what makes the drift linter
+  possible without false positives — see below.
+
+**And it settles the drift linter (the point 3 objection).** The check runs in
+ONE direction only: *every model field must map to an existing column.* A column
+with no model field is normal and expected — that is `password_hash`, and
+`internal:` records that it is deliberate. So the linter can never flag
+`password` vs `password_hash` as drift; the only thing it catches is the rare
+real error, a model field naming a column that was renamed or dropped. Rides in
+`ArchitectureLinterPlugin` with Issues 26/27/37.
+
+**Frequency check (why the hand-written model is cheap).** Domain vocabulary
+changes are additive and decelerating: core entities settle in weeks, and
+adding a field is the same edit as the migration that backs it, in the same
+plan. Rename and remove — the expensive path this section guards — are rare
+precisely because they break clients. And a model defined as VOCABULARY changes
+less than one defined as a table mirror: storage churns for denormalization,
+caching and type changes that never touch what the domain calls things.
+
+**Order of implementation:** the `language:` section and its validity rules
+first (they are what stop the problem at the source), the drift linter after —
+it is the backstop for code written outside the plan workflow, exactly like
+Issues 26/27 are backstops for plan rules 1 and 2/14.
+
+**Trigger:** the section is worth writing now — it is format, not code, and the
+4th-plan gap is real today. The linter waits for the same evidence every other
+linter here waited for: the first model field found naming a column that no
+longer exists.
+
+---
+
 **Issue 10 — 🔬 Migrate HttpServerTool from FastAPI to pure Starlette (exploratory)**
 
 FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_tool.py` are Starlette classes re-exported by FastAPI (`Request`, `WebSocket`, `JSONResponse`, `StreamingResponse`, `StaticFiles`, `CORSMiddleware`, `run_in_threadpool`). What is exclusively FastAPI is minimal: the app object, `Depends()` for GET query params, `response_model`/`tags` in `add_api_route`, and the auto-generated docs at `/docs`.
@@ -206,9 +473,39 @@ This is the structural answer to god-component drift: the public API cannot
 grow by accident, and driver complexity stays quarantined (a driver cannot
 add API surface; worst case its file is deleted).
 
+**What qualifies (admission criterion, written 2026-07-25):**
+
+> **If a real broker exposes it, it is contract. If we invented it, it needs a
+> use case.**
+
+The rule exists because "nothing uses it today" is NOT evidence in a framework.
+A product has users; a framework has a contract, and the contract is honored
+*before* anyone exercises it — waiting for a real consumer means never being
+able to offer anything. So the burden of proof splits by origin:
+
+- **Market-validated semantics** (`priority` in RabbitMQ, `key` in Kafka/SQS,
+  RPC in half the ecosystem, groups, TTL, delay, DLQ): the market already
+  proved they are needed, and their existence is what makes a **parity suite
+  writable at all** — there is a reference implementation to compare against.
+  These stay even with zero local consumers. They are not dead code; they are
+  an unexercised contract.
+- **Invented capabilities** (no analog in any broker): must justify themselves
+  with a real use case, because there is no external reference and therefore no
+  parity suite that could define "correct". Absent one, they get removed.
+
+Corollary on how a use case is found: **not with `grep`.** The question
+"does anyone need RPC?" is answered by building a complex enough product to
+find out (e.g. Uber-style surge lookup for a zone *before* quoting a ride —
+the caller needs the answer to continue, so publish-and-forget does not
+serve it), not by scanning the current repo for callers. That is what the
+`Examples/` products are for; `07-microride` is the one that exercises the
+widest slice of the contract.
+
 First application of the rule, in reverse (2026-07-19): **wildcard
 subscriptions (`subscribe("*")`) were REMOVED** — capability without a use
-case. In-process observation is `add_listener()`'s job (publish-side sink,
+case, and, by the criterion above, an *invented* one: no broker exposes
+"subscribe to everything" as a client primitive, so there was no reference
+contract and no parity suite that could pin it. In-process observation is `add_listener()`'s job (publish-side sink,
 zero transport cost — how the event viewer/traces/delivery monitor already
 work); distributed audit belongs to the broker's own tooling (an external
 consumer on the topics/streams). Removing it also removed the firehose

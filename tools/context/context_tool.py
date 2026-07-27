@@ -1,6 +1,14 @@
 import ast
 import os
+import re
 from core.base_tool import BaseTool
+
+# Table ownership is read from the migration PATH, so only the NAME is parsed here.
+# finditer (not search): one .sql file may declare several tables.
+_CREATE_TABLE_RE = re.compile(
+    r"""CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?([A-Za-z_][A-Za-z0-9_]*)""",
+    re.IGNORECASE,
+)
 
 
 class ContextTool(BaseTool):
@@ -46,14 +54,34 @@ class ContextTool(BaseTool):
                 except Exception as e:
                     print(f"[ContextTool] Error reading model {filepath}: {e}")
 
-    def on_boot_complete(self, container):
+    async def on_boot_complete(self, container):
         registry = container.registry
         self._scan_domain_models(registry)
-        self._generate_global_manifest(container)
+        self._generate_global_manifest(container, await self._fetch_live_schema(container))
+
+    async def _fetch_live_schema(self, container) -> dict:
+        """
+        The real schema, read from the database itself.
+
+        The manifest describes TABLES from here and never from the entity models:
+        a model is a hand-written mirror and can drift (it did — the manifest used
+        to name the table after the model FILE, so `scheduler_one_shots` was
+        published as `scheduler_one_shot`). Introspection cannot drift: it reports
+        what exists.
+
+        Safe by the time this runs: migrations are applied in the db tool's
+        setup(), and the Kernel awaits every setup() together before any
+        on_boot_complete. A system with no db tool still gets its manifest.
+        """
+        try:
+            return await container.get("db").describe_schema()
+        except Exception as e:
+            print(f"[ContextTool] Live schema unavailable, tables omitted from manifest: {e}")
+            return {}
 
     # ── Global manifest ───────────────────────────────────────────────────────
 
-    def _generate_global_manifest(self, container):
+    def _generate_global_manifest(self, container, schema: dict):
         manifest = "# 📜 SYSTEM MANIFEST\n\n"
         manifest += "> This file is ALL you need to build a plugin. For advanced topics (testing, observability, creating tools), see [INSTRUCTIONS_FOR_AI.md](INSTRUCTIONS_FOR_AI.md).\n\n"
 
@@ -84,6 +112,11 @@ class ContextTool(BaseTool):
 
         manifest += "## 📦 Domains\n\n"
 
+        # Two sources, each asked only what it alone can know: the migration path
+        # says WHICH DOMAIN owns a table (the database has no notion of domains),
+        # the live schema says WHAT THE TABLE IS.
+        owned_tables = self._scan_migration_tables()
+
         dump = container.registry.get_system_dump()
         plugins_by_domain: dict[str, list[tuple[str, dict]]] = {}
         for plugin_name, info in dump.get("plugins", {}).items():
@@ -102,19 +135,41 @@ class ContextTool(BaseTool):
             endpoints = self._get_domain_endpoints(domain)
             emitted_map = self._scan_published_events(domain)
             consumed = self._get_consumed_events(plugin_names, container)
-            tables = self._get_domain_tables(domain)
+            tables = owned_tables.get(domain, [])
 
             manifest += f"### `{domain}`\n"
+            # Two lines, two questions. Table = storage, for writing SQL.
+            # Model = the domain's vocabulary, for naming and shaping what the
+            # API speaks. They differ on purpose (see _describe_models).
             if tables:
                 for table in tables:
-                    fields = self._get_model_fields(domain, table)
-                    fields_str = ", ".join(f"{name} ({type_})" for name, type_ in fields.items())
-                    manifest += f"- **Table `{table}`**: {fields_str}\n"
+                    manifest += f"- **Table `{table}`** (storage): {self._describe_table(schema, table)}\n"
             else:
                 manifest += "- **Tables**: none\n"
 
+            for model in self._describe_models(domain):
+                manifest += f"- {model}\n"
+
             if endpoints:
-                manifest += f"- **Endpoints**: {', '.join(endpoints)}\n"
+                manifest += "- **Endpoints**:\n"
+                for ep in endpoints:
+                    if " (" in ep:
+                        path_part, schema_part = ep.split(" (", 1)
+                        manifest += f"  - `{path_part}`\n"
+                        schema_part = schema_part.rstrip(")")
+                        if "; res: " in schema_part:
+                            req_info, res_info = schema_part.split("; res: ", 1)
+                            req_info = req_info.replace("req: ", "", 1)
+                            manifest += f"    - **req**: {req_info}\n"
+                            manifest += f"    - **res**: {self._clean_res_info(res_info)}\n"
+                        elif schema_part.startswith("req: "):
+                            req_info = schema_part.replace("req: ", "", 1)
+                            manifest += f"    - **req**: {req_info}\n"
+                        elif schema_part.startswith("res: "):
+                            res_info = schema_part.replace("res: ", "", 1)
+                            manifest += f"    - **res**: {self._clean_res_info(res_info)}\n"
+                    else:
+                        manifest += f"  - `{ep}`\n"
             else:
                 manifest += "- **Endpoints**: none\n"
             
@@ -135,6 +190,19 @@ class ContextTool(BaseTool):
                 f.write(manifest)
         except Exception as e:
             print(f"[ContextTool] Error writing AI_CONTEXT.md: {e}")
+
+    def _clean_res_info(self, res_info: str) -> str:
+        """Strips standard envelope wrapper boilerplate (success: bool, Optional, error: Optional[str])
+        to present a clean, ultra-compact response payload model."""
+        if "data: " in res_info:
+            data_part = res_info.split("data: ", 1)[1]
+            if ", error: " in data_part:
+                data_part = data_part.rsplit(", error: ", 1)[0]
+            data_part = data_part.strip()
+            if data_part.startswith("Optional[") and data_part.endswith("]"):
+                data_part = data_part[9:-1].strip()
+            return data_part
+        return res_info
 
     def _load_authoring_guide(self) -> str:
         """The plugin authoring guide (executor rules + one template per
@@ -158,9 +226,37 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
 
 """
 
+    def _extract_ast_models(self, tree: ast.AST) -> dict[str, str]:
+        models: dict[str, dict[str, str]] = {}
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                fields = {}
+                for item in node.body:
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        try:
+                            type_str = ast.unparse(item.annotation)
+                        except Exception:
+                            type_str = "any"
+                        fields[item.target.id] = type_str
+                if fields:
+                    models[node.name] = fields
+
+        formatted: dict[str, str] = {}
+        sorted_model_names = sorted(models.keys(), key=len, reverse=True)
+        for name, fields in models.items():
+            field_strs = []
+            for f_name, f_type in fields.items():
+                for sub_name in sorted_model_names:
+                    if sub_name != name and re.search(r'\b' + re.escape(sub_name) + r'\b', f_type):
+                        sub_f_str = ", ".join(f"{k}: {v}" for k, v in models[sub_name].items())
+                        f_type = re.sub(r'\b' + re.escape(sub_name) + r'\b', f"{sub_name}({sub_f_str})", f_type)
+                field_strs.append(f"{f_name}: {f_type}")
+            formatted[name] = ", ".join(field_strs)
+        return formatted
+
     def _get_domain_endpoints(self, domain: str) -> list[str]:
         """
-        AST analysis of plugin source files to extract endpoints.
+        AST analysis of plugin source files to extract endpoints and their request/response schemas.
         More robust than regex.
         """
         endpoints: set[str] = set()
@@ -176,6 +272,8 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
                 with open(filepath, "r", encoding="utf-8") as f:
                     tree = ast.parse(f.read())
                 
+                ast_models = self._extract_ast_models(tree)
+
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                         method_name = node.func.attr
@@ -183,17 +281,36 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
                         # 1. add_endpoint
                         if method_name == "add_endpoint":
                             path, method = None, None
+                            req_model_name, res_model_name = None, None
+
                             # Positional args
-                            if len(node.args) >= 2:
-                                if isinstance(node.args[0], ast.Constant): path = node.args[0].value
-                                if isinstance(node.args[1], ast.Constant): method = node.args[1].value
+                            if len(node.args) >= 1 and isinstance(node.args[0], ast.Constant):
+                                path = node.args[0].value
+                            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                                method = node.args[1].value
+
                             # Keyword args
                             for kw in node.keywords:
-                                if kw.arg == "path" and isinstance(kw.value, ast.Constant): path = kw.value.value
-                                if kw.arg == "method" and isinstance(kw.value, ast.Constant): method = kw.value.value
+                                if kw.arg == "path" and isinstance(kw.value, ast.Constant):
+                                    path = kw.value.value
+                                if kw.arg == "method" and isinstance(kw.value, ast.Constant):
+                                    method = kw.value.value
+                                if kw.arg == "request_model" and isinstance(kw.value, ast.Name):
+                                    req_model_name = kw.value.id
+                                if kw.arg == "response_model" and isinstance(kw.value, ast.Name):
+                                    res_model_name = kw.value.id
                             
                             if path and method:
-                                endpoints.add(f"{method.upper()} {path}")
+                                schema_parts = []
+                                if req_model_name and req_model_name in ast_models:
+                                    schema_parts.append(f"req: {ast_models[req_model_name]}")
+                                if res_model_name and res_model_name in ast_models:
+                                    schema_parts.append(f"res: {ast_models[res_model_name]}")
+
+                                if schema_parts:
+                                    endpoints.add(f"{method.upper()} {path} ({'; '.join(schema_parts)})")
+                                else:
+                                    endpoints.add(f"{method.upper()} {path}")
 
                         # 2. SSE
                         elif method_name == "add_sse_endpoint":
@@ -215,6 +332,7 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
                 print(f"[ContextTool] Error parsing AST for {filepath}: {e}")
         
         return sorted(endpoints)
+
 
     def _get_consumed_events(self, plugin_names: list[str], container) -> set[str]:
         try:
@@ -300,43 +418,110 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
                 pass
         return event_map
 
-    def _get_domain_tables(self, domain: str) -> list[str]:
+    def _scan_migration_tables(self) -> dict[str, list[str]]:
+        """
+        domain -> tables it declares, read from domains/{domain}/migrations/*.sql.
+
+        Ownership is an architectural decision, so its source is the file PATH —
+        the only place that records it. Only table NAMES are parsed, never
+        columns: a later `ALTER TABLE ADD COLUMN` would make a parsed structure
+        lie, while a name never moves. Structure comes from the live schema.
+        """
+        owned: dict[str, list[str]] = {}
+        domains_dir = "domains"
+        if not os.path.isdir(domains_dir):
+            return owned
+
+        for domain in sorted(os.listdir(domains_dir)):
+            migrations_dir = os.path.join(domains_dir, domain, "migrations")
+            if not os.path.isdir(migrations_dir):
+                continue
+            tables: list[str] = []
+            for filename in sorted(f for f in os.listdir(migrations_dir) if f.endswith(".sql")):
+                try:
+                    with open(os.path.join(migrations_dir, filename), "r", encoding="utf-8") as f:
+                        sql = f.read()
+                except Exception as e:
+                    print(f"[ContextTool] Error reading migration {filename}: {e}")
+                    continue
+                for match in _CREATE_TABLE_RE.finditer(sql):
+                    name = match.group(1)
+                    if name not in tables:
+                        tables.append(name)
+            if tables:
+                owned[domain] = sorted(tables)
+        return owned
+
+    def _describe_models(self, domain: str) -> list[str]:
+        """
+        The domain's entity models — its UBIQUITOUS LANGUAGE.
+
+        Deliberately NOT the table: the model is a design decision the plan
+        makes, and it is supposed to differ from storage. `password_hash` is a
+        column and must never be a model field; `roles` is `text` on disk and
+        `list[str]` in the domain. That difference is exactly what tells a
+        feature author what the API speaks and what it must never expose.
+
+        Read from domains/{domain}/models/*.py. Not derivable from anything —
+        which is why it is hand-written and why a plan declares it.
+        """
         models_dir = os.path.join("domains", domain, "models")
         if not os.path.isdir(models_dir):
             return []
-        return sorted([
-            f.replace(".py", "")
-            for f in os.listdir(models_dir)
-            if f.endswith(".py") and f != "__init__.py"
-        ])
 
-    def _get_model_fields(self, domain: str, table: str) -> dict[str, str]:
-        """
-        AST parsing for models to extract Pydantic fields accurately.
-        """
-        model_path = os.path.join("domains", domain, "models", f"{table}.py")
-        if not os.path.exists(model_path):
-            return {}
-        
-        fields = {}
-        try:
-            with open(model_path, "r", encoding="utf-8") as f:
-                tree = ast.parse(f.read())
-            
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    for item in node.body:
-                        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                            name = item.target.id
-                            if name == "id": continue
-                            # Simplified type extraction
+        described = []
+        for filename in sorted(f for f in os.listdir(models_dir)
+                               if f.endswith(".py") and f != "__init__.py"):
+            path = os.path.join(models_dir, filename)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    tree = ast.parse(f.read())
+            except Exception as e:
+                print(f"[ContextTool] Error parsing model {path}: {e}")
+                continue
+
+            for node in tree.body:
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                fields = []
+                for item in node.body:
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        try:
+                            type_str = ast.unparse(item.annotation)
+                        except Exception:
                             type_str = "any"
-                            if isinstance(item.annotation, ast.Name):
-                                type_str = item.annotation.id
-                            elif isinstance(item.annotation, ast.Subscript):
-                                # Handle Optional[str], etc.
-                                type_str = ast.unparse(item.annotation)
-                            fields[name] = type_str
-        except Exception:
-            pass
-        return fields
+                        fields.append(f"{item.target.id}: {type_str}")
+                if fields:
+                    described.append(
+                        f"**Model `{node.name}`** (domain vocabulary): {', '.join(fields)}"
+                    )
+        return described
+
+    def _describe_table(self, schema: dict, table: str) -> str:
+        """Renders one table's real columns. Never guesses: if the migration
+        declares a table the database does not have, that is reported as-is —
+        it means the migration did not run."""
+        info = schema.get(table)
+        if info is None:
+            return "⚠️ declared in a migration but ABSENT from the live database"
+
+        rendered = []
+        for col in info.get("columns", []):
+            flags = []
+            if col.get("primary_key"):
+                flags.append("PK")
+            elif not col.get("nullable", True):
+                flags.append("NOT NULL")
+            if col.get("default") is not None:
+                flags.append(f"default {col['default']}")
+            suffix = ", " + ", ".join(flags) if flags else ""
+            rendered.append(f"{col['name']} ({col['type']}{suffix})")
+
+        line = ", ".join(rendered)
+        for cols in info.get("unique", []):
+            line += f" — UNIQUE({', '.join(cols)})"
+        for fk in info.get("foreign_keys", []):
+            line += (f" — FK {fk['column']} → "
+                     f"{fk['references_table']}.{fk['references_column']}")
+        return line
+

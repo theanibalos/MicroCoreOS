@@ -192,3 +192,87 @@ async def test_transaction_execute_returning_within_tx(table):
 
 async def test_health_check_returns_true(db):
     assert await db.health_check() is True
+
+
+# ─── describe_schema: CROSS-ENGINE equality ───────────────────────────────────
+#
+# The rest of this suite is parametrized: it proves each engine satisfies the
+# contract on its own. describe_schema() needs the stronger check — the SAME
+# migration must yield the SAME description on BOTH engines, or the manifest
+# would change meaning when the db tool is swapped, and the manifest is what
+# every agent reads. So this section builds both tools at once and compares
+# with ==.
+#
+# DDL restricted to the portable subset (no BLOB/BYTEA, no SERIAL): per-engine
+# type coverage lives in each tool's own describe_schema test file.
+
+_SCHEMA_DDL = """
+CREATE TABLE _parity_schema (
+    id          INTEGER PRIMARY KEY,
+    email       TEXT NOT NULL UNIQUE,
+    age         INTEGER,
+    score       DOUBLE PRECISION NOT NULL,
+    active      BOOLEAN NOT NULL,
+    created_at  TIMESTAMP
+)
+"""
+
+
+@pytest.fixture
+async def both_engines(monkeypatch):
+    """Both db implementations, live at the same time, on identical DDL."""
+    monkeypatch.setenv("SQLITE_DB_PATH", ":memory:")
+    sqlite_tool = SqliteTool()
+    await sqlite_tool.setup()
+
+    monkeypatch.setenv("PG_HOST", "localhost")
+    monkeypatch.setenv("PG_PORT", "5432")
+    monkeypatch.setenv("PG_USER", "postgres")
+    monkeypatch.setenv("PG_PASSWORD", "postgres")
+    monkeypatch.setenv("PG_DATABASE", "microcoreos")
+    monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
+    pg_tool = PostgresqlTool()
+    try:
+        await pg_tool.setup()
+    except PGConnectionError:
+        await sqlite_tool.shutdown()
+        pytest.skip(
+            "PostgreSQL not available — "
+            "docker compose -f dev_infra/docker-compose.yml up -d postgres"
+        )
+
+    await pg_tool.execute("DROP TABLE IF EXISTS _parity_schema")
+    for tool in (sqlite_tool, pg_tool):
+        await tool.execute(_SCHEMA_DDL)
+
+    yield sqlite_tool, pg_tool
+
+    await pg_tool.execute("DROP TABLE IF EXISTS _parity_schema")
+    await sqlite_tool.shutdown()
+    await pg_tool.shutdown()
+
+
+async def test_describe_schema_is_identical_across_engines(both_engines):
+    """The whole point: swapping the db tool must not change the manifest."""
+    sqlite_tool, pg_tool = both_engines
+
+    sqlite_desc = (await sqlite_tool.describe_schema())["_parity_schema"]
+    pg_desc = (await pg_tool.describe_schema())["_parity_schema"]
+
+    assert sqlite_desc == pg_desc
+
+
+async def test_describe_schema_marks_underscore_tables_internal(both_engines):
+    sqlite_tool, pg_tool = both_engines
+    for tool in (sqlite_tool, pg_tool):
+        schema = await tool.describe_schema()
+        assert schema["_parity_schema"]["internal"] is True
+
+
+async def test_describe_schema_excludes_engine_owned_tables(both_engines):
+    """sqlite_sequence / sqlite_stat* and non-public Postgres tables never appear."""
+    sqlite_tool, pg_tool = both_engines
+    for tool in (sqlite_tool, pg_tool):
+        schema = await tool.describe_schema()
+        assert not any(name.startswith("sqlite_") for name in schema)
+        assert not any(name.startswith("pg_") for name in schema)

@@ -56,6 +56,22 @@ follow-ups.
    ownership via `data["_auth"]["sub"]`.
 9. **Always pass `response_model=`** to `add_endpoint`, and `Field(...)`
    constraints on every request field.
+10. **Field names are not yours to invent.** Anything backed by a table column
+    carries that column's EXACT name — the `Table` lines above are the source
+    (they are read from the live database, so they are the real names). Never
+    rename in transit: `email` stays `email`, `user_id` stays `user_id`.
+    For the fields nothing else pins, use these spellings and no synonyms:
+
+    | Purpose | Use | Never |
+    |---|---|---|
+    | pagination | `limit`, `offset` | `page`, `per_page`, `take`, `skip` |
+    | free-text search | `q` | `query`, `search`, `term` |
+    | list totals (inside `data`) | `total`, `has_more` | `total_count`, `count`, `next_cursor` |
+    | sorting | `sort_by`, `order` (`asc`/`desc`) | `sort`, `orderBy`, `direction` |
+
+    Every executor in a wave reads this same table, which is what keeps the API
+    coherent without any of you coordinating: your feature is written in
+    isolation, but its vocabulary is shared.
 
 ### Templates — one per deliverable type, copy the one your task matches
 

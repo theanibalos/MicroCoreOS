@@ -166,6 +166,37 @@ def _parse_affected_rows(status: str) -> int:
         return 0
 
 
+# describe_schema() type vocabulary — CLOSED. See the frozen contract:
+# any engine type not covered here maps to "text". No new values are added.
+_TYPE_PREFIX_MAP: list[tuple[tuple[str, ...], str]] = [
+    (("INT", "INTEGER", "BIGINT", "SMALLINT", "SERIAL", "BIGSERIAL"), "int"),
+    (("REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"), "float"),
+    (("BOOL", "BOOLEAN"), "bool"),
+    (("TIMESTAMP", "TIMESTAMPTZ", "DATETIME", "DATE", "TIME"), "timestamp"),
+    (("JSON", "JSONB"), "json"),
+    (("BLOB", "BYTEA"), "blob"),
+]
+
+
+def _normalize_type(engine_type: str) -> str:
+    """
+    Maps a PostgreSQL `information_schema.columns.data_type` value (already
+    normalized by Postgres, e.g. 'character varying', 'integer',
+    'timestamp with time zone') to the closed vocabulary shared with the
+    SQLite tool: text/int/float/bool/timestamp/json/blob.
+
+    Matching is by prefix, case-insensitive, after stripping any parenthetical
+    (defensive — information_schema.data_type doesn't carry a "(n)" like
+    SQLite's raw CREATE TABLE text does, but we normalize the same way anyway).
+    Anything that doesn't match a prefix falls back to "text".
+    """
+    cleaned = re.sub(r"\(.*\)", "", engine_type or "").strip().upper()
+    for prefixes, mapped in _TYPE_PREFIX_MAP:
+        if any(cleaned.startswith(prefix) for prefix in prefixes):
+            return mapped
+    return "text"
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # POSTGRESQL TOOL
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -252,10 +283,19 @@ class PostgresqlTool(BaseTool):
 
         print(f"[System] PostgresqlTool: Pool ready (min={self._min_pool}, max={self._max_pool}).")
 
-    # ─── LIFECYCLE: on_boot_complete() ────────────────────
+        await self._run_migrations()
+
+    # ─── MIGRATIONS: run from setup(), NOT from on_boot_complete() ──
     #
-    # Runs AFTER all tools and plugins are loaded.
     # Responsibility: execute pending SQL migrations.
+    #
+    # WHY setup(): the Kernel awaits EVERY tool's setup() together
+    # (asyncio.gather) before plugins boot and before any on_boot_complete
+    # runs. Migrating here means anything that reads the schema afterwards —
+    # a plugin in on_boot(), the manifest generator in on_boot_complete() —
+    # is guaranteed to see the migrated database. In on_boot_complete the
+    # order BETWEEN tools is os.walk order, i.e. a coin flip.
+    # Mirrors the reference implementation (tools/sqlite/sqlite_tool.py).
     #
     # Migrations are searched in: domains/*/migrations/*.sql
     # Applied in TOPOLOGICAL ORDER based on "-- depends:" headers.
@@ -269,7 +309,7 @@ class PostgresqlTool(BaseTool):
     # If a migration fails, it is ROLLED BACK.
     #
 
-    async def on_boot_complete(self, container) -> None:
+    async def _run_migrations(self) -> None:
         # Issue 20: in production, replicas must NOT race to migrate at boot.
         # Migrations run as a pipeline step instead:
         #   DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
@@ -539,6 +579,151 @@ class PostgresqlTool(BaseTool):
         except Exception:
             return False
 
+    # ─── PUBLIC API: describe_schema() ────────────────────
+    #
+    # Live schema of the active database. Frozen contract shared with the
+    # SQLite tool (tools/sqlite/sqlite_tool.py) — same migration must yield
+    # the SAME dict on both engines (tests/tools/test_db_parity.py compares
+    # them with `==`). Do not add keys, do not add type vocabulary values.
+    #
+    # Scope: schema 'public' only, table_type='BASE TABLE' only. Anything
+    # not in 'public' (Postgres-owned catalog/system tables) is excluded
+    # entirely — it is not "internal" to the system, it belongs to the engine.
+    #
+    # Returns: dict
+    #   {
+    #       table_name: {
+    #           "internal": bool,       # True if table_name starts with "_"
+    #           "columns": [
+    #               {"name": str, "type": str, "nullable": bool,
+    #                "default": str | None, "primary_key": bool},
+    #               ...
+    #           ],  # physical column order
+    #           "unique": [[col, ...], ...],  # one sublist per UNIQUE constraint
+    #                                          # (PK is NOT repeated here),
+    #                                          # sorted by first column name
+    #           "foreign_keys": [
+    #               {"column": str, "references_table": str, "references_column": str},
+    #               ...
+    #           ],  # one entry per column; composite FKs → separate entries
+    #       },
+    #       ...
+    #   }
+    #   Tables sorted alphabetically. `type` is normalized to the closed
+    #   vocabulary: text/int/float/bool/timestamp/json/blob (see _normalize_type).
+    #   `default` is the literal text the engine reports, or None — never
+    #   normalized, never evaluated.
+    #
+    # Raises: DatabaseConnectionError on any engine failure.
+    #
+
+    async def describe_schema(self) -> dict:
+        try:
+            tables = await self.query(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
+                "ORDER BY table_name"
+            )
+            schema: dict = {}
+            for row in tables:
+                table_name = row["table_name"]
+                schema[table_name] = await self._describe_table(table_name)
+            return schema
+        except DatabaseError as e:
+            raise DatabaseConnectionError(f"describe_schema failed: {e}") from e
+
+    async def _describe_table(self, table_name: str) -> dict:
+        """
+        Internal helper for describe_schema(). Not part of the public contract —
+        builds the {internal, columns, unique, foreign_keys} dict for one table.
+        """
+        column_rows = await self.query(
+            "SELECT column_name, data_type, is_nullable, column_default "
+            "FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = $1 "
+            "ORDER BY ordinal_position",
+            [table_name],
+        )
+
+        pk_rows = await self.query(
+            "SELECT kcu.column_name "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "    ON kcu.constraint_name = tc.constraint_name "
+            "   AND kcu.table_schema = tc.table_schema "
+            "WHERE tc.table_schema = 'public' AND tc.table_name = $1 "
+            "  AND tc.constraint_type = 'PRIMARY KEY'",
+            [table_name],
+        )
+        pk_columns = {r["column_name"] for r in pk_rows}
+
+        unique_rows = await self.query(
+            "SELECT tc.constraint_name, kcu.column_name "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "    ON kcu.constraint_name = tc.constraint_name "
+            "   AND kcu.table_schema = tc.table_schema "
+            "WHERE tc.table_schema = 'public' AND tc.table_name = $1 "
+            "  AND tc.constraint_type = 'UNIQUE' "
+            "ORDER BY tc.constraint_name, kcu.ordinal_position",
+            [table_name],
+        )
+        unique_groups: dict[str, list[str]] = {}
+        for r in unique_rows:
+            unique_groups.setdefault(r["constraint_name"], []).append(r["column_name"])
+        unique = sorted(unique_groups.values(), key=lambda cols: cols[0])
+
+        # FK: table_constraints -> key_column_usage (local column) ->
+        # constraint_column_usage (referenced table/column), joined on
+        # constraint_name as the contract prescribes. Note: for a
+        # single-column FK (the common case) this pairs local and
+        # referenced column correctly. A composite FK would need ordinal
+        # matching via referential_constraints to avoid a cross-join
+        # between local and referenced columns; not needed for the
+        # migrations this contract targets.
+        fk_rows = await self.query(
+            "SELECT kcu.column_name AS column_name, "
+            "       ccu.table_name AS references_table, "
+            "       ccu.column_name AS references_column "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "    ON kcu.constraint_name = tc.constraint_name "
+            "   AND kcu.table_schema = tc.table_schema "
+            "JOIN information_schema.constraint_column_usage ccu "
+            "    ON ccu.constraint_name = tc.constraint_name "
+            "   AND ccu.table_schema = tc.table_schema "
+            "WHERE tc.table_schema = 'public' AND tc.table_name = $1 "
+            "  AND tc.constraint_type = 'FOREIGN KEY' "
+            "ORDER BY tc.constraint_name, kcu.ordinal_position",
+            [table_name],
+        )
+        foreign_keys = [
+            {
+                "column": r["column_name"],
+                "references_table": r["references_table"],
+                "references_column": r["references_column"],
+            }
+            for r in fk_rows
+        ]
+
+        columns = [
+            {
+                "name": c["column_name"],
+                "type": _normalize_type(c["data_type"]),
+                "nullable": c["is_nullable"] == "YES",
+                "default": c["column_default"],
+                "primary_key": c["column_name"] in pk_columns,
+            }
+            for c in column_rows
+        ]
+
+        return {
+            "internal": table_name.startswith("_"),
+            "columns": columns,
+            "unique": unique,
+            "foreign_keys": foreign_keys,
+        }
+
     # ─── INTERFACE DESCRIPTION ────────────────────────────
 
     def get_interface_description(self) -> str:
@@ -555,6 +740,10 @@ class PostgresqlTool(BaseTool):
             - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
               Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
             - await health_check() → bool: Verify database connectivity.
+            - await describe_schema() -> dict: Live schema of the active database: {table: {internal, columns, unique, foreign_keys}}.
+              Column types are normalized to a closed vocabulary (text/int/float/bool/timestamp/json/blob)
+              so the same migration yields the same description on any engine.
+              Tables whose name starts with "_" are marked internal; engine-owned tables are excluded.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot
           (topological sort). Migrations run VERBATIM (no dialect translation).

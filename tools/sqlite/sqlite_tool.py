@@ -98,6 +98,39 @@ def _normalize_sql(sql: str, params: list | None = None) -> tuple[str, list]:
     sql = _PG_PLACEHOLDER.sub('?', sql)
     return sql, new_params
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# COLUMN TYPE NORMALIZATION (describe_schema contract)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Closed vocabulary shared with the PostgreSQL tool: any engine type not
+# recognized here falls back to "text". Checked in this order (a category
+# earlier in the list wins if a type string happens to start with more than
+# one prefix, which doesn't occur for the prefixes below but keeps the match
+# deterministic).
+_TYPE_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
+    ("int", ("BIGINT", "BIGSERIAL", "SMALLINT", "INTEGER", "INT", "SERIAL")),
+    ("float", ("REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL")),
+    ("bool", ("BOOL", "BOOLEAN")),
+    ("timestamp", ("TIMESTAMPTZ", "TIMESTAMP", "DATETIME", "DATE", "TIME")),
+    ("json", ("JSONB", "JSON")),
+    ("blob", ("BLOB", "BYTEA")),
+]
+
+def _normalize_column_type(raw_type: str) -> str:
+    """
+    Maps the type string as written in CREATE TABLE (what PRAGMA table_info
+    reports verbatim) to the closed vocabulary:
+    text/int/float/bool/timestamp/json/blob. Strips any "(n)" precision
+    suffix and matches by prefix, case-insensitively. Anything unrecognized
+    (VARCHAR, CHAR, TEXT, ...) maps to "text".
+    """
+    bare = re.sub(r"\(.*\)", "", raw_type or "").strip().upper()
+    for category, prefixes in _TYPE_PREFIXES:
+        if any(bare.startswith(prefix) for prefix in prefixes):
+            return category
+    return "text"
+
+
 def _normalize_sql_many(sql: str, params_list: list[list]) -> tuple[str, list[list]]:
     matches = _PG_PLACEHOLDER.findall(sql)
     if not matches:
@@ -302,18 +335,30 @@ class SqliteTool(BaseTool):
 
         print("[System] SqliteTool: Ready (WAL mode, FK enabled).")
 
-    # ─── LIFECYCLE: on_boot_complete() ────────────────────
+        await self._run_migrations()
+
+    # ─── MIGRATIONS: run from setup(), NOT from on_boot_complete() ──
     #
-    # Runs AFTER all tools and plugins are loaded.
     # Responsibility: execute pending SQL migrations.
     #
+    # WHY setup(): the Kernel awaits EVERY tool's setup() together
+    # (asyncio.gather) before plugins boot and before any on_boot_complete
+    # runs. Migrating here means anything that reads the schema afterwards —
+    # a plugin in on_boot(), the manifest generator in on_boot_complete() —
+    # is guaranteed to see the migrated database.
+    # In on_boot_complete the order BETWEEN tools is os.walk order, i.e. a
+    # coin flip: a reader could run before the migrator and silently observe
+    # the previous schema. Not a hazard to manage — one to remove.
+    #
     # Migrations are located in: domains/*/migrations/*.sql
-    # Applied in alphabetical order, each within its own transaction.
-    # If a migration fails, that migration is rolled back
-    # and execution stops (raise) to prevent an inconsistent state.
+    # Applied in topological order (`-- depends:`), each within its own
+    # transaction. If a migration fails, that migration is rolled back and
+    # execution stops (raise) to prevent an inconsistent state. Raising from
+    # setup() registers the tool as FAIL in the registry — a broken migration
+    # is now visible in /system/status instead of a printed line.
     #
 
-    async def on_boot_complete(self, container) -> None:
+    async def _run_migrations(self) -> None:
         # Issue 20: in production, replicas must NOT race to migrate at boot.
         # Migrations run as a pipeline step instead:
         #   DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
@@ -674,6 +719,92 @@ class SqliteTool(BaseTool):
         except Exception:
             return False
 
+    # ─── PUBLIC API: describe_schema() ────────────────────
+    #
+    # Introspects the live schema of the active database, normalized to the
+    # same closed vocabulary and shape the PostgreSQL tool produces, so the
+    # same migration yields an identical description on either engine.
+    #
+    # Returns: dict
+    #   {table_name: {"internal": bool, "columns": [...], "unique": [...],
+    #                 "foreign_keys": [...]}}
+    #
+
+    async def describe_schema(self) -> dict:
+        try:
+            # sqlite_% covers sqlite_master, sqlite_sequence, sqlite_stat*...
+            # engine-owned, never surfaced (not even as internal).
+            tables = await self.query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+
+            schema: dict = {}
+            for row in tables:
+                table_name = row["name"]
+
+                # PRAGMA statements don't accept placeholders; table_name is
+                # never external input here, it comes straight out of
+                # sqlite_master, so interpolation is safe.
+                columns_info = await self.query(f"PRAGMA table_info({table_name})")
+                columns = [
+                    {
+                        "name": col["name"],
+                        "type": _normalize_column_type(col["type"]),
+                        # A PRIMARY KEY is reported NOT nullable regardless of what
+                        # PRAGMA says. SQLite reports notnull=0 for an INTEGER
+                        # PRIMARY KEY (rowid alias) and even tolerates NULL in a
+                        # TEXT PRIMARY KEY — both are documented legacy quirks, not
+                        # schema intent. PostgreSQL makes every PK column NOT NULL,
+                        # so normalizing here is what keeps describe_schema()
+                        # identical across engines (see the cross-engine test in
+                        # tests/tools/test_db_parity.py).
+                        "nullable": not col["notnull"] and not col["pk"],
+                        "default": col["dflt_value"],
+                        "primary_key": col["pk"] > 0,
+                    }
+                    # table_info already returns columns in physical (cid) order.
+                    for col in columns_info
+                ]
+
+                # UNIQUE constraints: index_list gives every index on the
+                # table; origin != 'pk' drops the implicit PK index (already
+                # captured per-column above, not repeated here).
+                index_list = await self.query(f"PRAGMA index_list({table_name})")
+                unique: list[list[str]] = []
+                for idx in index_list:
+                    if not idx["unique"] or idx["origin"] == "pk":
+                        continue
+                    index_columns = await self.query(f"PRAGMA index_info({idx['name']})")
+                    # index_info rows aren't guaranteed pre-sorted; seqno is
+                    # the declared column order within the constraint.
+                    ordered = sorted(index_columns, key=lambda c: c["seqno"])
+                    unique.append([c["name"] for c in ordered])
+                unique.sort(key=lambda cols: cols[0])
+
+                fk_list = await self.query(f"PRAGMA foreign_key_list({table_name})")
+                foreign_keys = [
+                    {
+                        "column": fk["from"],
+                        "references_table": fk["table"],
+                        "references_column": fk["to"],
+                    }
+                    # Compound FKs share an "id" across rows in the PRAGMA
+                    # output; the contract wants them flattened, one entry
+                    # per column, so no grouping by id here.
+                    for fk in fk_list
+                ]
+
+                schema[table_name] = {
+                    "internal": table_name.startswith("_"),
+                    "columns": columns,
+                    "unique": unique,
+                    "foreign_keys": foreign_keys,
+                }
+
+            return dict(sorted(schema.items()))
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to describe schema: {e}") from e
+
     # ─── INTERFACE DESCRIPTION ────────────────────────────
 
     def get_interface_description(self) -> str:
@@ -694,6 +825,13 @@ class SqliteTool(BaseTool):
             - async with transaction() as tx: Explicit transaction block with auto-commit/rollback.
               Inside tx: tx.query(), tx.query_one(), tx.execute() — same signatures.
             - await health_check() → bool: Verify database connectivity.
+            - await describe_schema() → dict: Live schema of the active database:
+              {table: {internal, columns, unique, foreign_keys}}.
+              Column types are normalized to a closed vocabulary
+              (text/int/float/bool/timestamp/json/blob) so the same migration
+              yields the same description on any engine.
+              Tables whose name starts with "_" are marked internal;
+              engine-owned tables are excluded.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
           topological sort (alphabetical by default). Migrations run VERBATIM (no
