@@ -61,16 +61,8 @@ def container():
 
 
 @pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
-    yield b
-    await b.shutdown()
-
-
-@pytest.fixture
-def chaos(container, bus):
-    return ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+def chaos(container, event_bus):
+    return ChaosControlPlugin(http=MagicMock(), event_bus=event_bus, container=container, logger=MagicMock())
 
 
 # ── mode: down / slow / flaky / off ─────────────────────────────────────────
@@ -175,7 +167,7 @@ class ShippingPlugin:
         return {"ok": True}
 
 
-async def test_fail_scoped_to_one_plugin_leaves_other_callers_unaffected(container, bus, chaos):
+async def test_fail_scoped_to_one_plugin_leaves_other_callers_unaffected(container, event_bus, chaos):
     ledger_proxy = container.get("ledger")
     ledger_raw = container.get_raw_tools()[0]
     billing = BillingPlugin(ledger_proxy)
@@ -184,15 +176,15 @@ async def test_fail_scoped_to_one_plugin_leaves_other_callers_unaffected(contain
     dlq = []
     async def dlq_handler(env):
         dlq.append(env.payload)
-    await bus.subscribe("_dlq.order.created", dlq_handler)
+    await event_bus.subscribe("_dlq.order.created", dlq_handler)
 
-    await bus.subscribe("order.created", billing.on_event, retries=1, backoff=0.01)
-    await bus.subscribe("order.created", shipping.on_event, retries=1, backoff=0.01)
+    await event_bus.subscribe("order.created", billing.on_event, retries=1, backoff=0.01)
+    await event_bus.subscribe("order.created", shipping.on_event, retries=1, backoff=0.01)
 
     resp = await chaos.set_fail({"plugin": "billing.BillingPlugin", "rate": 1.0})
     assert resp["success"] is True
 
-    await bus.publish("order.created", {"id": 1})
+    await event_bus.publish("order.created", {"id": 1})
     await asyncio.sleep(0.2)
 
     # Billing's REAL retry/DLQ machinery reacted to the injected failure —
@@ -206,16 +198,16 @@ async def test_fail_scoped_to_one_plugin_leaves_other_callers_unaffected(contain
     assert ledger_raw.calls == ["shipping"]
 
 
-async def test_fail_reset_stops_affecting_the_scoped_plugin(container, bus, chaos):
+async def test_fail_reset_stops_affecting_the_scoped_plugin(container, event_bus, chaos):
     ledger_proxy = container.get("ledger")
     billing = BillingPlugin(ledger_proxy)
-    await bus.subscribe("order.created", billing.on_event, retries=0)
+    await event_bus.subscribe("order.created", billing.on_event, retries=0)
 
     await chaos.set_fail({"plugin": "billing.BillingPlugin", "rate": 1.0})
     resp = await chaos.reset({})
     assert resp["success"] is True
 
-    await bus.publish("order.created", {"id": 2})
+    await event_bus.publish("order.created", {"id": 2})
     await asyncio.sleep(0.1)
 
     ledger_raw = container.get_raw_tools()[0]
@@ -232,17 +224,17 @@ async def test_latency_unscoped_delays_every_caller(container, chaos):
     assert time.monotonic() - t0 >= 0.15
 
 
-async def test_latency_scoped_to_plugin_only(container, bus, chaos):
+async def test_latency_scoped_to_plugin_only(container, event_bus, chaos):
     ledger_proxy = container.get("ledger")
     billing = BillingPlugin(ledger_proxy)
     shipping = ShippingPlugin(ledger_proxy)
-    await bus.subscribe("order.created", billing.on_event)
-    await bus.subscribe("order.created", shipping.on_event)
+    await event_bus.subscribe("order.created", billing.on_event)
+    await event_bus.subscribe("order.created", shipping.on_event)
 
     await chaos.set_latency({"plugin": "billing.BillingPlugin", "tool": "ledger", "seconds": 0.3})
 
     t0 = time.monotonic()
-    await bus.publish("order.created", {"id": 3})
+    await event_bus.publish("order.created", {"id": 3})
     await asyncio.sleep(0.05)  # shipping (unscoped) should already be done
 
     ledger_raw = container.get_raw_tools()[0]
@@ -343,15 +335,15 @@ class _Victim:
         return {"success": True}
 
 
-async def test_pause_holds_delivery_resume_drains(container, bus):
-    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+async def test_pause_holds_delivery_resume_drains(container, event_bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=event_bus, container=container, logger=MagicMock())
     victim = _Victim()
-    await bus.subscribe("orders.created", victim.on_evt)
+    await event_bus.subscribe("orders.created", victim.on_evt)
 
     resp = await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
     assert resp["success"] is True
 
-    await bus.publish("orders.created", {"n": 1})
+    await event_bus.publish("orders.created", {"n": 1})
     await asyncio.sleep(0.4)
     assert victim.seen == []          # held, not delivered
 
@@ -402,9 +394,9 @@ async def test_pause_accumulates_durable_backlog_and_drains(container, tmp_path,
         await bus.shutdown()
 
 
-async def test_paused_plugin_http_returns_503(container, bus):
+async def test_paused_plugin_http_returns_503(container, event_bus):
     http = HttpServerTool()
-    chaos = ChaosControlPlugin(http=http, event_bus=bus, container=container, logger=MagicMock())
+    chaos = ChaosControlPlugin(http=http, event_bus=event_bus, container=container, logger=MagicMock())
     await chaos.on_boot()
     victim = _Victim()
     http.add_endpoint("/victim", "GET", victim.handle, tags=["Test"])
@@ -428,26 +420,26 @@ async def test_paused_plugin_http_returns_503(container, bus):
         assert (await client.get("/victim")).status_code == 200
 
 
-async def test_reset_also_resumes_paused_plugins(container, bus):
-    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+async def test_reset_also_resumes_paused_plugins(container, event_bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=event_bus, container=container, logger=MagicMock())
     victim = _Victim()
-    await bus.subscribe("orders.created", victim.on_evt)
+    await event_bus.subscribe("orders.created", victim.on_evt)
     await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
 
     resp = await chaos.reset({})
     assert resp["data"]["resumed_plugins"] == ["shop.VictimPlugin"]
 
-    await bus.publish("orders.created", {"n": 1})
+    await event_bus.publish("orders.created", {"n": 1})
     await wait_until(lambda: victim.seen == [{"n": 1}])
 
 
-async def test_domain_prefix_pauses_every_plugin_in_domain(container, bus):
-    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=bus, container=container, logger=MagicMock())
+async def test_domain_prefix_pauses_every_plugin_in_domain(container, event_bus):
+    chaos = ChaosControlPlugin(http=MagicMock(), event_bus=event_bus, container=container, logger=MagicMock())
     victim = _Victim()
-    await bus.subscribe("orders.created", victim.on_evt)
+    await event_bus.subscribe("orders.created", victim.on_evt)
 
     await chaos.pause_plugin({"plugin": "shop"})   # bare domain prefix
-    await bus.publish("orders.created", {"n": 1})
+    await event_bus.publish("orders.created", {"n": 1})
     await asyncio.sleep(0.4)
     assert victim.seen == []
 

@@ -5,18 +5,11 @@ Real tools: the ACTIVE db tool with the users migrations applied, real AuthTool
 error-path test mocks `db` to force a failure.
 """
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domains.users.plugins.login_plugin import LoginPlugin
-from tools.auth.auth_tool import AuthTool
-from tests.helpers.active_db import active_db
-from tools.state.state_tool import StateTool
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
-SECRET = "test-secret-key-32chars-long-ok!"
 
 pytestmark = pytest.mark.anyio
 
@@ -27,28 +20,14 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def db(monkeypatch):
-    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
-    # exercises the new engine (see tests/helpers/active_db.py).
-    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
-        yield tool
-
-
-@pytest.fixture
-def auth(monkeypatch):
-    monkeypatch.setenv("AUTH_SECRET_KEY", SECRET)
-    return AuthTool()
-
-
-@pytest.fixture
-def plugin_factory(db, auth):
+def plugin_factory(db, auth, state):
     def make(db_tool=None):
         return LoginPlugin(
             http=MagicMock(),
             db=db_tool or db,
             auth=auth,
             logger=MagicMock(),
-            state=StateTool(),
+            state=state,
         )
     return make
 
@@ -61,6 +40,7 @@ async def seed_user(db, auth, email="ana@example.com", password="password123", r
     )
 
 
+@pytest.mark.migrations("users")
 async def test_login_returns_valid_token_and_sets_cookie(db, auth, plugin_factory):
     user_id = await seed_user(db, auth)
     plugin = plugin_factory()
@@ -81,6 +61,7 @@ async def test_login_returns_valid_token_and_sets_cookie(db, auth, plugin_factor
     assert context.set_cookie.call_args.args[0] == "access_token"
 
 
+@pytest.mark.migrations("users")
 async def test_token_carries_all_user_roles(db, auth, plugin_factory):
     await seed_user(db, auth, roles=["user", "admin"])
     plugin = plugin_factory()
@@ -92,6 +73,7 @@ async def test_token_carries_all_user_roles(db, auth, plugin_factory):
     assert claims["roles"] == ["user", "admin"]
 
 
+@pytest.mark.migrations("users")
 async def test_wrong_password_returns_generic_error(db, auth, plugin_factory):
     await seed_user(db, auth)
     plugin = plugin_factory()
@@ -102,6 +84,7 @@ async def test_wrong_password_returns_generic_error(db, auth, plugin_factory):
     assert result["error"] == "Invalid email or password"
 
 
+@pytest.mark.migrations("users")
 async def test_unknown_email_returns_same_generic_error(plugin_factory):
     plugin = plugin_factory()
 
@@ -112,6 +95,7 @@ async def test_unknown_email_returns_same_generic_error(plugin_factory):
     assert result["error"] == "Invalid email or password"
 
 
+@pytest.mark.migrations("users")
 async def test_throttled_after_max_failed_attempts(db, auth, plugin_factory):
     await seed_user(db, auth)
     plugin = plugin_factory()

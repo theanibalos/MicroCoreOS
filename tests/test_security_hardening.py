@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from httpx import AsyncClient, ASGITransport
 from microcoreos import current_identity_var
-from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
+from tools.event_bus.event_bus_tool import EventEnvelope
 from tools.http_server.http_server_tool import HttpServerTool, HttpContext
 
 pytestmark = pytest.mark.anyio
@@ -18,13 +18,6 @@ def http_tool():
 async def client(http_tool):
     async with AsyncClient(transport=ASGITransport(app=http_tool.app), base_url="http://test") as ac:
         yield ac
-
-@pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
-    yield b
-    await b.shutdown()
 
 async def test_csrf_protection_with_cookies(http_tool, client):
     """
@@ -79,7 +72,7 @@ async def test_safe_cookie_defaults(http_tool, client):
 
 # ── EventBus Security Tests ──────────────────────────────────────────────
 
-async def test_event_bus_emitter_protection(bus):
+async def test_event_bus_emitter_protection(event_bus):
     """
     Verify that EventBusTool.publish ignores manual 'emitter' overrides.
     """
@@ -89,13 +82,13 @@ async def test_event_bus_emitter_protection(bus):
         nonlocal captured_envelope
         captured_envelope = envelope
 
-    await bus.subscribe("test.event", subscriber)
+    await event_bus.subscribe("test.event", subscriber)
 
     # Set context identity
     token = current_identity_var.set("AuthorizedPlugin")
     try:
         # Attempt to spoof identity
-        await bus.publish("test.event", {"msg": "hello"}, emitter="SYSTEM_ADMIN")
+        await event_bus.publish("test.event", {"msg": "hello"}, emitter="SYSTEM_ADMIN")
 
         # Give a small time for safe_execute task to run
         await asyncio.sleep(0.05)

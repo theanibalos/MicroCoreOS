@@ -60,7 +60,8 @@ Tasks 1 and 2 are independent at write time — disjoint files, neither reads
 the other (plugins compose tools; migrations don't) — so they can be two
 agents, in any order or in parallel. The one hard ordering rule is the boot:
 
-3. **Boot once** (`uv run main.py`), only after EVERYTHING above is written.
+3. **Boot once** (`uv run main.py`, or `microcoreos` if you installed the
+   package), only after EVERYTHING above is written.
    This regenerates `AI_CONTEXT.md` with the real tables, models and tool
    interfaces — the ground truth every wave agent receives (a tool missing at
    boot means a tool missing from every executor's prefix). Only then do

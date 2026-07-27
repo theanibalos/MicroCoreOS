@@ -21,4 +21,4 @@ description: Ensures adherence to MicroCoreOS "Atomic Microkernel" architecture.
 - [ ] Plugin is a single self-contained file
 - [ ] `async def` for I/O, `def` for CPU
 - [ ] Test file exists at `tests/test_{name}_plugin.py`
-- [ ] `uv run main.py` runs without errors
+- [ ] `uv run main.py` runs without errors (or `microcoreos` / `microcoreos run` if installed)

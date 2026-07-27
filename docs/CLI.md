@@ -104,6 +104,8 @@ indistinguishable states distinguishable:
 | = baseline | changed | **safe to update** — you never touched it |
 | changed | = baseline | **yours** — left alone, always |
 | changed | changed | **conflict** — reported, never written |
+| = baseline | withdrawn | **deleted** — the framework's file to take back |
+| changed | withdrawn | **released** — kept, and no longer tracked at all |
 
 ```bash
 microcoreos upgrade            # report only (default)
@@ -112,6 +114,16 @@ microcoreos upgrade --apply    # write the safe ones, move the baseline
 
 `--apply` never touches a conflict and never resurrects a file you deleted —
 removing a tool you do not use is a supported act, not damage.
+
+**A file dropped upstream is deleted here, unless you edited it.** The rule is
+the same one as everywhere else: untouched is the framework's to withdraw, and
+an empty `tools/<name>/` goes with the last file in it. If you did edit it, it
+stays and leaves the baseline for good — upstream no longer ships it and you
+changed it, so there is nothing left to compare, and re-reporting it on every
+run would just teach you to skip the output.
+
+If most of the baseline appears to have vanished, nothing is deleted: that is
+what a partial or broken install looks like, not what a release looks like.
 
 **The manifest belongs in version control.** The scaffolded `.gitignore` does
 not exclude it on purpose: a teammate who clones the project without it cannot
@@ -123,6 +135,14 @@ Without a manifest the command refuses outright — it is written by
 records the move, and the baseline stays keyed by the file's upstream path —
 so a fix to `extras/available_tools/scheduler/` reaches `tools/scheduler/`
 where you actually put it.
+
+Moving a folder yourself works too, including to a name no convention could
+guess (`mv extras/available_tools/postgresql tools/my-db`). Names cannot follow
+that, so content does: an unedited file still hashes to its baseline digest
+wherever it now sits, and the move is written into the manifest the first time
+`upgrade` runs — after which the folder is tracked by name and you can edit it
+freely. A digest matching more than one candidate proves nothing and is
+ignored, so nothing is claimed on a guess.
 
 ---
 

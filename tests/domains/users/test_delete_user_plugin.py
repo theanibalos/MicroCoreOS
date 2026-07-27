@@ -1,16 +1,11 @@
 """Black-box tests for DeleteUserPlugin (ownership + user.deleted event)."""
 import asyncio
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domains.users.plugins.delete_user_plugin import DeleteUserPlugin
-from tools.event_bus.event_bus_tool import EventBusTool
-from tests.helpers.active_db import active_db
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
 
 pytestmark = pytest.mark.anyio
 
@@ -20,25 +15,9 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture
-async def db(monkeypatch):
-    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
-    # exercises the new engine (see tests/helpers/active_db.py).
-    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
-        yield tool
-
-
-@pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
-    yield b
-    await b.shutdown()
-
-
-def make_plugin(db, bus):
+def make_plugin(db, event_bus):
     return DeleteUserPlugin(
-        http=MagicMock(), db=db, event_bus=bus, logger=MagicMock(), auth=MagicMock()
+        http=MagicMock(), db=db, event_bus=event_bus, logger=MagicMock(), auth=MagicMock()
     )
 
 
@@ -49,15 +28,16 @@ async def seed_user(db):
     )
 
 
-async def test_user_deletes_own_account_and_event_is_published(db, bus):
+@pytest.mark.migrations("users")
+async def test_user_deletes_own_account_and_event_is_published(db, event_bus):
     user_id = await seed_user(db)
     received = []
 
     async def on_deleted(event):
         received.append(event.payload)
 
-    await bus.subscribe("user.deleted", on_deleted)
-    plugin = make_plugin(db, bus)
+    await event_bus.subscribe("user.deleted", on_deleted)
+    plugin = make_plugin(db, event_bus)
 
     result = await plugin.execute({"user_id": str(user_id), "_auth": {"sub": str(user_id)}})
 
@@ -69,9 +49,10 @@ async def test_user_deletes_own_account_and_event_is_published(db, bus):
     assert received == [{"id": user_id}]
 
 
-async def test_deleting_someone_else_is_forbidden(db, bus):
+@pytest.mark.migrations("users")
+async def test_deleting_someone_else_is_forbidden(db, event_bus):
     user_id = await seed_user(db)
-    plugin = make_plugin(db, bus)
+    plugin = make_plugin(db, event_bus)
     context = MagicMock()
 
     result = await plugin.execute(
@@ -85,8 +66,9 @@ async def test_deleting_someone_else_is_forbidden(db, bus):
     assert row is not None  # still there
 
 
-async def test_unknown_user_returns_not_found(db, bus):
-    plugin = make_plugin(db, bus)
+@pytest.mark.migrations("users")
+async def test_unknown_user_returns_not_found(db, event_bus):
+    plugin = make_plugin(db, event_bus)
 
     result = await plugin.execute({"user_id": "9999", "_auth": {"sub": "9999"}})
 
@@ -94,10 +76,10 @@ async def test_unknown_user_returns_not_found(db, bus):
     assert result["error"] == "User not found"
 
 
-async def test_db_failure_never_leaks_technical_detail(bus):
+async def test_db_failure_never_leaks_technical_detail(event_bus):
     broken_db = AsyncMock()
     broken_db.execute.side_effect = Exception("secret: table structure leaked")
-    plugin = make_plugin(broken_db, bus)
+    plugin = make_plugin(broken_db, event_bus)
 
     result = await plugin.execute({"user_id": "1", "_auth": {"sub": "1"}})
 

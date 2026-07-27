@@ -325,3 +325,103 @@ jobs:
       - name: Show boot log on failure
         if: failure()
         run: cat /tmp/e2e/app/boot.log || true
+
+  # The same package paths on Windows. Everything above runs on Linux only, so
+  # the one thing this job is here to execute is path handling: the manifest is
+  # a published format whose keys are POSIX-style on every platform, and
+  # `new` / `add` / `upgrade` are the three commands that write it.
+  #
+  # Scope is deliberate. The boot/HTTP half of packaged-e2e is NOT repeated
+  # here — that would drag in service containers Windows runners do not offer,
+  # and buy coverage of a path this job is not about. Booting on Windows stays
+  # unexercised, and docs/TECH_DEBT.md says so.
+  packaged-e2e-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash        # Git Bash ships on the runner; keeps this readable.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # The filesystem-facing suites. The rest of tests/ needs Postgres, Redis
+      # and RabbitMQ, which is what the Linux matrix is for.
+      - name: Path and packaging suites
+        run: uv run -m pytest tests/test_upgrade.py tests/test_scaffold.py tests/test_catalog.py tests/test_cli.py -q
+
+      - name: Build the wheel
+        run: uv build --wheel -o dist
+
+      - name: Install it in a venv with no access to the repo
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e" && cd "$RUNNER_TEMP/e2e"
+          uv venv
+          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler]"
+          ./.venv/Scripts/microcoreos --help
+
+      - name: microcoreos new
+        run: |
+          cd "$RUNNER_TEMP/e2e"
+          ./.venv/Scripts/microcoreos new app
+          cd app
+          test -f main.py
+          test -f .microcoreos/manifest.json
+          test -f tools/sqlite/sqlite_tool.py
+          test ! -d microcoreos
+
+          # The whole point of this job: a manifest written by Windows must not
+          # carry a single backslash, or every path in it misses on Linux.
+          python - <<'EOF'
+          import json
+          m = json.load(open(".microcoreos/manifest.json", encoding="utf-8"))
+          bad = [p for p in m["files"] if "\\" in p]
+          assert not bad, f"backslashes in manifest keys: {bad[:5]}"
+          print(f"OK {len(m['files'])} manifest paths, all POSIX-style")
+          EOF
+
+      - name: microcoreos add
+        run: |
+          cd "$RUNNER_TEMP/e2e/app"
+          ../.venv/Scripts/microcoreos add scheduler --no-install
+          test -f tools/scheduler/scheduler_tool.py
+          test ! -d extras/available_tools/scheduler
+          python - <<'EOF'
+          import json
+          moved = json.load(open(".microcoreos/manifest.json", encoding="utf-8"))["moved"]
+          assert moved, "add recorded no move"
+          bad = [p for p in list(moved) + list(moved.values()) if "\\" in p]
+          assert not bad, f"backslashes in recorded moves: {bad}"
+          print(f"OK moves recorded POSIX-style: {moved}")
+          EOF
+
+      - name: microcoreos upgrade — tracks a move, applies a fix, withdraws a file
+        run: |
+          cd "$RUNNER_TEMP/e2e/app"
+          TEMPLATE=$(echo "$RUNNER_TEMP"/e2e/.venv/Lib/site-packages/microcoreos/_template)
+
+          # 1. A fix reaches an extra `add` moved.
+          echo "# upstream fix" >> "$TEMPLATE/extras/available_tools/scheduler/scheduler_tool.py"
+
+          # 2. A folder renamed off-convention is found by content.
+          mv extras/available_tools/postgresql tools/my-db
+
+          # 3. A file withdrawn upstream is deleted here.
+          rm "$TEMPLATE/tools/state/state_tool.py"
+
+          ../.venv/Scripts/microcoreos upgrade --apply
+
+          tail -1 tools/scheduler/scheduler_tool.py | grep -q "upstream fix"
+          test -f tools/my-db/postgresql_tool.py
+          test ! -f tools/state/state_tool.py
+          python - <<'EOF'
+          import json
+          moved = json.load(open(".microcoreos/manifest.json", encoding="utf-8"))["moved"]
+          assert moved.get("extras/available_tools/postgresql") == "tools/my-db", moved
+          print("OK rename tracked by content, POSIX-style")
+          EOF

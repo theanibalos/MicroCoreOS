@@ -79,7 +79,7 @@ La arquitectura genera `AI_CONTEXT.md` automáticamente—un manifiesto con toda
 ```bash
 git clone https://github.com/theanibalos/MicroCoreOS.git
 cd MicroCoreOS
-uv run main.py
+uv run main.py                  # o: uv run microcoreos
 # Visita http://localhost:5000/docs
 ```
 

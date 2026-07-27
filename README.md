@@ -48,7 +48,7 @@ Or clone the repo to work on the framework itself:
 git clone https://github.com/theanibalos/MicroCoreOS.git
 cd MicroCoreOS
 cp .env.example .env
-uv run main.py
+uv run main.py                  # or: uv run microcoreos
 ```
 
 No configuration needed. SQLite is the default (zero setup). The Kernel discovers all plugins, injects dependencies, runs migrations, and starts the server.

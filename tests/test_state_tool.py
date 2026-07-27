@@ -1,6 +1,5 @@
 import asyncio
 import pytest
-from tools.state.state_tool import StateTool
 
 pytestmark = pytest.mark.anyio
 
@@ -10,132 +9,127 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture
-def tool():
-    return StateTool()
+async def test_set_and_get(state):
+    await state.set("x", 42)
+    assert await state.get("x") == 42
 
 
-async def test_set_and_get(tool):
-    await tool.set("x", 42)
-    assert await tool.get("x") == 42
+async def test_get_missing_key_returns_default(state):
+    assert await state.get("missing") is None
+    assert await state.get("missing", default="fallback") == "fallback"
 
 
-async def test_get_missing_key_returns_default(tool):
-    assert await tool.get("missing") is None
-    assert await tool.get("missing", default="fallback") == "fallback"
+async def test_has(state):
+    assert await state.has("x") is False
+    await state.set("x", 1)
+    assert await state.has("x") is True
 
 
-async def test_has(tool):
-    assert await tool.has("x") is False
-    await tool.set("x", 1)
-    assert await tool.has("x") is True
+async def test_keys(state):
+    await state.set("a", 1)
+    await state.set("b", 2)
+    assert sorted(await state.keys()) == ["a", "b"]
 
 
-async def test_keys(tool):
-    await tool.set("a", 1)
-    await tool.set("b", 2)
-    assert sorted(await tool.keys()) == ["a", "b"]
-
-
-async def test_get_all_is_a_copy(tool):
-    await tool.set("k", [1, 2, 3])
-    snapshot = await tool.get_all()
+async def test_get_all_is_a_copy(state):
+    await state.set("k", [1, 2, 3])
+    snapshot = await state.get_all()
     snapshot["new_key"] = 99
-    assert await tool.has("new_key") is False
+    assert await state.has("new_key") is False
 
 
-async def test_get_all_deep_copy_protects_mutable_values(tool):
-    await tool.set("k", [1, 2, 3])
-    snapshot = await tool.get_all()
+async def test_get_all_deep_copy_protects_mutable_values(state):
+    await state.set("k", [1, 2, 3])
+    snapshot = await state.get_all()
     snapshot["k"].append(99)
-    assert await tool.get("k") == [1, 2, 3]
+    assert await state.get("k") == [1, 2, 3]
 
 
-async def test_increment_from_zero(tool):
-    assert await tool.increment("counter") == 1
-    assert await tool.increment("counter") == 2
+async def test_increment_from_zero(state):
+    assert await state.increment("counter") == 1
+    assert await state.increment("counter") == 2
 
 
-async def test_increment_non_numeric_raises(tool):
-    await tool.set("s", "text")
+async def test_increment_non_numeric_raises(state):
+    await state.set("s", "text")
     with pytest.raises(ValueError):
-        await tool.increment("s")
+        await state.increment("s")
 
 
-async def test_delete(tool):
-    await tool.set("x", 1)
-    await tool.delete("x")
-    assert await tool.has("x") is False
+async def test_delete(state):
+    await state.set("x", 1)
+    await state.delete("x")
+    assert await state.has("x") is False
 
 
-async def test_delete_missing_key_no_error(tool):
-    await tool.delete("nonexistent")
+async def test_delete_missing_key_no_error(state):
+    await state.delete("nonexistent")
 
 
-async def test_clear(tool):
-    await tool.set("a", 1)
-    await tool.set("b", 2)
-    await tool.clear()
-    assert await tool.keys() == []
+async def test_clear(state):
+    await state.set("a", 1)
+    await state.set("b", 2)
+    await state.clear()
+    assert await state.keys() == []
 
 
-async def test_namespace_isolation(tool):
-    await tool.set("x", 1, namespace="a")
-    assert await tool.get("x", namespace="b") is None
+async def test_namespace_isolation(state):
+    await state.set("x", 1, namespace="a")
+    assert await state.get("x", namespace="b") is None
 
 
-async def test_concurrent_increments(tool):
-    await asyncio.gather(*[tool.increment("hits") for _ in range(50)])
-    assert await tool.get("hits") == 50
+async def test_concurrent_increments(state):
+    await asyncio.gather(*[state.increment("hits") for _ in range(50)])
+    assert await state.get("hits") == 50
 
 
-async def test_increment_custom_amount(tool):
-    result = await tool.increment("counter", amount=5)
+async def test_increment_custom_amount(state):
+    result = await state.increment("counter", amount=5)
     assert result == 5
-    result = await tool.increment("counter", amount=3)
+    result = await state.increment("counter", amount=3)
     assert result == 8
 
 
-async def test_increment_float_amount(tool):
-    result = await tool.increment("score", amount=1.5)
+async def test_increment_float_amount(state):
+    result = await state.increment("score", amount=1.5)
     assert result == 1.5
 
 
 # ─── TTL (fixed-window semantics, Redis-compatible) ──────────────────────────
 
-async def test_ttl_key_expires(tool):
-    await tool.set("temp", "v", ttl=0.05)
-    assert await tool.get("temp") == "v"
+async def test_ttl_key_expires(state):
+    await state.set("temp", "v", ttl=0.05)
+    assert await state.get("temp") == "v"
     await asyncio.sleep(0.08)
-    assert await tool.get("temp") is None
-    assert await tool.has("temp") is False
+    assert await state.get("temp") is None
+    assert await state.has("temp") is False
 
 
-async def test_ttl_none_never_expires(tool):
-    await tool.set("perm", "v")
+async def test_ttl_none_never_expires(state):
+    await state.set("perm", "v")
     await asyncio.sleep(0.05)
-    assert await tool.get("perm") == "v"
+    assert await state.get("perm") == "v"
 
 
-async def test_expired_key_excluded_from_keys_and_get_all(tool):
-    await tool.set("temp", 1, ttl=0.05)
-    await tool.set("perm", 2)
+async def test_expired_key_excluded_from_keys_and_get_all(state):
+    await state.set("temp", 1, ttl=0.05)
+    await state.set("perm", 2)
     await asyncio.sleep(0.08)
-    assert await tool.keys() == ["perm"]
-    assert await tool.get_all() == {"perm": 2}
+    assert await state.keys() == ["perm"]
+    assert await state.get_all() == {"perm": 2}
 
 
-async def test_increment_ttl_applies_only_on_creation(tool):
+async def test_increment_ttl_applies_only_on_creation(state):
     """Fixed window: the TTL set at creation is NOT extended by later increments."""
-    await tool.increment("attempts", ttl=0.1)
+    await state.increment("attempts", ttl=0.1)
     await asyncio.sleep(0.06)
-    await tool.increment("attempts", ttl=0.1)  # must NOT reset the window
-    assert await tool.get("attempts") == 2
+    await state.increment("attempts", ttl=0.1)  # must NOT reset the window
+    assert await state.get("attempts") == 2
     await asyncio.sleep(0.06)  # 0.12 total > 0.1 original window
-    assert await tool.get("attempts") is None
+    assert await state.get("attempts") is None
 
 
-async def test_increment_after_expiry_restarts_from_zero(tool):
-    await tool.increment("attempts", ttl=0.05)
+async def test_increment_after_expiry_restarts_from_zero(state):
+    await state.increment("attempts", ttl=0.05)
     await asyncio.sleep(0.08)
-    assert await tool.increment("attempts", ttl=0.05) == 1
+    assert await state.increment("attempts", ttl=0.05) == 1

@@ -6,7 +6,9 @@ than debt live in [ROADMAP.md](../ROADMAP.md); this file is only what someone
 would reasonably expect to work and does not, or works in a narrower way than it
 looks.
 
-Recorded 2026-07-27, after Issue 39 (Core as an installable package).
+Recorded 2026-07-27, after Issue 39 (Core as an installable package). Items 2
+and 6 were closed the same day, and item 5 reduced to what should stay as it
+is. Items 1 and 3 are blocked on decisions, not on work — see each.
 
 ---
 
@@ -52,21 +54,48 @@ pin all of that. A scaffolded project now boots with zero warnings.
 
 ---
 
-## 2. `microcoreos upgrade` — three things it does not do
+## 2. `microcoreos upgrade` — three things it did not do ✅ CLOSED
 
-Verified working: safe updates, conflict refusal, tracking an extra to where
-`add` or a hand `mv` put it. Not covered:
+All three are done. Verified against the built wheel in a clean venv, not only
+from the checkout — the packaged path is the only one where the last three
+bugs here were reachable.
 
-| Gap | Consequence |
-|---|---|
-| Files deleted upstream are reported, never removed | A tool dropped from the framework lingers in your project until you delete it |
-| A folder renamed to anything but the conventional destination loses tracking | `mv extras/available_tools/postgresql tools/my-db` → upstream fixes never arrive, silently |
-| Only exercised on Linux / CPython 3.12 | Manifest paths are normalized to `/` for Windows, but that path has never been run |
+**Files withdrawn upstream are now removed.** The same rule as everywhere else
+decides: untouched is the framework's file to take back, so `--apply` deletes
+it and prunes the folder if it was the last file in it. A file you *edited*
+that upstream dropped is kept and **released** — it leaves the baseline for
+good, because upstream no longer ships it and you changed it, so there is
+nothing left to compare. Reporting it forever instead would have built the
+permanent, tune-out-able warning this document complains about in item 1.
 
-The second is the same failure shape as the bug fixed in this session (a silent
-"everything is current"), just triggered by a rename the convention cannot
-predict. A `moved` entry can be written by hand into
-`.microcoreos/manifest.json` as a workaround.
+One hazard the feature creates and had to close: withdrawal reads the ABSENCE
+of a file as an instruction, so a partial wheel is indistinguishable from a
+release that deleted everything. Past `MAX_REMOVAL_SHARE` (25%) of the
+baseline, nothing is withdrawn and the template is called broken instead.
+
+**A folder renamed off-convention is found by content.** Names cannot follow
+`mv extras/available_tools/postgresql tools/my-db`, but the baseline digest
+can: an unedited file still hashes to it wherever it sits. A match is claimed
+only when a digest names exactly one missing baseline file AND exactly one file
+on disk — every empty `__init__.py` shares a digest, and a duplicated (rather
+than moved) extra would too, so ambiguity proves nothing and is dropped. The
+move is then written into the manifest on sight, in dry-run mode too, because
+editing the file destroys the only evidence; and the *folder* move is recorded
+rather than the file move, so files upstream adds to that extra later still
+land in the right place. The hand-written `moved` entry is no longer a
+workaround anyone needs.
+
+**Windows now runs.** A `packaged-e2e-windows` job builds the wheel and drives
+`new` → `add` → `upgrade` on `windows-latest`, asserting that no manifest path
+carries a backslash — the invariant that would otherwise break every lookup on
+Linux — plus the filesystem-facing suites. `tests/test_upgrade.py` pins the
+same assertion so it fails locally too, though only the Windows job gives it
+teeth.
+
+**Still not covered:** *booting* on Windows. The job stops at the CLI and
+filesystem surface on purpose — the boot half needs service containers Windows
+runners do not offer. And this is CI added, not CI observed: it is verified on
+the next push, not in the session that wrote it.
 
 ---
 
@@ -105,31 +134,58 @@ the shared `wait_until` helper now report the observed state on timeout instead
 of `<lambda at 0x...>` — which is why the original failure could not be
 diagnosed. A recurrence will say which condition and with what values.
 
+**Do not "fix" this without a reproduction.** There is nothing to fix until a
+failure is in hand: an attempt made blind ends up adjusting the test until it
+looks robust, which converts an unknown into a hidden one and throws away the
+instrumentation that is the only thing standing between here and an answer.
+The next move is a recurrence, not a change.
+
 ---
 
-## 5. 37 hand-built tools across 27 test files
+## 5. 37 hand-built tools across 27 test files → 20 across 13
 
-`tests/conftest.py` now publishes a fixture per Kernel injection key (`db`,
+`tests/conftest.py` publishes a fixture per Kernel injection key (`db`,
 `event_bus`, `auth`, `state`, `logger`, `config`), so a test asks for tools the
-way a plugin does. 37 call sites across 27 files still construct
-`SqliteTool()` / `EventBusTool()` / etc. inline (measured 2026-07-27,
-excluding the shared fixtures themselves).
+way a plugin does. 15 files were converted; the same grep that measured 37 call
+sites in 27 files now measures **20 in 13**. Collected test count went 639 →
+654, and the 15 added are all `test_upgrade.py`'s — the refactor removed none.
 
-Nothing is broken — a local fixture always overrides the shared one — so this
-is redundancy, not breakage. Best first candidate:
-`tests/test_durable_one_shots.py`, which repeats the most scaffolding and would
-serve as a second worked example next to
-`tests/test_plugin_di_fixtures.py`.
+The remainder is not a backlog to finish. Every one of them was looked at, and
+they fall into three groups that should stay as they are:
+
+- **Sync test files.** The shared fixtures are async generators, and pytest
+  cannot resolve one for a sync test. `test_auth_tool.py` (mixed sync/async),
+  `test_config_tool.py`, `test_logger_tool.py`.
+- **Tests of the tool itself, not of a plugin using it.** The sqlite suites
+  drive transaction locking, `_run_migrations()` and schema introspection —
+  exactly what the fixture's abstraction hides. Two `AuthTool()` call sites
+  exist to exercise the constructor's own validation.
+- **Parity suites.** Building several drivers side by side IS the test
+  (`tools/test_db_parity.py`, `test_state_parity.py`, and the driver suites).
+
+One genuine near-miss: `test_durable_one_shots.py` keeps its local `db`
+because its migration lives in `extras/available_domains/scheduler/migrations/`
+and the shared fixture's `@pytest.mark.migrations` marker only resolves
+`domains/<name>/migrations`. Teaching the marker about extras would close it.
 
 ---
 
-## 6. Docs still speak only of `uv run main.py`
+## 6. Docs spoke only of `uv run main.py` ✅ CLOSED
 
-`AGENTS.md`, `.agent/workflows/*` and several `docs/` pages instruct
-`uv run main.py`. That is correct — `main.py` is materialized and is a shim over
-the same code path — but none of them mention the installed `microcoreos`
-command, which is how a packaged install is actually driven.
-[CLI.md](CLI.md) documents the command; the older pages were not swept.
+Ten pages now name the installed `microcoreos` command alongside
+`uv run main.py`: `README.md` and its Spanish translation, `AGENTS.md`,
+`plans/README.md`, `docs/ELASTIC_DEPLOYMENT.md`, `docs/PARALLEL_DEVELOPMENT.md`,
+and the four `.agent/` workflow and skill pages. `uv run main.py` stays
+everywhere it was — it is correct, and it is the form that works in a checkout.
+
+Deliberately not swept: `ROADMAP.md`'s changelog entries and
+`docs/PLAN_EVENT_LINTER.md`, which are historical records rather than live
+instructions, and `microcoreos/project_readme.md`, which already leads with
+`microcoreos`.
+
+Also added while in here: `AGENTS.md`'s Reading Path — the first thing any
+agent reads — now points at this file. Before, a session could only find the
+debt register if someone told it the path.
 
 ---
 

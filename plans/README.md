@@ -81,7 +81,8 @@ You are the Lead Architect (Planner AI). Your task is to design a self-contained
 
 ## Step 2 — Validate the plan (command)
 
-The app must be running (`uv run main.py`). Zero `errors` before building
+The app must be running (`uv run main.py`, or `microcoreos` if you installed
+the package). Zero `errors` before building
 anything; `warnings` are advisory (e.g. a table missing its `columns:`).
 An invalid plan goes BACK to the Planner — never patch it in code.
 
@@ -130,6 +131,7 @@ Then you (the human) boot once and freeze:
 
 ```bash
 uv run main.py --boot-tool db   # applies migrations, regenerates AI_CONTEXT.md
+microcoreos run --boot-tool db  # same, if you installed the package
 ```
 
 **From this moment until Step 5, nothing boots the app.** `AI_CONTEXT.md`
@@ -187,6 +189,7 @@ When all executors finish:
 ```bash
 uv run -m pytest            # full suite in one go
 uv run main.py              # integration boot
+microcoreos                 # same, if you installed the package
 curl -s http://localhost:5000/system/lint   # zero warnings, no UNTYPED_PAYLOAD
 ```
 

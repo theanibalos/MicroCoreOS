@@ -10,6 +10,7 @@ This file is the single, absolute entry point for any AI agent (Gemini, Claude, 
 2. **`AI_CONTEXT.md`** — Contains the live inventory of active tools (with exact signatures) and domain tables/endpoints. **Read only the tools and tables you need.**
 3. **`domains/{domain}/models/{name}.py`** — Entity model (DB mirror). *Advisory: Table structures are already mirrored in AI_CONTEXT.md.*
 4. **`INSTRUCTIONS_FOR_AI.md`** — Read ONLY for advanced tasks (building new tools, testing in-depth, or changing kernel internals).
+5. **`docs/TECH_DEBT.md`** — What is knowingly unfinished and what it would cost to finish. Read ONLY when scoping work that might overlap an open item.
 
 ---
 
@@ -35,6 +36,7 @@ no events → no `flows`. A CRUD-only plan has `features:` and nothing else.
 
 ```bash
 uv run main.py                                          # Run the app (also regenerates AI_CONTEXT.md)
+microcoreos                                              # Same, if you installed the package (or: microcoreos run)
 uv run -m pytest                                        # Run all tests (always -m: the pytest binary is not exposed)
 uv run -m pytest tests/test_file.py                     # Run a single test
 docker compose -f dev_infra/docker-compose.yml up -d    # Start dev infrastructure (PostgreSQL)
@@ -85,7 +87,7 @@ The canonical methodology (and its phase numbering) is `docs/PARALLEL_DEVELOPMEN
 This is the coordinator's operational summary:
 
 1. **Phase 1 — The Plan (contract)**: The formal YAML plan lives in `plans/active_plan.yaml`; the execution checklist (all tasks `[ ]`) in `plans/active_plan.md`. Validate with `POST /system/plan/validate` — **zero `errors` before anything else runs**. An invalid plan is fixed in the plan, never patched in code.
-2. **Phase 0 — Foundation (Serial)**: Write the tools (if any), then all domain models and SQL migrations sequentially, exactly as the plan's `columns:` declare them. Run `uv run main.py --boot-tool db` to migrate and regenerate `AI_CONTEXT.md`.
+2. **Phase 0 — Foundation (Serial)**: Write the tools (if any), then all domain models and SQL migrations sequentially, exactly as the plan's `columns:` declare them. Run `uv run main.py --boot-tool db` (or `microcoreos run --boot-tool db` if installed) to migrate and regenerate `AI_CONTEXT.md`.
 3. **Phase 2 — Parallel Write Wave**: Spawn N subagents (one per plugin), each with the **canonical executor prompt**: a byte-identical shared prefix (`AI_CONTEXT.md` → `plans/active_plan.yaml`, in that order — the manifest embeds the executor rules and templates as its "Plugin Authoring Guide" section) followed by ONE per-agent line at the end ("Implement feature `<PluginName>` from the plan above"). Subagents never open the plan or `AI_CONTEXT.md` themselves — dispatch them **write-only, scoped to their two files** (write capability restricted to the exact paths the plan declares for the task — `file:` + `test:`, or the flow's two test paths; no read/search/shell tools): the prefix is self-sufficient by construction (one complete template per deliverable type in `AI_CONTEXT.md` § Authoring Templates), so reading capability only invites redundant verification and guessed paths. The identical prefix lets any engine with prefix caching (local KV cache, hosted prompt caching) process the shared block once and reuse it for the whole wave — dispatch the first agent, let it start responding, then fire the rest. Each agent writes exactly two files: its plugin and its unit test.
 4. **Phase 3 — Bulk Verification**: Once all subagents finish writing, run the entire test suite in a single execution (`uv run -m pytest`), then boot and check `GET /system/lint`.
 5. **Cleanup & Reconstruct**:

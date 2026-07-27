@@ -151,7 +151,7 @@ Repeat for: `get_{name}s_plugin.py`, `get_{name}_by_id_plugin.py`, `update_{name
 
 ```bash
 // turbo
-uv run main.py
+uv run main.py   # or: microcoreos (if you installed the package)
 ```
 
 Check that:

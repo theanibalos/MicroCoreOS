@@ -184,6 +184,7 @@ DB_AUTO_MIGRATE=false
 
 # CI/CD pipeline step (boots ONLY the db tool, migrates, exits)
 DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
+# or, installed: DB_AUTO_MIGRATE=true microcoreos run --boot-tool db
 ```
 
 This is the same model as Django/Rails/Flyway: the pipeline (with DBA

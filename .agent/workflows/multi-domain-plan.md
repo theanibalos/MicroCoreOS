@@ -58,7 +58,8 @@ never patch it in code.
 (1 and 2 are independent at write time — disjoint files; two agents in any
 order or in parallel is fine. Migrations keep one author for numbering.)
 
-3. Boot once (`uv run main.py`), only after everything is written →
+3. Boot once (`uv run main.py`, or `microcoreos` if you installed the
+   package), only after everything is written →
    regenerated `AI_CONTEXT.md` is the ground truth every agent receives
    (it must include the new tools' interfaces). Freeze phase 0.
 
@@ -82,7 +83,7 @@ and its unit test. Event payload schemas go inline in each publisher plugin
 
 ```bash
 // turbo
-uv run main.py
+uv run main.py   # or: microcoreos (if you installed the package)
 ```
 
 1. `GET /system/lint` → zero warnings (arch, drift, event contracts) and no

@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
+from tools.event_bus.event_bus_tool import EventEnvelope
 from domains.system.plugins.system_traces_plugin import SystemTracesPlugin
 from domains.system.plugins.system_traces_stream_plugin import SystemTracesStreamPlugin
 
@@ -10,14 +10,7 @@ pytestmark = pytest.mark.anyio
 def anyio_backend():
     return "asyncio"
 
-@pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
-    yield b
-    await b.shutdown()
-
-async def test_traces_no_duplicates_and_aggregates_subscribers(bus):
+async def test_traces_no_duplicates_and_aggregates_subscribers(event_bus):
     # Register multiple subscribers for the same event
     subscribers_called = []
     async def sub_a(event: EventEnvelope):
@@ -25,15 +18,15 @@ async def test_traces_no_duplicates_and_aggregates_subscribers(bus):
     async def sub_b(event: EventEnvelope):
         subscribers_called.append("b")
 
-    await bus.subscribe("trace.test", sub_a)
-    await bus.subscribe("trace.test", sub_b)
+    await event_bus.subscribe("trace.test", sub_a)
+    await event_bus.subscribe("trace.test", sub_b)
 
     # Publish an event
-    await bus.publish("trace.test", {"data": "test"})
+    await event_bus.publish("trace.test", {"data": "test"})
     await asyncio.sleep(0.05)  # Let deliveries complete
 
     # Instantiate traces plugin
-    plugin = SystemTracesPlugin(http=None, event_bus=bus)
+    plugin = SystemTracesPlugin(http=None, event_bus=event_bus)
     
     # Test flat trace list
     flat_res = await plugin.get_flat({})
@@ -57,17 +50,17 @@ async def test_traces_no_duplicates_and_aggregates_subscribers(bus):
     assert len(test_tree_nodes) == 1
     assert len(test_tree_nodes[0]["subscribers"]) == 2
 
-async def test_traces_stream_contains_subscribers(bus):
+async def test_traces_stream_contains_subscribers(event_bus):
     # Register a subscriber
     async def sub_c(event: EventEnvelope):
         pass
-    await bus.subscribe("stream.test", sub_c)
+    await event_bus.subscribe("stream.test", sub_c)
 
     class MockHttp:
         def add_sse_endpoint(self, *args, **kwargs):
             pass
 
-    stream_plugin = SystemTracesStreamPlugin(http=MockHttp(), event_bus=bus)
+    stream_plugin = SystemTracesStreamPlugin(http=MockHttp(), event_bus=event_bus)
     await stream_plugin.on_boot()
 
     # Capture the stream output
@@ -85,7 +78,7 @@ async def test_traces_stream_contains_subscribers(bus):
     await asyncio.sleep(0.02)
 
     # Publish event
-    await bus.publish("stream.test", {"hello": "world"})
+    await event_bus.publish("stream.test", {"hello": "world"})
     await asyncio.sleep(0.05)
 
     await cap_task

@@ -17,7 +17,6 @@ import pytest
 
 from extras.available_domains.scheduler.plugins.durable_one_shots_plugin import DurableOneShotsPlugin
 from tools.sqlite.sqlite_tool import SqliteTool
-from tools.event_bus.event_bus_tool import EventBusTool
 
 pytestmark = pytest.mark.anyio
 
@@ -54,52 +53,44 @@ async def db(monkeypatch, tmp_path):
     await tool.shutdown()
 
 
-@pytest.fixture
-async def bus():
-    tool = EventBusTool()
-    await tool.setup()
-    yield tool
-    await tool.shutdown()
-
-
-async def _make_plugin(db, bus) -> DurableOneShotsPlugin:
+async def _make_plugin(db, event_bus) -> DurableOneShotsPlugin:
     plugin = DurableOneShotsPlugin(
-        db=db, event_bus=bus, scheduler=_SchedulerStub(), logger=MagicMock()
+        db=db, event_bus=event_bus, scheduler=_SchedulerStub(), logger=MagicMock()
     )
     await plugin.on_boot()
     return plugin
 
 
-async def test_registers_cron_and_subscriptions(db, bus):
-    plugin = await _make_plugin(db, bus)
+async def test_registers_cron_and_subscriptions(db, event_bus):
+    plugin = await _make_plugin(db, event_bus)
     assert plugin.scheduler.jobs == [
         {"cron": "* * * * *", "job_id": "scheduler_durable_one_shots"}
     ]
-    subs = bus.get_subscribers()
+    subs = event_bus.get_subscribers()
     assert "scheduler.one_shot.schedule" in subs
     assert "scheduler.one_shot.cancel" in subs
 
 
-async def test_schedule_via_bus_and_fire_when_due(db, bus):
-    plugin = await _make_plugin(db, bus)
+async def test_schedule_via_bus_and_fire_when_due(db, event_bus):
+    plugin = await _make_plugin(db, event_bus)
 
     received = []
 
     async def on_due(env):
         received.append(env.payload)
 
-    await bus.subscribe("jobs.welcome.due", on_due)
+    await event_bus.subscribe("jobs.welcome.due", on_due)
 
     past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 
-    res = await bus.request(
+    res = await event_bus.request(
         "scheduler.one_shot.schedule",
         {"run_at": past, "event": "jobs.welcome.due", "payload": {"user_id": 42}},
     )
     assert res["success"] is True and res["data"]["job_id"]
 
-    await bus.request(
+    await event_bus.request(
         "scheduler.one_shot.schedule",
         {"run_at": future, "event": "jobs.welcome.due", "payload": {"user_id": 99}},
     )
@@ -118,12 +109,12 @@ async def test_schedule_via_bus_and_fire_when_due(db, bus):
     assert received == [{"user_id": 42}]
 
 
-async def test_survives_restart(db, bus):
+async def test_survives_restart(db, event_bus):
     """The Issue 19 scenario: the beat replica dies before firing.
     The row persists and a NEW plugin instance (same DB) fires it."""
-    first = await _make_plugin(db, bus)
+    first = await _make_plugin(db, event_bus)
     past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    await bus.request(
+    await event_bus.request(
         "scheduler.one_shot.schedule",
         {"run_at": past, "event": "jobs.report.due", "payload": {"id": 7}, "job_id": "rep"},
     )
@@ -134,10 +125,10 @@ async def test_survives_restart(db, bus):
     async def on_due(env):
         received.append(env.payload)
 
-    await bus.subscribe("jobs.report.due", on_due)
+    await event_bus.subscribe("jobs.report.due", on_due)
 
     second = DurableOneShotsPlugin(
-        db=db, event_bus=bus, scheduler=_SchedulerStub(), logger=MagicMock()
+        db=db, event_bus=event_bus, scheduler=_SchedulerStub(), logger=MagicMock()
     )
     await second.publish_due()
     await asyncio.sleep(0.1)
@@ -145,27 +136,27 @@ async def test_survives_restart(db, bus):
     assert received == [{"id": 7}]
 
 
-async def test_cancel_pending_one_shot(db, bus):
-    await _make_plugin(db, bus)
+async def test_cancel_pending_one_shot(db, event_bus):
+    await _make_plugin(db, event_bus)
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    res = await bus.request(
+    res = await event_bus.request(
         "scheduler.one_shot.schedule",
         {"run_at": future, "event": "jobs.x.due", "job_id": "c1"},
     )
     assert res["success"] is True
 
-    res = await bus.request("scheduler.one_shot.cancel", {"job_id": "c1"})
+    res = await event_bus.request("scheduler.one_shot.cancel", {"job_id": "c1"})
     assert res == {"success": True, "data": {"removed": True}}
 
-    res = await bus.request("scheduler.one_shot.cancel", {"job_id": "c1"})
+    res = await event_bus.request("scheduler.one_shot.cancel", {"job_id": "c1"})
     assert res == {"success": True, "data": {"removed": False}}  # ya no estaba
 
 
-async def test_stable_job_id_replaces_pending(db, bus):
-    await _make_plugin(db, bus)
+async def test_stable_job_id_replaces_pending(db, event_bus):
+    await _make_plugin(db, event_bus)
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     for v in (1, 2):
-        await bus.request(
+        await event_bus.request(
             "scheduler.one_shot.schedule",
             {"run_at": future, "event": "jobs.a.due", "payload": {"v": v}, "job_id": "stable"},
         )
@@ -174,12 +165,12 @@ async def test_stable_job_id_replaces_pending(db, bus):
     assert '"v": 2' in rows[0]["payload"]
 
 
-async def test_invalid_request_returns_safe_error(db, bus):
-    await _make_plugin(db, bus)
-    res = await bus.request(
+async def test_invalid_request_returns_safe_error(db, event_bus):
+    await _make_plugin(db, event_bus)
+    res = await event_bus.request(
         "scheduler.one_shot.schedule", {"run_at": "not-a-date", "event": "jobs.x.due"}
     )
     assert res == {"success": False, "error": "Invalid schedule request"}
 
-    res = await bus.request("scheduler.one_shot.schedule", {"event": ""})
+    res = await event_bus.request("scheduler.one_shot.schedule", {"event": ""})
     assert res["success"] is False

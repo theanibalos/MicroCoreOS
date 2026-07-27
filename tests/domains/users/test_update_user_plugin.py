@@ -1,16 +1,10 @@
 """Black-box tests for UpdateUserPlugin (ownership + partial updates)."""
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domains.users.plugins.update_user_plugin import UpdateUserPlugin
-from tools.auth.auth_tool import AuthTool
-from tests.helpers.active_db import active_db
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
-SECRET = "test-secret-key-32chars-long-ok!"
 
 pytestmark = pytest.mark.anyio
 
@@ -18,20 +12,6 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
-
-
-@pytest.fixture
-async def db(monkeypatch):
-    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
-    # exercises the new engine (see tests/helpers/active_db.py).
-    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
-        yield tool
-
-
-@pytest.fixture
-def auth(monkeypatch):
-    monkeypatch.setenv("AUTH_SECRET_KEY", SECRET)
-    return AuthTool()
 
 
 def make_plugin(db, auth):
@@ -47,6 +27,7 @@ async def seed_user(db, email="ana@example.com"):
     )
 
 
+@pytest.mark.migrations("users")
 async def test_user_updates_own_name_and_email(db, auth):
     user_id = await seed_user(db)
     plugin = make_plugin(db, auth)
@@ -63,6 +44,7 @@ async def test_user_updates_own_name_and_email(db, auth):
     assert row == {"name": "Ana Maria", "email": "ana.maria@example.com"}
 
 
+@pytest.mark.migrations("users")
 async def test_password_update_is_stored_hashed(db, auth):
     user_id = await seed_user(db)
     plugin = make_plugin(db, auth)
@@ -79,6 +61,7 @@ async def test_password_update_is_stored_hashed(db, auth):
     assert await auth.verify_password("new-password-9", row["password_hash"])
 
 
+@pytest.mark.migrations("users")
 async def test_updating_someone_else_is_forbidden(db, auth):
     user_id = await seed_user(db)
     plugin = make_plugin(db, auth)
@@ -95,6 +78,7 @@ async def test_updating_someone_else_is_forbidden(db, auth):
     assert row["name"] == "Ana"  # untouched
 
 
+@pytest.mark.migrations("users")
 async def test_no_fields_to_update_is_rejected(db, auth):
     user_id = await seed_user(db)
     plugin = make_plugin(db, auth)
@@ -105,6 +89,7 @@ async def test_no_fields_to_update_is_rejected(db, auth):
     assert result["error"] == "No fields to update"
 
 
+@pytest.mark.migrations("users")
 async def test_unknown_user_returns_not_found(db, auth):
     plugin = make_plugin(db, auth)
 
@@ -116,6 +101,7 @@ async def test_unknown_user_returns_not_found(db, auth):
     assert result["error"] == "User not found"
 
 
+@pytest.mark.migrations("users")
 async def test_duplicate_email_returns_specific_error(db, auth):
     await seed_user(db, email="taken@example.com")
     user_id = await seed_user(db, email="ana@example.com")

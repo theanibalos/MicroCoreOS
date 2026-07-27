@@ -11,20 +11,13 @@ regardless of how many subscribers received the event.
 
 import asyncio
 import pytest
-from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
+from tools.event_bus.event_bus_tool import EventEnvelope
 from domains.system.plugins.system_events_plugin import SystemEventsPlugin
 
 pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 def anyio_backend(): return "asyncio"
-
-@pytest.fixture
-async def bus():
-    b = EventBusTool()
-    await b.setup()
-    yield b
-    await b.shutdown()
 
 
 def _entry(result: dict, event_name: str) -> dict:
@@ -34,29 +27,29 @@ def _entry(result: dict, event_name: str) -> dict:
     return matches[0]
 
 
-async def test_times_fired_counts_publications_not_deliveries(bus):
+async def test_times_fired_counts_publications_not_deliveries(event_bus):
     async def handler(event: EventEnvelope): pass
 
-    await bus.subscribe("stats.test", handler)
-    await bus.publish("stats.test", {"n": 1})
-    await bus.publish("stats.test", {"n": 2})
+    await event_bus.subscribe("stats.test", handler)
+    await event_bus.publish("stats.test", {"n": 1})
+    await event_bus.publish("stats.test", {"n": 2})
     await asyncio.sleep(0.05)  # let deliveries land in the trace log
 
-    plugin = SystemEventsPlugin(http=None, event_bus=bus)
+    plugin = SystemEventsPlugin(http=None, event_bus=event_bus)
     entry = _entry(await plugin.execute({}), "stats.test")
     assert entry.times_fired == 2
 
 
-async def test_times_fired_unaffected_by_subscriber_count(bus):
+async def test_times_fired_unaffected_by_subscriber_count(event_bus):
     async def handler_a(event: EventEnvelope): pass
     async def handler_b(event: EventEnvelope): pass
 
-    await bus.subscribe("stats.fanout", handler_a)
-    await bus.subscribe("stats.fanout", handler_b)
-    await bus.publish("stats.fanout", {})
+    await event_bus.subscribe("stats.fanout", handler_a)
+    await event_bus.subscribe("stats.fanout", handler_b)
+    await event_bus.publish("stats.fanout", {})
     await asyncio.sleep(0.05)
 
-    plugin = SystemEventsPlugin(http=None, event_bus=bus)
+    plugin = SystemEventsPlugin(http=None, event_bus=event_bus)
     entry = _entry(await plugin.execute({}), "stats.fanout")
     assert entry.times_fired == 1
     assert len(entry.subscribers) == 2

@@ -12,7 +12,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import pytest
 from extras.available_tools.scheduler.scheduler_tool import SchedulerTool
-from tools.event_bus.event_bus_tool import EventBusTool
 
 pytestmark = pytest.mark.anyio
 
@@ -69,24 +68,22 @@ async def test_stable_job_id_prevents_duplicates_on_hot_reload(monkeypatch):
     scheduler.shutdown()
 
 
-async def test_job_publishes_event_and_one_worker_executes(monkeypatch):
+async def test_job_publishes_event_and_one_worker_executes(monkeypatch, event_bus):
     """The full pattern: the beat job publishes to the bus; the worker consumes.
     (The exactly-one guarantee across replicas is covered by the distributed
     driver: tests/tools/test_redis_streams_driver.py::test_group_exactly_one_consumer_across_instances)
     """
     scheduler = await _make_scheduler(enabled=True, monkeypatch=monkeypatch)
-    bus = EventBusTool()
-    await bus.setup()
 
     executed = []
 
     async def run_report(env):
         executed.append(env.payload)
 
-    await bus.subscribe("jobs.nightly_report.due", run_report)
+    await event_bus.subscribe("jobs.nightly_report.due", run_report)
 
     async def emit_due():
-        await bus.publish("jobs.nightly_report.due", {"requested_by": "beat"})
+        await event_bus.publish("jobs.nightly_report.due", {"requested_by": "beat"})
 
     run_at = datetime.now(timezone.utc) + timedelta(seconds=0.2)
     scheduler.add_one_shot(run_at, emit_due, job_id="fire_now")
@@ -96,4 +93,3 @@ async def test_job_publishes_event_and_one_worker_executes(monkeypatch):
 
     assert executed == [{"requested_by": "beat"}]
     scheduler.shutdown()
-    await bus.shutdown()

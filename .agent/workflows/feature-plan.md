@@ -103,7 +103,7 @@ assert_chain(build_tree(bus.get_trace_history()), ["order.cancelled", "order.ref
 
 ```bash
 // turbo
-uv run main.py
+uv run main.py   # or: microcoreos (if you installed the package)
 ```
 
 - `GET /system/lint` → no warnings, no `UNTYPED_PAYLOAD` for your events.
