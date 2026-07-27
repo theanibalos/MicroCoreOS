@@ -45,7 +45,7 @@ For every event with at least one analyzable publisher and consumer:
 | `ORPHAN_SUBSCRIBE` | Subscriber of an event nobody publishes | info |
 | `UNKNOWN_PAYLOAD` / `DYNAMIC_EVENT` / `OPAQUE_CONSUMER` | Not statically verifiable | info |
 
-Always exclude `_dlq.*`, `_reply.*` and wildcards. The `system` domain's own events (`system.one_shot.*`, `event.delivery.failed`) are analyzed the same way — no special cases.
+Always exclude `_dlq.*`, `_reply.*` and wildcards. Infrastructure domains get no special treatment either: `event.delivery.failed` (system) and `scheduler.one_shot.*` (the optional scheduler domain, `extras/available_domains/scheduler`) are analyzed exactly like a business event.
 
 Finding format (serializable dict):
 ```python

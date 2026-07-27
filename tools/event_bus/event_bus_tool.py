@@ -77,8 +77,8 @@ import os
 from datetime import datetime, timezone
 from typing import Callable, Optional, Dict, List, Tuple, Set
 from starlette.concurrency import run_in_threadpool
-from core.base_tool import BaseTool
-from core.context import current_event_id_var, current_identity_var
+from microcoreos import BaseTool
+from microcoreos import current_event_id_var, current_identity_var
 from tools.event_bus.envelope import EventEnvelope, TraceNode, TraceRecord, SubOptions  # noqa: F401 — re-export
 from tools.event_bus.drivers import EventBusDriver, InProcessDriver
 

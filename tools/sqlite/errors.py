@@ -13,7 +13,7 @@ from tools/sqlite/sqlite_tool.py because external code imports them from
 there — see the import block at the top of that file.
 """
 
-from core.base_tool import ToolUnavailableError
+from microcoreos import ToolUnavailableError
 
 import re
 

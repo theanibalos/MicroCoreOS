@@ -165,3 +165,78 @@ class UpdateUserRequest(BaseModel):
     domain, key, warnings = registry.register_domain_metadata.call_args[0]
     assert (domain, key) == ("devtools", "field_divergence_warnings")
     assert len(warnings) == 1
+
+
+# ─── Waivers: recording "confirmed, on purpose" ───────────────────────
+
+@pytest.mark.anyio
+async def test_waived_declaration_drops_out_of_the_comparison(tmp_path, monkeypatch):
+    """The linter says 'confirm it is on purpose'. Confirming has to be
+    recordable, or the warning is permanent and the linter gets tuned out."""
+    plugins = tmp_path / "domains" / "users" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "create_user_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class CreateUserRequest(BaseModel):\n"
+        "    password: str = Field(min_length=8)\n"
+    )
+    (plugins / "login_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class LoginRequest(BaseModel):\n"
+        "    password: str = Field(min_length=1, "
+        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n"
+    )
+
+    monkeypatch.chdir(tmp_path)
+    assert make_plugin()._check_field_divergence() == []
+
+
+@pytest.mark.anyio
+async def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path, monkeypatch):
+    """Waiving login must not silence create-vs-update disagreeing."""
+    plugins = tmp_path / "domains" / "users" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "login_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class LoginRequest(BaseModel):\n"
+        "    password: str = Field(min_length=1, "
+        "json_schema_extra={'divergence_ok': 'login checks the hash'})\n"
+    )
+    (plugins / "create_user_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class CreateUserRequest(BaseModel):\n"
+        "    password: str = Field(min_length=8)\n"
+    )
+    (plugins / "update_user_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class UpdateUserRequest(BaseModel):\n"
+        "    password: str = Field(min_length=6)\n"
+    )
+
+    monkeypatch.chdir(tmp_path)
+    warnings = make_plugin()._check_field_divergence()
+
+    assert len(warnings) == 1
+    assert "create_user_plugin.py" in warnings[0]
+    assert "update_user_plugin.py" in warnings[0]
+    assert "login_plugin.py" not in warnings[0]
+
+
+@pytest.mark.anyio
+async def test_a_waiver_with_no_reason_is_not_honoured(tmp_path, monkeypatch):
+    """An unexplained silence is the failure mode this linter exists to catch."""
+    plugins = tmp_path / "domains" / "users" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "create_user_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class CreateUserRequest(BaseModel):\n"
+        "    password: str = Field(min_length=8)\n"
+    )
+    (plugins / "login_plugin.py").write_text(
+        "from pydantic import BaseModel, Field\n"
+        "class LoginRequest(BaseModel):\n"
+        "    password: str = Field(min_length=1, json_schema_extra={'divergence_ok': ''})\n"
+    )
+
+    monkeypatch.chdir(tmp_path)
+    assert len(make_plugin()._check_field_divergence()) == 1

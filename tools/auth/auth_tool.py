@@ -34,7 +34,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from core.base_tool import BaseTool
+from microcoreos import BaseTool
 
 
 class AuthError(Exception):

@@ -367,6 +367,262 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 
 ---
 
+**Issue 39 — 🟢 Core as an installable package (`uv add microcoreos`) — scoped 2026-07-27, all 7 steps built 2026-07-27**
+
+> **Status:** built and verified end to end. The wheel installs, `microcoreos
+> new` scaffolds a project that boots green and serves, `microcoreos add`
+> installs an extra in one command, and `microcoreos upgrade` reports and
+> applies upstream changes without touching local edits. **The only thing
+> left is publishing to PyPI** — name, account, release workflow.
+>
+> Known gaps and their cost are recorded in [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
+>
+> **The free-breaking window closes at that publish.** Nothing is released, so
+> every rename in this issue cost nothing. From the first upload onward three
+> things become compatibility surface: the five names re-exported from
+> `microcoreos/__init__.py`, the `[project.optional-dependencies]` extra names
+> (`microcoreos add` and every doc reference them), and the
+> `.microcoreos/manifest.json` format — readers already tolerate missing keys
+> (`.get("moved", {})`), and must keep doing so.
+>
+> Built past the original checklist: `microcoreos add` (Issue 39 assumed manual
+> `mv`), `microcoreos upgrade` + the `.microcoreos/manifest.json` baseline
+> (was future work), a generated project README, `docs/CLI.md`, and the auth
+> starter — `create_user`/`login`/`get_me` materialize, so `tools/auth` is not
+> a tool you cannot use. `domains/ping` and the CRUD half of `domains/users`
+> still stay behind.
+
+
+Only `core/` ships in the wheel (570 lines: Kernel, Container, Registry, the two
+base classes, the identity ContextVars). Everything else — `tools/` (4.9k),
+`domains/system` + `devtools` (2.5k), `plans/`, `dev_infra/` — is **materialized
+as the user's own source** by a `microcoreos new` scaffolder.
+
+**Why not ship the tools too.** The whole install and swap model of this
+codebase is file placement: `mv extras/available_tools/postgresql tools/`
+(README, `docs/ELASTIC_DEPLOYMENT.md`), and drivers install by dropping
+`{name}_driver.py` into `tools/event_bus/`. None of that works against
+`site-packages`: it may be read-only, and anything copied there is wiped by the
+next `pip install --upgrade`. Tools in the wheel = tools the user cannot touch,
+which contradicts the premise that you own your infrastructure. Distribution as
+a package, materialization as your source (the shadcn/ui model) keeps both.
+
+The cost is honest vendoring: an event-bus fix does not reach existing projects
+on its own. A `microcoreos upgrade` showing a diff is the mitigation, later.
+
+**What the split actually costs, in order:**
+
+1. **The `core` name — rename is mandatory, and the reason is not PyPI.** A
+   wheel may ship any top-level name regardless of its project name (`pillow` →
+   `PIL`, `scikit-learn` → `sklearn`), so keeping `core` is technically possible.
+   It is still wrong: a MicroCoreOS project is a directory holding `tools/`,
+   `domains/`, `plans/`, and sooner or later the user adds a `core/` of their own
+   for shared logic. Their directory WINS — the project root is `sys.path[0]` —
+   and the framework vanishes. Every plugin then fails with
+   `cannot import name 'base_plugin' from 'core'`, pointing at a folder the user
+   created for entirely reasonable reasons. Verified by construction. Note the
+   problem is exclusive to what ships in the wheel: `tools/` and `domains/` stay
+   in the project under this model, so nothing installed can shadow them.
+
+   **Flatten the public API while renaming.** Plugins touch exactly five names —
+   `BasePlugin` (37 uses), `BaseTool` (21), `ToolUnavailableError` (10), the two
+   context vars (7) — 75 of the 83 `core.*` imports. Re-export those from
+   `microcoreos/__init__.py` so a plugin writes `from microcoreos import
+   BasePlugin`, and keep `Kernel`/`Container`/`Registry` in submodules (12 sites,
+   only `main.py` and tests). This is the `__init__.py`-as-public-address rule
+   learned the hard way in Issue 41: `from core.base_plugin import BasePlugin`
+   welds the FILE LAYOUT into every plugin the LLM has ever generated, so core
+   cannot be reorganized without a breaking change. One short stable line also
+   costs the LLM less in every file it writes.
+
+   **Effort is concentrated, not spread.** The 83 imports and 8 docs are a `sed`
+   over ~6 patterns, with the suite as an instant check. The risk lives in 10
+   files where `core.*` appears inside strings and regexes that must keep
+   matching generated code — the templates in `context_tool.py` and the nine
+   devtools linters. A wrong pattern there does not fail; it silently stops
+   detecting. Those go by hand, each with a test proving the linter still finds
+   the violation it is supposed to find.
+
+   **Do it before publishing.** Renaming is breaking for anyone holding generated
+   plugins. With nothing released yet, now is the cheapest this will ever be.
+2. **`[build-system]`** — absent today, so no wheel can be built at all. Plus
+   `[project.scripts]` for the entry point (`main.py` / `cli.py` at the root).
+3. **Dependencies as extras.** 16 hard deps today; core needs 8 (fastapi,
+   uvicorn, pydantic, aiosqlite, bcrypt, pyjwt, python-dotenv, pyyaml).
+   `redis`/`aio-pika`/`aiokafka`/`asyncpg`/`aioboto3` become extras;
+   `apscheduler` is already lazily imported with its own install message.
+   `httpx` and `websockets` have no import anywhere — verify before keeping.
+4. **The scaffolder** — `microcoreos new` replaces "clone the repo" as onboarding.
+
+**NOT needed under this scope: a path resolver.** An earlier framing assumed
+tools and domains would live in BOTH the wheel and the project, making every
+`os.path.abspath("domains")` (twelve of them) resolve against only one root.
+With everything but `core/` materialized there is a single root and CWD-relative
+resolution stays correct. The resolver returns the day stabilized tools move
+INTO the wheel — at which point it should hand back a **list** of roots, so the
+twelve scanners are touched once and never again.
+
+**Already paid for by other work:** discovery narrowed to `*_tool.py` /
+`*_plugin.py` (Issue 41) means optional drivers are no longer imported at boot,
+so a core installed without `redis` no longer reports a load error for a
+transport nobody selected. That was a hard blocker for `uv add microcoreos`.
+
+**Checklist (in this order — each step de-risks the next):**
+
+- [x] **1. `[build-system]` + build the wheel.** ✅ hatchling,
+      `packages = ["microcoreos"]`. The wheel holds exactly the 8 files of the
+      package and nothing else. Two things the plan did not anticipate:
+      - **Only one `__init__.py` was needed**, not one per package. Nothing
+        else ships, and `tools/` / `domains/` are never imported as packages —
+        the Kernel loads them file by file via `importlib`. That `__init__.py`
+        is already the flat public API of step 4 (the five plugin-facing names),
+        so the rename is now a `sed` over imports plus a folder move.
+      - **The entry point is `microcoreos.cli:main`, not `cli:main`.** A top-level
+        `cli.py`/`main.py` in the wheel would land in site-packages as modules
+        named `cli` and `main` — the exact shadowing problem that forces the
+        `core` rename. The CLI moved INTO the package; the root `main.py` and
+        `cli.py` are 5-line shims, so `uv run main.py [--boot-tool db]` is
+        unchanged and stays sacred. `microcoreos dev` == `uv run cli.py`.
+- [x] **2. Dependencies as extras.** ✅ 16 hard deps → 9. Extras `[redis]`,
+      `[postgres]`, `[kafka]`, `[rabbitmq]`, `[s3]`, `[scheduler]`, `[all]`;
+      the dev group pulls `microcoreos[all]` since the suite exercises every
+      swappable tool. Verification of the two suspects:
+      - `httpx` → **dev group.** Its only 4 imports are tests driving the ASGI
+        app through `ASGITransport`.
+      - `websockets` → **kept in the base.** No `import websockets` anywhere,
+        but it is uvicorn's WS protocol implementation: without it
+        `HttpServerTool.add_ws_endpoint()` fails at runtime, not at import.
+- [x] **3. Prove the wheel.** ✅ Clean venv, wheel installed with NO extra, the
+      other directories copied in by hand (the step-6 scaffolder does not exist
+      yet): boots with **zero load errors**, EventBus selects InProcessDriver,
+      HTTP serves. Confirms Issue 41 paid off — no unselected transport is
+      imported. It caught one real bug: **an installed console script does not
+      put the CWD on `sys.path`** (`python main.py` does — sys.path[0] is the
+      script's directory, but for a console script it is the venv's `bin/`).
+      Every `import tools.*` failed and the Kernel still reported "System
+      Ready". Fixed in `microcoreos/cli.py::_ensure_project_on_path`, plus a
+      wrong-directory guard so an empty boot never passes for a healthy one.
+      **Resolved 2026-07-27 — the scheduler moved to `extras/`.** A fresh
+      install used to boot with `🚨 Tool 'scheduler' failed` +
+      `DurableOneShotsPlugin aborted`, because the scaffold materialized a
+      plugin whose tool was an extra. The rule that settles it: **a plugin
+      cannot exist without its tool**, so an optional tool cannot leave a
+      mandatory plugin behind. Either the tool becomes mandatory (apscheduler
+      into the base) or the plugin becomes optional with it. Chose the second —
+      it is what `extras/` already does for `chaos` (tool in
+      `available_tools/`, its plugins in `available_domains/`).
+      - `tools/scheduler` → `extras/available_tools/scheduler`
+      - `domains/system/plugins/durable_one_shots_plugin.py` + its model and
+        its migration → `extras/available_domains/scheduler/`
+      - The dependency runs ONE way: `mv` the tool alone gives cron and
+        in-memory one-shots; the domain is a second, independent `mv` that
+        requires the first. The README documents both steps.
+      - Boot is now clean with no extra installed, and `AI_CONTEXT.md` lost 39
+        lines — the LLM-facing inventory no longer describes a tool that is
+        not there.
+- [x] **4. Rename `core` → `microcoreos`,** ✅ flat public API in
+      `microcoreos/__init__.py`. 83 imports collapsed to two forms: the five
+      plugin-facing names now come from `from microcoreos import ...` (75
+      sites), and `kernel`/`container`/`registry`/`cli` keep their submodule
+      address (8 sites). CI's syntax check and the docs moved with them.
+      Two things the `sed` could not know:
+      - **Inside the package, keep importing the defining submodule.** The
+        flat re-export is the address for USERS; `container.py` doing
+        `from microcoreos import ToolUnavailableError` is a package importing
+        itself mid-initialization — it survives today only because `__init__`
+        never reaches back into `container`.
+      - `TestPublicApi` in `tests/test_core.py` now pins both halves: the five
+        names are exported, and Kernel/Container/Registry are NOT — so the
+        boundary cannot erode by accident.
+- [x] **5. The template/linter files.** ✅ Smaller than feared: **no linter
+      matches on the string `core`**. DiscoveryNaming matches AST base-class
+      names (`BaseTool`/`BasePlugin`), DomainIsolation matches the `domains.`
+      and `tools.` prefixes — both survive the rename untouched, and their
+      fixtures were rewritten to the new import form so the tests prove
+      detection against what plugins actually look like now. The only real
+      template is `tools/context/authoring_guide.md` (2 occurrences); the
+      "10 files" estimate counted comments. `AI_CONTEXT.md` regenerated by
+      booting: it emits `from microcoreos import BasePlugin`. Boot is green,
+      ToolDocDrift included.
+- [x] **6. `microcoreos new` scaffolder.** ✅ `microcoreos/scaffold.py` (~150
+      lines) + `tests/test_scaffold.py`. Decisions the checklist left open:
+      - **Where the source comes from.** The template rides in the wheel as
+        inert payload under `microcoreos/_template/` (hatch `force-include`),
+        never imported from site-packages. In a checkout that directory does
+        not exist and the repo root IS the template — one source of truth, and
+        `new` is testable without building a wheel.
+      - **The AI kit travels with it.** `AGENTS.md` points at `.agent/` and
+        `docs/`; copying it alone leaves an agent reading dangling links, and a
+        project with no agent rules is not this framework. `--no-ai-kit` opts
+        out.
+      - **`extras/` is materialized too** — missed on the first pass. Installing
+        infrastructure here IS moving a folder, so a project without the swap
+        catalog cannot perform the swap its own docs describe.
+      - **`domains/users` and `domains/ping` stay behind**, per the plan. Worth
+        knowing: `tools/auth` therefore ships in a fresh project with no login
+        endpoint, since those plugins live in `domains/users`. Same shape as
+        the scheduler question, opposite answer so far — either accept it
+        (auth flavor is opinionated boilerplate) or add a `--with-auth`.
+      - Refuses to overwrite an existing `tools/`/`domains/` without `--force`,
+        and never touches an existing `.env` or `pyproject.toml` — so
+        `uv add microcoreos && microcoreos new .` is a supported flow.
+- [x] **7. End to end.** ✅ Clean venv → `uv pip install microcoreos` (wheel
+      only, no extra) → `microcoreos new demo` → boots, migrations apply,
+      `GET /system/status` answers with every tool `OK`. Then
+      `pip install 'microcoreos[scheduler]'` → boot is completely clean.
+      Caught the last packaging-only bug: **`load_dotenv()` searches upward
+      from its CALLER.** In a checkout the caller was the root `main.py`, so it
+      found the project's `.env` by accident; installed, the caller is
+      `site-packages/microcoreos/cli.py` and the search walks the venv instead.
+      A scaffolded project failed with `AUTH_SECRET_KEY is required` while
+      holding a `.env` that sets it. Now loaded by explicit path
+      (`_load_project_env`). Same shape as the `sys.path` bug in step 3: both
+      are assumptions that only held because the entry point sat in the
+      project.
+
+The README roadmap bullet was aligned with this decision (2026-07-27): it used to
+promise "Official tool packages — `microcoreos-redis`, `microcoreos-postgres`",
+the package-per-tool model rejected above.
+
+---
+
+**Issue 40 — 🟡 Drop-in marketplace for tools and domains (deferred until one exists)**
+
+WordPress plugins land in `wp-content/plugins/`, VS Code extensions in the
+user's extensions dir — both are "drop a directory in, it is discovered". The
+Kernel already works exactly that way, and Issue 39's materialization model is
+the same mechanism, so the marketplace needs no new architecture. What it needs
+is the surrounding machinery, and one bug fixed first.
+
+**Blocker — tool name collisions are silent.** `core/container.py` does
+`self._tools[tool.name] = ToolProxy(...)` with no existence check. Two tools
+claiming `"state"` and the second silently replaces the first; `list_tools()`
+reports one. Worse, *which* one wins depends on registration order, which comes
+from the `asyncio.gather` in `_setup_tool` — the same non-determinism already
+visible in the tool ordering of a regenerated `AI_CONTEXT.md`. Today this is
+survivable because README tells you to move the replaced tool out of `tools/`
+first, by hand. With third parties publishing, a coin flip per boot is not
+survivable. `tests/test_registry_collisions.py` covers the PLUGIN case (solved
+by the domain prefix); the tool case is uncovered. Fix: fail loudly in
+`register()`. Small, and independent of everything else here.
+
+**Already in place — the acceptance gate.** The hardest part of a marketplace
+is answering "does this stranger's tool really honour the contract?", and the
+answer is already executable: `tests/tools/test_db_parity.py`,
+`test_state_parity.py`, `test_event_bus_broker_parity.py`, `test_s3_parity.py`.
+A tool published as `db` must pass the db parity suite. Written for Issue 22,
+reusable as-is.
+
+**Still missing:** a manifest per tool/domain (name, version, author, which
+contract it implements, which env vars it reads — `get_interface_description()`
+already carries part of this); a CLI (`microcoreos add X`, which is just
+automating the `mv` from `extras/available_tools/`); and a trust story, since
+drop-in code runs at boot with full access — the security history of WordPress
+plugins is the cautionary tale. Worth deciding before third parties publish,
+not before.
+
+---
+
 ## 🌐 Distributed Track — active
 
 **Issue 18 — 🟢 Distributed Event Bus drivers (Redis Streams ✅ / Kafka ✅ / RabbitMQ ✅)**
@@ -607,10 +863,15 @@ compose in the plugin layer):**
   created_at, published_at NULL).
 - The pattern: the business plugin writes its INSERT **and** the outbox INSERT
   inside the same `db.transaction()` block.
-- `OutboxRelayPlugin` (system domain): scheduler cron (beat replica only) reads
-  unpublished rows, `bus.publish()`es them (payloads are typed — Issue 29),
-  marks `published_at`. Delivery is at-least-once; consumers are already
-  required to be idempotent by the bus contract.
+- `OutboxRelayPlugin`: scheduler cron (beat replica only) reads unpublished
+  rows, `bus.publish()`es them (payloads are typed — Issue 29), marks
+  `published_at`. Delivery is at-least-once; consumers are already required to
+  be idempotent by the bus contract.
+  **Note (2026-07-27):** it depends on the `scheduler` tool, which is now an
+  extra (Issue 39). So it cannot live in `domains/system` — a mandatory plugin
+  cannot depend on an optional tool. It belongs either in the scheduler
+  domain's bundle (`extras/available_domains/scheduler/`) or in a bundle of
+  its own; its migration travels with it, not with `system`.
 - Transport-agnostic by construction: swapping the bus driver to Kafka changes
   nothing in the relay — the outbox is what makes that swap safe for
   features that need it.
@@ -650,6 +911,52 @@ not an implementation bug):**
 ## ✅ Decision Log (completed)
 
 ### Foundations & DX
+
+**Issue 41 — ✅ Module identity, tool modularization & discovery by convention (2026-07-27 session)**
+
+Four changes, in dependency order — each one was the precondition for the next.
+
+- **Loader imports by name, not by path.** `_load_modules_from_dir` built module
+  objects with `spec_from_file_location` under a synthetic `mod_*` name. Any file
+  the Kernel loaded AND someone imported normally therefore existed **twice**,
+  with two distinct copies of every class it defined — `isinstance` between them
+  False. The codebase had already grown two workarounds for this (a warning in
+  the driver contract saying "do NOT import EventEnvelope yourself", and an
+  `isinstance` replaced by MRO name-matching in `_driver_from_env`); both are
+  now deleted. `importlib.import_module` shares one object through `sys.modules`,
+  so the class a plugin imports is the class the Kernel discovered.
+- **The four large tools split** (13 modules where there were 4 files), safe only
+  after the above: `sqlite_tool` 986→591 (`errors`/`transaction`/`migrations`),
+  `http_server_tool` 907→558 (`context`/`pipeline`), `event_bus_tool` 591→455
+  (`envelope`/`drivers`), `context_tool` 527→161 (`scanners`/`renderers`).
+  Pure moves, verified line-by-line; `AI_CONTEXT.md` byte-identical afterwards.
+  Symbols external code imported from the old addresses are re-exported (marked
+  `# noqa: F401` — ruff cannot see that four drivers import `EventBusDriver`
+  from `event_bus_tool` by that exact path, and `--fix` would delete them).
+- **Discovery narrowed to `*_tool.py` / `*_plugin.py`.** The walker imported 22
+  files under `tools/` to find 11 tools. Importing a file that CANNOT hold a tool
+  is not free: `redis_streams_driver.py` imports `redis` at module level, so a
+  core without redis installed reported a boot error for a transport nobody
+  selected — a hard blocker for Issue 39. The convention holds perfectly across
+  the repo (11/11 tools, 28/28 plugins, extras included) and was already relied
+  on by `tests/helpers/active_db.py` for this exact reason. Note the filter is
+  the FILENAME, not "imports base_tool": `redis_streams_driver.py` and
+  `sqlite/errors.py` both import from `core.base_tool` (for
+  `ToolUnavailableError`) and are not tools.
+- **`DiscoveryNamingLinterPlugin`** — the mandatory other half: a misnamed file
+  is no longer an error, it is simply never found, and the only runtime symptom
+  is a plugin reporting `Missing tools: x` from a domain nobody touched. AST
+  scan over `tools/`, `domains/` and `extras/` (extras included because those
+  files are activated by moving them in — a wrong name there detonates the day
+  someone swaps it). Verified live: renaming `state_tool.py` drops the Kernel
+  from 11 tools to 10 in silence, and the linter names it.
+
+Also fixed on the way, pre-existing and unrelated: the `SQLiteDriver` queue
+(`EVENT_BUS_SQLITE_PATH`, default `event_bus_queue.db` at the repo root) leaked
+state between runs — under `EVENT_BUS_DRIVER=sqlite` the second run of the bus
+suite failed on rows left by the first. 11 test files built a bare
+`EventBusTool()`, so the fix is one autouse fixture in a new `tests/conftest.py`
+rather than per-file patches. No test depended on the leftover to pass.
 
 **Issue 1 — ✅ Domain-level AI_CONTEXT.md**
 Each domain is summarized in the auto-generated `AI_CONTEXT.md` (tables,
@@ -819,7 +1126,7 @@ cannot see.
   Commit→publish atomicity remains the Outbox's job (Issue 28).
 - Delays stored as `due_at` → **a pending delay survives a restart** and
   fires at its stored due time. Rule of thumb unchanged: `delay=` for
-  operational pauses, `system.one_shot.schedule` for scheduled business acts.
+  operational pauses, `scheduler.one_shot.schedule` for scheduled business acts.
 - Ack-after-handler (DELETE only after the handler and its Bus retries
   finish); rows claimed by a dead process reset to pending at boot →
   **crash mid-handler = redelivery**, at-least-once, idempotency already
@@ -873,7 +1180,7 @@ moving it in, PostgreSQL-style).
 - ✅ Durable one-shots: NOT in the tool (**a tool never uses other tools** —
   the composition precedent Issue 28 follows): `DurableOneShotsPlugin` (system
   domain) persists (run_at, event, payload) and a per-minute beat cron publishes
-  the due ones. Any domain schedules via `bus.request("system.one_shot.schedule", ...)`.
+  the due ones. Any domain schedules via `bus.request("scheduler.one_shot.schedule", ...)`.
 
 **Issue 20 — ✅ Migrations flag for CI/CD**
 In production, migrations NEVER run in the replicas. They run as a pipeline

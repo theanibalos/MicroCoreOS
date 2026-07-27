@@ -1,13 +1,22 @@
 import json
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 # ── Request schema ───────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1)
+    password: str = Field(
+        min_length=1,
+        # Deliberately laxer than CreateUserRequest's min_length=8. Login
+        # verifies against a hash, so length is not its rule to enforce —
+        # and rejecting a short password here would tell an attacker the
+        # policy changed, for an account that may predate it.
+        json_schema_extra={
+            "divergence_ok": "login verifies against the hash; length policy belongs to registration"
+        },
+    )
 
 
 # ── Response schema ──────────────────────────────────────────────────────────

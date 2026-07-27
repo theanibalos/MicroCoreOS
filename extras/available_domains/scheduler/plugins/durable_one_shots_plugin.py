@@ -8,7 +8,7 @@ scheduler + event_bus.
 
 Any domain schedules without imports, via the bus:
 
-    res = await self.bus.request("system.one_shot.schedule", {
+    res = await self.bus.request("scheduler.one_shot.schedule", {
         "run_at": "2026-06-10T15:00:00+00:00",   # ISO-8601, tz-aware
         "event": "jobs.welcome_email.due",
         "payload": {"user_id": 42},
@@ -19,10 +19,10 @@ Any domain schedules without imports, via the bus:
     await self.bus.subscribe("jobs.welcome_email.due", self.send_welcome)
 
     # cancel a pending one:
-    await self.bus.request("system.one_shot.cancel", {"job_id": job_id})
+    await self.bus.request("scheduler.one_shot.cancel", {"job_id": job_id})
 
 Mechanics:
-- Rows live in the scheduler_one_shots table (system domain migration).
+- Rows live in the scheduler_one_shots table (this domain's own migration).
 - A cron job — every minute, which is also the precision: durable one-shots
   are for "in 1 hour", not "in 300ms" — publishes due events and deletes
   their rows. The cron fires only on the beat replica (SCHEDULER_ENABLED),
@@ -38,7 +38,7 @@ from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 class ScheduleOneShotRequest(BaseModel):
@@ -60,10 +60,10 @@ class DurableOneShotsPlugin(BasePlugin):
         self.logger = logger
 
     async def on_boot(self):
-        await self.bus.subscribe("system.one_shot.schedule", self.on_schedule)
-        await self.bus.subscribe("system.one_shot.cancel", self.on_cancel)
+        await self.bus.subscribe("scheduler.one_shot.schedule", self.on_schedule)
+        await self.bus.subscribe("scheduler.one_shot.cancel", self.on_cancel)
         self.scheduler.add_job(
-            "* * * * *", self.publish_due, job_id="system_durable_one_shots"
+            "* * * * *", self.publish_due, job_id="scheduler_durable_one_shots"
         )
         self.logger.info("[DurableOneShots] Scheduling service ready.")
 

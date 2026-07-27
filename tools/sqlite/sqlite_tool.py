@@ -56,7 +56,7 @@ import os
 import re
 import asyncio
 import aiosqlite
-from core.base_tool import BaseTool
+from microcoreos import BaseTool
 
 from tools.sqlite.errors import DatabaseError, DatabaseConnectionError, _classify_error
 from tools.sqlite.transaction import Transaction, _normalize_sql, _normalize_sql_many, _write_lock_held_var

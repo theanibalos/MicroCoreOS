@@ -43,7 +43,7 @@ import os
 import re
 import asyncio
 import asyncpg
-from core.base_tool import BaseTool, ToolUnavailableError
+from microcoreos import BaseTool, ToolUnavailableError
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

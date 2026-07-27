@@ -11,7 +11,7 @@ With N replicas, the scheduler would fire every job N times. The pattern:
 import asyncio
 from datetime import datetime, timedelta, timezone
 import pytest
-from tools.scheduler.scheduler_tool import SchedulerTool
+from extras.available_tools.scheduler.scheduler_tool import SchedulerTool
 from tools.event_bus.event_bus_tool import EventBusTool
 
 pytestmark = pytest.mark.anyio

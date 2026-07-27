@@ -21,12 +21,30 @@ Advisory only, like every devtools linter: divergence CAN be legitimate (a
 search endpoint may accept a shorter term than a create endpoint). The warning
 says "these disagree, confirm it is on purpose", never "this is wrong".
 
+RECORDING THE CONFIRMATION
+──────────────────────────
+"Confirm it is on purpose" needs somewhere to put the answer, or the warning is
+permanent and the linter gets tuned out — the way every advisory tool dies. A
+declaration can say it diverges deliberately, in the file that owns it:
+
+    password: str = Field(
+        min_length=1,
+        json_schema_extra={"divergence_ok": "login checks the hash, not the length"},
+    )
+
+`json_schema_extra` is real Pydantic, not a private convention, so the reason
+also travels into the OpenAPI schema. A waived declaration drops OUT of the
+comparison: the remaining ones are still compared against each other, so
+waiving login does not blind the linter to create-vs-update disagreeing. The
+reason string is required and must be non-empty — a bare silence is exactly
+what this is meant to prevent.
+
 Registry key: devtools/field_divergence_warnings (read by GET /system/lint).
 """
 
 import ast
 import os
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 from domains.devtools.lint.plugin_sources import iter_plugin_files
 
 # Pydantic Field(...) keywords worth comparing: the ones that encode a business
@@ -110,6 +128,8 @@ class FieldDivergenceLinterPlugin(BasePlugin):
                 call = statement.value
                 if not isinstance(call, ast.Call) or not self._is_field_call(call):
                     continue
+                if self._waiver_reason(call):
+                    continue  # deliberate divergence, declared where it happens
                 for keyword in call.keywords:
                     if keyword.arg not in COMPARED_CONSTRAINTS:
                         continue
@@ -120,6 +140,27 @@ class FieldDivergenceLinterPlugin(BasePlugin):
                     if not isinstance(value, (str, int, float, bool, type(None))):
                         continue  # only scalars are comparable as "the same rule"
                     yield node.name, statement.target.id, keyword.arg, value
+
+    def _waiver_reason(self, call: ast.Call) -> str | None:
+        """The reason from `json_schema_extra={"divergence_ok": "..."}`, if any.
+
+        A waiver with an empty or missing reason is NOT honoured: recording why
+        is the whole point, and an unexplained silence is the failure mode this
+        linter exists to catch.
+        """
+        for keyword in call.keywords:
+            if keyword.arg != "json_schema_extra":
+                continue
+            try:
+                extra = ast.literal_eval(keyword.value)
+            except Exception:
+                return None                       # not a literal — never guess
+            if not isinstance(extra, dict):
+                return None
+            reason = extra.get("divergence_ok")
+            if isinstance(reason, str) and reason.strip():
+                return reason
+        return None
 
     def _is_pydantic_model(self, node: ast.ClassDef) -> bool:
         for base in node.bases:

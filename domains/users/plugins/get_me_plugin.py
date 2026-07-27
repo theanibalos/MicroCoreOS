@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 from pydantic import BaseModel, EmailStr
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 # ── Response schema ──────────────────────────────────────────────────────────

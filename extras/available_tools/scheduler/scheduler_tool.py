@@ -77,8 +77,8 @@ SCALING (Issue 19 — the Elastic Monolith singleton pattern):
     KNOWN LIMIT (by design): one-shots (add_one_shot) live in memory — an
     arbitrary callable cannot survive a restart, and a tool never uses other
     tools. Durable one-shots are composed in the PLUGIN layer (db + scheduler
-    + bus via DI): see domains/system/plugins/durable_one_shots_plugin.py,
-    usable from any domain via the bus ("system.one_shot.schedule").
+    + bus via DI): see extras/available_domains/scheduler/plugins/durable_one_shots_plugin.py,
+    usable from any domain via the bus ("scheduler.one_shot.schedule").
 
 REPLACEMENT STANDARD (swap without changing plugins):
 ─────────────────────────────────────────────────────────────────────────
@@ -101,8 +101,8 @@ import os
 import uuid
 from datetime import datetime
 from typing import Callable, Optional
-from core.base_tool import BaseTool
-from core.context import current_identity_var
+from microcoreos import BaseTool
+from microcoreos import current_identity_var
 
 
 def _callback_identity(callback: Callable) -> str:
@@ -311,7 +311,7 @@ class SchedulerTool(BaseTool):
                 Schedule a one-time job at a specific datetime (timezone-aware).
                 Returns job_id. IN-MEMORY: lost if the process restarts before firing.
                 For one-shots that must survive restarts, publish to the bus:
-                "system.one_shot.schedule" (durable scheduling service, system domain).
+                "scheduler.one_shot.schedule" (durable scheduling service — install extras/available_domains/scheduler).
             - remove_job(job_id: str) -> bool:
                 Remove a job by ID. Returns True if removed, False if not found.
             - list_jobs() -> list[dict]:

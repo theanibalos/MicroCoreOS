@@ -44,7 +44,7 @@ async def test_same_domain_import_is_allowed(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "users" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "create_user_plugin.py").write_text(
-        "from core.base_plugin import BasePlugin\n"
+        "from microcoreos import BasePlugin\n"
         "from domains.users.models.user import DEFAULT_ROLES\n"
     )
 

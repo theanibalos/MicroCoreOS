@@ -1,6 +1,6 @@
 import pytest
-from core.kernel import Kernel
-from core.base_plugin import BasePlugin
+from microcoreos.kernel import Kernel
+from microcoreos import BasePlugin
 
 pytestmark = pytest.mark.anyio
 

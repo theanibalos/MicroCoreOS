@@ -8,7 +8,7 @@ WARNING status on the offending tool itself.
 
 import inspect
 import re
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 class ToolDocDriftLinterPlugin(BasePlugin):

@@ -4,10 +4,10 @@ These tests provide confidence without altering the framework's explicit philoso
 """
 import threading
 import pytest
-from core.container import Container
-from core.registry import Registry
-from core.base_plugin import BasePlugin
-from core.base_tool import BaseTool
+from microcoreos.container import Container
+from microcoreos.registry import Registry
+from microcoreos import BasePlugin
+from microcoreos import BaseTool
 
 
 # ─── Fixtures ──────────────────────────────────────────────
@@ -45,7 +45,7 @@ class TestContainer:
         tool = FakeTool()
         container.register(tool)
         
-        from core.container import ToolProxy
+        from microcoreos.container import ToolProxy
         proxy = container.get("fake_tool")
         assert isinstance(proxy, ToolProxy)
         assert proxy._tool is tool
@@ -144,3 +144,32 @@ class TestBasePlugin:
 
         plugin = EventOnlyPlugin()
         assert not hasattr(plugin, 'execute')
+
+
+# ─── Public API ────────────────────────────────────────────
+
+class TestPublicApi:
+    """
+    `from microcoreos import X` is the address every generated plugin writes.
+    It must not depend on which file defines X today: pinning the file layout
+    into thousands of generated plugins is what makes core unreorganizable.
+    """
+
+    def test_the_five_plugin_facing_names_are_importable_from_the_package(self):
+        import microcoreos
+
+        for name in ("BasePlugin", "BaseTool", "ToolUnavailableError",
+                     "current_event_id_var", "current_identity_var"):
+            assert hasattr(microcoreos, name), f"{name} dropped from the public API"
+            assert name in microcoreos.__all__
+
+    def test_boot_machinery_stays_in_its_submodules(self):
+        """Kernel/Container/Registry are boot-time machinery, not plugin surface."""
+        import microcoreos
+        from microcoreos.kernel import Kernel
+        from microcoreos.container import Container
+        from microcoreos.registry import Registry
+
+        assert all(isinstance(c, type) for c in (Kernel, Container, Registry))
+        for name in ("Kernel", "Container", "Registry"):
+            assert not hasattr(microcoreos, name)

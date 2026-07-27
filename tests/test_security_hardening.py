@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from httpx import AsyncClient, ASGITransport
-from core.context import current_identity_var
+from microcoreos import current_identity_var
 from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
 from tools.http_server.http_server_tool import HttpServerTool, HttpContext
 

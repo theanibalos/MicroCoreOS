@@ -25,8 +25,8 @@ REPLACEMENT STANDARD (plugins unaffected):
        Sink failures must be swallowed (never let observability crash business).
 """
 
-from core.base_tool import BaseTool
-from core.context import current_identity_var
+from microcoreos import BaseTool
+from microcoreos import current_identity_var
 import datetime
 from typing import List, Callable
 

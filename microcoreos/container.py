@@ -3,8 +3,8 @@ import inspect
 import contextlib
 import threading
 from collections import deque
-from core.registry import Registry
-from core.base_tool import ToolUnavailableError
+from microcoreos.registry import Registry
+from microcoreos.base_tool import ToolUnavailableError
 
 
 class ToolNotFoundError(Exception):

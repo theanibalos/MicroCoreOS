@@ -7,7 +7,7 @@
 
 ## Kernel
 
-**File**: `core/kernel.py`
+**File**: `microcoreos/kernel.py`
 
 The Kernel auto-discovers and boots everything. `main.py` never changes — it only instantiates and starts the Kernel.
 
@@ -87,7 +87,7 @@ The Kernel's `_call_maybe_async()` handles both cases. CPU-heavy work in a sync 
 
 ## Container
 
-**File**: `core/container.py`
+**File**: `microcoreos/container.py`
 
 The Container holds all tool instances wrapped in `ToolProxy`. It is the single source of truth for tool access.
 
@@ -146,7 +146,7 @@ After registration, every subsequent tool call is wrapped in an OTel span. Tools
 
 ## Registry
 
-**File**: `core/registry.py` (internal) + `tools/system/registry_tool.py` (public)
+**File**: `microcoreos/registry.py` (internal) + `tools/system/registry_tool.py` (public)
 
 Tracks the live state of all tools and plugins.
 
@@ -197,7 +197,7 @@ Full live snapshot of the system:
 
 ## ContextVars
 
-**File**: `core/context.py`
+**File**: `microcoreos/context.py`
 
 Two `contextvars.ContextVar` instances propagate execution context through async tasks:
 

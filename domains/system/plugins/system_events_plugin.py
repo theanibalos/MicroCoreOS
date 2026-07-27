@@ -2,7 +2,7 @@ import ast
 import os
 from typing import Optional
 from pydantic import BaseModel
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 class EventEntry(BaseModel):

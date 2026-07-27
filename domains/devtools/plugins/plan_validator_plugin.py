@@ -18,7 +18,7 @@ import os
 import re
 from typing import Optional, Literal
 from pydantic import BaseModel, ValidationError
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 try:
     import yaml

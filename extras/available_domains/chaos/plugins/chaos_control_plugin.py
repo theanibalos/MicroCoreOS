@@ -47,7 +47,7 @@ Fault axes, composed on the SAME wrapping mechanism:
 2. CALLER-SCOPED tool fault — POST /system/chaos/fail {plugin, tool?, rate}
    and POST /system/chaos/latency {plugin?, tool?, seconds}. The wrapped
    method only raises/delays when the CURRENT caller's identity matches
-   `plugin`. Identity is read from core.context.current_identity_var — the
+   `plugin`. Identity is read from microcoreos.current_identity_var — the
    SAME contextvar the logger tool's sinks already use to attribute log
    lines to a plugin (see tools/logger/logger_tool.py). It is set for the
    duration of a handler's execution by the event_bus tool (around
@@ -75,7 +75,7 @@ mutates the spec list — so composing a global 'slow' with a plugin-scoped
 nested closures.
 
 DEVIATION FROM THE LETTER OF THE ROADMAP (documented, not silent): the
-ToolProxy (core/container.py) caches a per-method wrapper closure in
+ToolProxy (microcoreos/container.py) caches a per-method wrapper closure in
 `proxy._wrapper_cache` the first time each attribute name is accessed. If a
 method was already called once before this plugin wraps it, patching the raw
 tool's attribute alone is not enough — the cached closure still references
@@ -85,7 +85,7 @@ pops the stale entry from `proxy._wrapper_cache` at the moment it FIRST
 wraps a tool (and again when it fully restores that tool), so the next call
 re-resolves via `getattr(raw_tool, name)` and picks up the dispatcher (or the
 restored original). Same private-attribute depth of introspection
-`get_raw_tools()` already grants a meta-plugin; still zero core/ changes,
+`get_raw_tools()` already grants a meta-plugin; still zero microcoreos/ changes,
 zero tools/event_bus or tools/http_server changes.
 
 Process-death / infrastructure-down experiments are explicitly OUT of scope
@@ -106,8 +106,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from core.base_plugin import BasePlugin
-from core.context import current_identity_var
+from microcoreos import BasePlugin
+from microcoreos import current_identity_var
 
 
 # ── Request / Response schemas (inline, per house rule 4) ──────────────────
@@ -274,7 +274,7 @@ class _FaultSpec:
 
     def matches_caller(self) -> bool:
         """Unscoped (plugin=None) specs always match. Scoped specs match the
-        CURRENT caller's identity (see core.context.current_identity_var) by
+        CURRENT caller's identity (see microcoreos.current_identity_var) by
         prefix, same convention as the bus's derived subscriber names and
         the http tool's handler identities: '<domain>.<ClassName>[.method]'.
         """

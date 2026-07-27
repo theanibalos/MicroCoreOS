@@ -7,7 +7,7 @@ in the registry's per-plugin dependency list.
 Registry key: devtools/route_collisions (read by GET /system/lint).
 """
 
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 class RouteCollisionLinterPlugin(BasePlugin):

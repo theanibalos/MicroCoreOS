@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from core.base_tool import BaseTool
+from microcoreos import BaseTool
 from domains.devtools.plugins.tool_doc_drift_linter_plugin import ToolDocDriftLinterPlugin
 
 

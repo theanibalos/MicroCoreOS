@@ -35,14 +35,25 @@ Redis Streams, RabbitMQ, Kafka and a durable SQLite transport already shipped.
 ## Quick Start
 
 ```bash
+uv init my-app && cd my-app
+uv add microcoreos
+uv run microcoreos new .        # materialize tools/, domains/, plans/ as YOUR source
+uv run microcoreos              # boot
+# Visit http://localhost:5000/docs
+```
+
+Or clone the repo to work on the framework itself:
+
+```bash
 git clone https://github.com/theanibalos/MicroCoreOS.git
 cd MicroCoreOS
 cp .env.example .env
 uv run main.py
-# Visit http://localhost:5000/docs
 ```
 
 No configuration needed. SQLite is the default (zero setup). The Kernel discovers all plugins, injects dependencies, runs migrations, and starts the server.
+
+**Only the Kernel comes from the package.** Tools and domains are copied into your project, because installing and swapping infrastructure here is file placement — and you cannot move files inside `site-packages`. Optional infrastructure travels as extras: `uv add 'microcoreos[redis]'`, `[postgres]`, `[kafka]`, `[rabbitmq]`, `[s3]`, `[scheduler]`, or `[all]`.
 
 ---
 
@@ -54,7 +65,7 @@ This is a complete feature — schema, registration, logic, event publishing:
 # domains/products/plugins/create_product_plugin.py
 
 from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class CreateProductRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -147,19 +158,19 @@ The Kernel is "logic-free." `ToolProxy` observes and reports health but **never 
 
 ```
 MicroCoreOS/
-├── core/                    # ~360 functional lines, zero external deps
+├── microcoreos/             # ~360 functional lines, zero external deps (the pip package)
 │   ├── kernel.py           # Discovery, DI, lifecycle
 │   ├── container.py        # DI container + ToolProxy (Health/Metrics)
 │   ├── registry.py         # Thread-safe system state
 │   ├── context.py          # causality & Identity context
 │   ├── base_plugin.py      # Plugin contract (11 lines)
-│   └── base_tool.py        # Tool contract (24 lines)
+│   ├── base_tool.py        # Tool contract (24 lines)
+│   └── cli.py              # The `microcoreos` command
 ├── tools/                   # Stateless, swappable infrastructure
 │   ├── http_server/        # FastAPI (REST + WebSocket + SSE)
 │   ├── sqlite/             # Relational DB — isolation + smart retries
 │   ├── event_bus/          # TTL + Retries + DLQ + Causal tracing
 │   ├── auth/               # JWT + bcrypt
-│   ├── scheduler/          # Cron + one-shot background jobs
 │   ├── telemetry/          # OpenTelemetry (optional)
 │   └── ...                 # logger, state, config, registry
 ├── domains/                 # Business logic
@@ -197,7 +208,6 @@ MicroCoreOS/
 | `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap at the tool-API level |
 | `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing. Transports swap by env var: in-process (default), SQLite (durable, survives restarts), Redis Streams (distributed); RabbitMQ in extras |
 | `auth`      | JWT lifecycle + bcrypt password hashing                           |
-| `scheduler` | Cron jobs + one-shot tasks (APScheduler)                          |
 | `logger`    | Structured logging with sink pattern                              |
 | `state`     | Thread-safe in-memory key-value store                             |
 | `registry`  | Runtime introspection + metrics + health status                   |
@@ -212,6 +222,32 @@ MicroCoreOS/
 | `db`         | PostgreSQL — same API and placeholders as SQLite; swap procedure in [ELASTIC_DEPLOYMENT.md](docs/ELASTIC_DEPLOYMENT.md) |
 | `state`      | Redis-backed state — drop-in swap for in-memory StateTool                |
 | `rabbitmq`   | RabbitMQ **driver** for the Event Bus — transports swap by file, like tools: drop the `*_driver.py` into `tools/event_bus/` and set `EVENT_BUS_DRIVER=rabbitmq` |
+| `scheduler`  | Cron jobs + in-memory one-shots (APScheduler) |
+
+**Tools and the domains that need them.** The dependency runs one way — a
+plugin cannot exist without its tool, but a tool stands on its own. So the
+scheduler installs in two independent steps:
+
+```bash
+microcoreos add scheduler     # dependency + both folders + .env, in one command
+```
+
+Or by hand, which is what that command does:
+
+```bash
+uv add 'microcoreos[scheduler]'
+mv extras/available_tools/scheduler tools/       # cron + in-memory one-shots
+mv extras/available_domains/scheduler domains/   # durable one-shots (needs the above)
+```
+
+The tool keeps one-shots in memory by design: an arbitrary callable cannot
+survive a restart, and a tool never uses other tools. The optional domain
+composes `db + scheduler + event_bus` in the plugin layer to get durability,
+and exposes it to any domain over the bus as `scheduler.one_shot.schedule` /
+`scheduler.one_shot.cancel` — events that fire hours later and survive a restart.
+It is also the reference example of that composition rule
+(`.agent/workflows/new-tool.md`). Installing the domain without the tool fails
+at boot, loudly: `Plugin scheduler.DurableOneShotsPlugin aborted: Missing tools: scheduler`.
 
 ---
 
@@ -275,7 +311,9 @@ Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
   delay via capability claims), runtime contracts via the schema catalog,
   distributed observability (export local, aggregate outside), transactional
   outbox (deferred until a real chain needs it)
-- Official tool packages — `microcoreos-redis`, `microcoreos-postgres`
+- Tool distribution — tools are **copied into your project**, not installed into
+  site-packages: you own them and can edit them, and swapping stays what it is
+  today, moving a file. Only the Core travels in the package (ROADMAP Issue 39)
 
 ---
 

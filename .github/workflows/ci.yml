@@ -97,10 +97,10 @@ jobs:
 
       - name: Verify core compilation (Syntax Check)
         run: |
-          uv run python -c "from core.kernel import Kernel; print('✅ Kernel OK')"
-          uv run python -c "from core.container import Container; print('✅ Container OK')"
-          uv run python -c "from core.base_plugin import BasePlugin; print('✅ BasePlugin OK')"
-          uv run python -c "from core.base_tool import BaseTool; print('✅ BaseTool OK')"
+          uv run python -c "from microcoreos.kernel import Kernel; print('✅ Kernel OK')"
+          uv run python -c "from microcoreos.container import Container; print('✅ Container OK')"
+          uv run python -c "from microcoreos import BasePlugin; print('✅ BasePlugin OK')"
+          uv run python -c "from microcoreos import BaseTool; print('✅ BaseTool OK')"
 
       - name: Run Core Tests
         run: uv run -m pytest tests/ -v --tb=short
@@ -204,3 +204,124 @@ jobs:
       - name: Show boot log on failure
         if: failure()
         run: cat boot.log || true
+
+  # Everything above exercises the REPO. This exercises the PACKAGE: build the
+  # wheel, install it where none of the repo's source can leak in, and drive
+  # the whole onboarding path.
+  #
+  # This job exists because three shipped bugs were reachable ONLY this way,
+  # and the suite was green through all of them: the console script does not
+  # put the project on sys.path (a checkout gets that for free), load_dotenv()
+  # resolves against site-packages instead of the project, and `upgrade` lost
+  # track of an extra installed by hand. None of those can exist when the code
+  # runs from a checkout — which is the only way the other jobs run it.
+  packaged-e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build the wheel
+        run: uv build --wheel -o "$GITHUB_WORKSPACE/dist"
+
+      - name: Install it in a venv with no access to the repo
+        run: |
+          mkdir -p /tmp/e2e && cd /tmp/e2e
+          uv venv
+          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler]"
+          ./.venv/bin/microcoreos --help
+
+      - name: microcoreos new
+        working-directory: /tmp/e2e
+        run: |
+          ./.venv/bin/microcoreos new app
+          cd app
+          test -f README.md                                   # the human entry point
+          test -f .microcoreos/manifest.json                  # the upgrade baseline
+          test -f .gitignore
+          test -f main.py
+          test -f tools/sqlite/sqlite_tool.py
+          test -f domains/users/plugins/get_me_plugin.py      # the auth starter
+          test -d extras/available_tools                      # the swap catalog
+          test ! -d domains/ping                              # demos stay behind
+          test ! -d microcoreos                               # the Kernel is NOT copied
+
+      - name: Boot it and use the auth starter
+        working-directory: /tmp/e2e/app
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          /tmp/e2e/.venv/bin/microcoreos > boot.log 2>&1 &
+          APP_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/system/status > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          # A scaffolded project must boot with nothing failing. An empty
+          # system also answers "Ready", so assert on the tool inventory.
+          curl -sf http://localhost:5000/system/status > status.json
+          python3 - <<'EOF'
+          import json
+          tools = json.load(open("status.json"))["data"]["tools"]
+          failed = [t for t in tools if t["status"] != "OK"]
+          assert not failed, f"tools not OK: {failed}"
+          assert len(tools) >= 10, f"suspiciously few tools discovered: {tools}"
+          print(f"✅ {len(tools)} tools OK")
+          EOF
+
+          # register → token → protected endpoint
+          curl -sf -X POST http://localhost:5000/users -H 'Content-Type: application/json' \
+            -d '{"name":"CI","email":"ci@test.com","password":"secret123"}' > /dev/null
+          TOKEN=$(curl -sf -X POST http://localhost:5000/auth/login -H 'Content-Type: application/json' \
+            -d '{"email":"ci@test.com","password":"secret123"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['token'])")
+          curl -sf http://localhost:5000/users/me -H "Authorization: Bearer $TOKEN" | grep -q '"email":"ci@test.com"'
+          curl -s http://localhost:5000/users/me | grep -q 'Missing authorization token'
+          echo "✅ auth starter works end to end"
+
+          grep -q "🔥" boot.log && { echo "load errors in boot"; exit 1; } || true
+          kill $APP_PID
+
+      - name: microcoreos add
+        working-directory: /tmp/e2e/app
+        run: |
+          # --no-install because the dependency comes from the wheel built
+          # above, not from an index: `uv add 'microcoreos[scheduler]'` cannot
+          # resolve until the package is published.
+          /tmp/e2e/.venv/bin/microcoreos add scheduler --no-install
+          test -f tools/scheduler/scheduler_tool.py
+          test -d domains/scheduler/plugins
+          test ! -d extras/available_tools/scheduler      # moved, not copied
+          grep -q "SCHEDULER_ENABLED" .env
+
+      - name: microcoreos upgrade — a fix reaches an extra you moved
+        working-directory: /tmp/e2e/app
+        run: |
+          TEMPLATE=$(echo /tmp/e2e/.venv/lib/python3*/site-packages/microcoreos/_template)
+          echo "# upstream fix" >> "$TEMPLATE/extras/available_tools/scheduler/scheduler_tool.py"
+
+          /tmp/e2e/.venv/bin/microcoreos upgrade --apply
+          tail -1 tools/scheduler/scheduler_tool.py | grep -q "upstream fix"
+          echo "✅ upgrade tracked the extra to where it was moved"
+
+      - name: microcoreos upgrade — your edit survives, twice
+        working-directory: /tmp/e2e/app
+        run: |
+          TEMPLATE=$(echo /tmp/e2e/.venv/lib/python3*/site-packages/microcoreos/_template)
+          echo "# MY PATCH" >> tools/logger/logger_tool.py
+          echo "# upstream fix" >> "$TEMPLATE/tools/logger/logger_tool.py"
+
+          # Twice on purpose: rewriting the whole baseline after --apply used
+          # to re-stamp the conflicted file as "never edited", so the SECOND
+          # run overwrote the patch this one refused to touch.
+          /tmp/e2e/.venv/bin/microcoreos upgrade --apply
+          /tmp/e2e/.venv/bin/microcoreos upgrade --apply
+          tail -1 tools/logger/logger_tool.py | grep -q "MY PATCH"
+          echo "✅ local edits survive repeated --apply"
+
+      - name: Show boot log on failure
+        if: failure()
+        run: cat /tmp/e2e/app/boot.log || true

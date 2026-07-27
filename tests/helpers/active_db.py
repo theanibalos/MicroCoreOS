@@ -43,7 +43,7 @@ from pathlib import Path
 
 import pytest
 
-from core.base_tool import BaseTool, ToolUnavailableError
+from microcoreos import BaseTool, ToolUnavailableError
 
 _TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 
@@ -74,7 +74,7 @@ _cached_class: type | None = None
 def load_active_db_tool_class() -> type:
     """The class of the tool in `tools/` whose name is "db".
 
-    Mirrors the kernel's discovery (core/kernel.py::_load_modules_from_dir),
+    Mirrors the kernel's discovery (microcoreos/kernel.py::_load_modules_from_dir),
     narrowed to `*_tool.py` files — the repo convention — so probing never
     imports optional drivers that may not be installed.
     """

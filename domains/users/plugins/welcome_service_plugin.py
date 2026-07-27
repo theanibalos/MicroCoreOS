@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 # ── Consumed event, tolerant reader: ONLY the fields this plugin needs ────────

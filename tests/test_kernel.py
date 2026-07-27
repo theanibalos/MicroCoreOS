@@ -1,8 +1,8 @@
 import pytest
 import asyncio
-from core.kernel import Kernel
-from core.base_plugin import BasePlugin
-from core.base_tool import BaseTool
+from microcoreos.kernel import Kernel
+from microcoreos import BasePlugin
+from microcoreos import BaseTool
 
 pytestmark = pytest.mark.anyio
 

@@ -47,7 +47,7 @@ import os
 import json
 import redis.asyncio as aioredis
 from redis import exceptions as redis_exceptions
-from core.base_tool import BaseTool, ToolUnavailableError
+from microcoreos import BaseTool, ToolUnavailableError
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

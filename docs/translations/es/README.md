@@ -27,7 +27,7 @@ En las arquitecturas tradicionales de capas, eso significa explicar:
 
 ```python
 # domains/products/plugins/create_product_plugin.py
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class CreateProductPlugin(BasePlugin):
     def __init__(self, http_server, db, logger, event_bus):
@@ -89,7 +89,7 @@ uv run main.py
 
 ```
 MicroCoreOS/
-├── core/                    # El micro-kernel (~240 líneas total)
+├── microcoreos/             # El micro-kernel (~240 líneas total) — el paquete pip
 │   ├── kernel.py           # Orquestador con autodescubrimiento
 │   ├── container.py        # Contenedor DI seguro para hilos
 │   ├── base_plugin.py      # Contrato de Plugin (13 líneas)
@@ -219,7 +219,7 @@ MicroCoreOS avanza hacia un ecosistema descentralizado inspirado en "marketplace
 
 MicroCoreOS implementa su propio Inyector (DI) intencionalmente:
 * **¿Por qué no usar FastAPI desde la raíz?**: Reducimos el nivel cognitivo de los Agentes y Asistentes. Tu código visible para la IA y tú es puramente atómico. El "Framework" es `/core`.
-* **¿Por qué no inyectores de terceros?**: La simplicidad. En menos de un minuto puedes leer y entender el `core/kernel.py` y ver exactamente la magia.
+* **¿Por qué no inyectores de terceros?**: La simplicidad. En menos de un minuto puedes leer y entender el `microcoreos/kernel.py` y ver exactamente la magia.
 
 ---
 

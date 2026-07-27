@@ -41,7 +41,7 @@ REPLACEMENT STANDARD (e.g. Redis — same name "state", plugins unaffected):
 import time
 import copy
 import threading
-from core.base_tool import BaseTool
+from microcoreos import BaseTool
 
 _NO_EXPIRY = None
 

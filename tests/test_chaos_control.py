@@ -14,9 +14,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from unittest.mock import AsyncMock, MagicMock
 
-from core.base_tool import BaseTool
+from microcoreos import BaseTool
 from tests.helpers.async_wait import wait_until
-from core.container import Container
+from microcoreos.container import Container
 from tools.event_bus.event_bus_tool import EventBusTool
 from tools.http_server.http_server_tool import HttpServerTool
 from extras.available_domains.chaos.plugins.chaos_control_plugin import (
@@ -376,21 +376,28 @@ async def test_pause_accumulates_durable_backlog_and_drains(container, tmp_path,
         await bus.subscribe("orders.created", victim.on_evt)
         await chaos.pause_plugin({"plugin": "shop.VictimPlugin"})
 
+        def _rows():
+            return _sqlite3.connect(queue_path).execute(
+                "SELECT COUNT(*) FROM deliveries").fetchone()[0]
+
         for n in range(3):
             await bus.publish("orders.created", {"n": n})
+
+        # The rows are a positive condition — poll it instead of assuming a
+        # duration. Only the "nothing was delivered" assertion below needs a
+        # settle window, because you cannot poll for something NOT happening.
+        await wait_until(lambda: _rows() == 3, timeout=5,
+                         describe=lambda: {"rows": _rows(), "seen": victim.seen})
         await asyncio.sleep(0.5)
-        assert victim.seen == []
-        rows = _sqlite3.connect(queue_path).execute(
-            "SELECT COUNT(*) FROM deliveries").fetchone()[0]
-        assert rows == 3              # nothing acked: the backlog is ON DISK
+        assert victim.seen == [], f"paused plugin received: {victim.seen}"
+        assert _rows() == 3       # nothing acked: the backlog is ON DISK
 
         await chaos.resume_plugin({"plugin": "shop.VictimPlugin"})
-        await wait_until(lambda: victim.seen == [{"n": 0}, {"n": 1}, {"n": 2}], timeout=5)
+        await wait_until(lambda: victim.seen == [{"n": 0}, {"n": 1}, {"n": 2}], timeout=5,
+                         describe=lambda: {"seen": victim.seen, "rows": _rows()})
 
-        def _drained():
-            return _sqlite3.connect(queue_path).execute(
-                "SELECT COUNT(*) FROM deliveries").fetchone()[0] == 0
-        await wait_until(_drained, timeout=5)
+        await wait_until(lambda: _rows() == 0, timeout=5,
+                         describe=lambda: {"rows": _rows(), "seen": victim.seen})
     finally:
         await bus.shutdown()
 

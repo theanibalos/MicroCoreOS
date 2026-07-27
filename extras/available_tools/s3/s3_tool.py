@@ -33,7 +33,7 @@ import os
 import asyncio
 from typing import Optional, Any
 from botocore.client import Config
-from core.base_tool import BaseTool, ToolUnavailableError
+from microcoreos import BaseTool, ToolUnavailableError
 
 
 class S3Error(Exception):

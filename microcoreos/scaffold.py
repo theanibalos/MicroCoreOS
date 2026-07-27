@@ -1,0 +1,207 @@
+"""
+`microcoreos new` — materialize a project's source into the user's directory.
+
+The wheel ships the Kernel and nothing else that is importable. Tools, domains
+and plans are copied out as YOUR source, because the install-and-swap model of
+this framework is file placement (`mv extras/available_tools/postgresql tools/`,
+drop a `{name}_driver.py` into `tools/event_bus/`). None of that works against
+site-packages: it may be read-only, and anything written there is wiped by the
+next upgrade. So: distribution as a package, materialization as your source.
+
+The price is honest vendoring — a fix to a tool does not reach existing
+projects on its own. `microcoreos upgrade` is the mitigation: this command
+records the SHA-256 of everything it writes, and upgrade uses that baseline to
+update only the files you never touched.
+"""
+
+import os
+import shutil
+
+from microcoreos.upgrade import write_manifest
+
+# The smallest users domain that actually works: register → login → call a
+# protected endpoint. Without it `tools/auth` ships with no way to obtain a
+# token, which is a tool you cannot use. The rest of the repo's users domain
+# (list, get-by-id, update, delete, logout, the event consumer) stays behind —
+# that is CRUD you will write for your own entities anyway.
+AUTH_STARTER_ENTRIES = [
+    "domains/users/models/user.py",
+    "domains/users/migrations/001_create_users.sql",
+    "domains/users/plugins/create_user_plugin.py",
+    "domains/users/plugins/login_plugin.py",
+    "domains/users/plugins/get_me_plugin.py",
+]
+
+# What a project needs to boot. `domains/ping` stays behind: it is a demo.
+RUNTIME_ENTRIES = [
+    "tools",
+    "domains/system",
+    "domains/devtools",
+    *AUTH_STARTER_ENTRIES,
+    # The swap catalog. Not optional: installing infrastructure here IS moving
+    # a folder (`mv extras/available_tools/postgresql tools/`), so a project
+    # without extras/ cannot perform the swap its own docs describe.
+    "extras",
+    "plans",
+    "dev_infra",
+    "main.py",
+    "Dockerfile",
+    ".dockerignore",
+    # Without it a fresh project commits .env, *.db and __pycache__ on the
+    # first `git add .`. Note it does NOT ignore .microcoreos/ — that baseline
+    # belongs in version control, or a teammate's clone cannot upgrade.
+    ".gitignore",
+    ".env.example",
+]
+
+# The AI-driven-development kit. AGENTS.md is the entry point every agent
+# reads, and it points at .agent/ and docs/ — they travel together or the
+# instructions dangle. `--no-ai-kit` skips the lot.
+AI_KIT_ENTRIES = [
+    "AGENTS.md",
+    "INSTRUCTIONS_FOR_AI.md",
+    ".agent",
+    "docs",
+]
+
+# Never copied: build artifacts, someone else's secrets, someone else's data.
+IGNORED = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", ".git", ".venv", "*.db", "*.db-wal", "*.db-shm",
+)
+
+PYPROJECT_TEMPLATE = """[project]
+name = "{name}"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "microcoreos",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+"""
+
+NEXT_STEPS = """
+✅ MicroCoreOS project materialized in {target}
+
+   Everything under tools/ and domains/ is now YOUR source — edit it, swap it,
+   delete what you do not use.
+
+   Next:
+     cd {target}
+     cp .env.example .env      # already done if you had no .env
+     microcoreos               # boot (or: uv run main.py)
+
+   Optional infrastructure — dependency, source and .env in one command:
+     microcoreos add postgres    (also: redis, s3, scheduler, kafka, rabbitmq, chaos)
+"""
+
+
+def _template_root() -> str:
+    """
+    Where the source to copy lives.
+
+    Installed from the wheel it is `microcoreos/_template/`. In a checkout of
+    the framework itself that directory does not exist, and the repo root IS
+    the template — which keeps one source of truth and makes `new` testable
+    without building a wheel first.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    packaged = os.path.join(here, "_template")
+    if os.path.isdir(packaged):
+        return packaged
+
+    repo = os.path.dirname(here)
+    if os.path.isdir(os.path.join(repo, "tools")):
+        return repo
+
+    raise FileNotFoundError(
+        "This MicroCoreOS install carries no project template "
+        f"(looked in {packaged}). Reinstall the package."
+    )
+
+
+def _copy(src: str, dst: str) -> None:
+    if os.path.isdir(src):
+        shutil.copytree(src, dst, ignore=IGNORED, dirs_exist_ok=True)
+    else:
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+def materialize(target: str, ai_kit: bool = True) -> list[str]:
+    """Copy the template into `target`. Returns the entries actually copied."""
+    root = _template_root()
+    entries = RUNTIME_ENTRIES + (AI_KIT_ENTRIES if ai_kit else [])
+
+    copied = []
+    for entry in entries:
+        src = os.path.join(root, entry)
+        if not os.path.exists(src):
+            # A trimmed template is not a failure: skip what is not there.
+            continue
+        _copy(src, os.path.join(target, entry))
+        copied.append(entry)
+
+    return copied
+
+
+def new(argv: list[str]) -> int:
+    """`microcoreos new <path> [--force] [--no-ai-kit]`"""
+    force = "--force" in argv
+    ai_kit = "--no-ai-kit" not in argv
+    positional = [a for a in argv if not a.startswith("-")]
+
+    if len(positional) != 1:
+        print("Usage: microcoreos new <path> [--force] [--no-ai-kit]")
+        return 2
+
+    target = os.path.abspath(positional[0])
+
+    occupied = [d for d in ("tools", "domains") if os.path.isdir(os.path.join(target, d))]
+    if occupied and not force:
+        print(
+            f"[MicroCoreOS] {target} already holds {'/'.join(occupied)}.\n"
+            "              Refusing to overwrite your source. Use --force if that is what you want."
+        )
+        return 1
+
+    os.makedirs(target, exist_ok=True)
+    materialize(target, ai_kit=ai_kit)
+
+    # .env is configuration, not source: never clobber one that exists.
+    env, example = os.path.join(target, ".env"), os.path.join(target, ".env.example")
+    if os.path.exists(example) and not os.path.exists(env):
+        shutil.copy2(example, env)
+
+    name = os.path.basename(target).replace("_", "-").lower() or "my-app"
+
+    # Only when the directory is not already a Python project — `uv add
+    # microcoreos && microcoreos new .` is a supported flow and its pyproject
+    # belongs to the user.
+    pyproject = os.path.join(target, "pyproject.toml")
+    if not os.path.exists(pyproject):
+        with open(pyproject, "w", encoding="utf-8") as f:
+            f.write(PYPROJECT_TEMPLATE.format(name=name))
+
+    # The human entry point. AGENTS.md addresses the agent; without this a
+    # person opening the directory has nothing written for them. Never
+    # overwrites — `uv init` already leaves a README behind.
+    readme = os.path.join(target, "README.md")
+    if not os.path.exists(readme):
+        template = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_readme.md")
+        with open(template, encoding="utf-8") as src:
+            # replace, not .format() — the template shows plugin code full of
+            # dict literals, and every one of those braces would blow up.
+            body = src.read().replace("{name}", name)
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(body)
+
+    # The baseline `microcoreos upgrade` needs to tell your later edits from
+    # a file that simply went stale.
+    write_manifest(target, RUNTIME_ENTRIES + (AI_KIT_ENTRIES if ai_kit else []))
+
+    print(NEXT_STEPS.format(target=positional[0]))
+    return 0

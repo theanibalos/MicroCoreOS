@@ -8,7 +8,7 @@ Registry key: devtools/arch_violations (read by GET /system/lint).
 """
 
 import ast
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 from domains.devtools.lint.plugin_sources import iter_plugin_files
 
 
@@ -19,7 +19,7 @@ class DomainIsolationLinterPlugin(BasePlugin):
 
     - `domains.OTHER_DOMAIN...` — domains talk through the event bus, never by
       importing each other. Same-domain imports (the domain's own models/) and
-      `core` are fine.
+      `microcoreos` are fine.
     - `tools....` — plugins receive tools by injection; importing one hardcodes
       an implementation and kills the swap (docs/ELASTIC_DEPLOYMENT.md).
     """
@@ -71,7 +71,7 @@ class DomainIsolationLinterPlugin(BasePlugin):
     def _is_illegal_import(self, current_domain: str, target_module: str) -> bool:
         """
         An import is illegal if it points to 'domains.X' where X != current_domain.
-        Imports from 'core' and internal domain modules are allowed.
+        Imports from 'microcoreos' and internal domain modules are allowed.
         """
         parts = target_module.split('.')
         if len(parts) >= 2 and parts[0] == "domains":

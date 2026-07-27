@@ -72,7 +72,7 @@ domains/{name}/
 ```python
 from typing import Optional
 from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class CreateProductPlugin(BasePlugin):
     def __init__(self, logger, event_bus, http, db):
@@ -182,7 +182,7 @@ connection-error class inherit `ToolUnavailableError` so ToolProxy marks it
 DEAD on the first infrastructure failure:
 
 ```python
-from core.base_tool import BaseTool, ToolUnavailableError
+from microcoreos import BaseTool, ToolUnavailableError
 
 class RedisError(Exception): ...                                    # business errors
 class RedisConnectionError(RedisError, ToolUnavailableError): ...   # infra -> DEAD immediately
@@ -272,6 +272,96 @@ async def execute(self, data: dict, context=None):
 ## 🧪 Testing
 
 Constructor injection makes testing straightforward. In this project, we support and encourage two levels of testing:
+
+### Which level? One rule
+
+**Mock the input and the output. Use the real tool the moment you assert persistence.**
+
+| What the test asserts | Level | Why |
+|---|---|---|
+| Returned dict, branch logic, error paths | **Mock** (level 2) | Nothing durable is being claimed; a real DB adds setup and no confidence |
+| Rows in a table, state after a swap, an event a consumer actually received | **Real tool** (level 1) | The claim IS the persisted state — see below |
+
+The reason the second row is not negotiable: a mocked `db` lets you assert
+*"`execute` was called with this SQL string"*. That verifies the plugin talks
+to a contract; it does **not** verify the SQL works against the schema. A
+typo'd column, a `NOT NULL` the migration declares and the INSERT never fills,
+a type SQLite accepts and PostgreSQL rejects — every one of those passes a
+mocked test and fails in production. Once you assert on a table, you need the
+table.
+
+A plugin that both validates and writes is not a dilemma: test the validation
+branches with mocks and the write with the real tool. They are different tests.
+
+**Most plugin tests here are mocked, and that is correct** — the majority of
+plugins are input → output. Reach for level 1 when the subject is the durable
+effect, not by default.
+
+**What mocks cannot catch, and what covers it.** A mocked test verifies the
+plugin against a contract the test itself declares, so if a tool's real API
+drifts the mock keeps passing. That gap is closed elsewhere, not by your test:
+the `ToolDocDriftLinter` (boot + `/system/lint`) compares each tool's
+documented interface against its implementation, and the parity suites
+(`tests/tools/test_state_parity.py`,
+`tests/tools/test_event_bus_broker_parity.py`) hold swappable tools to one
+behaviour. Do not re-verify that in a plugin test.
+
+### Ask for tools the way the plugin does
+
+A plugin never builds a tool: it names one in `__init__` and the Kernel hands
+it over. pytest injects by parameter name too, so **a test uses the same
+vocabulary** — `tests/conftest.py` publishes one fixture per Kernel injection
+key (`db`, `event_bus`, `auth`, `state`, `logger`, `config`). No tool imports,
+no setup/teardown, no hand-built schema:
+
+```python
+@pytest.mark.migrations("users")          # the domain's REAL migrations
+async def test_create_user_persists(db, event_bus, auth, logger):
+    plugin = CreateUserPlugin(http=MagicMock(), db=db,
+                              event_bus=event_bus, auth=auth, logger=logger)
+    result = await plugin.execute({"name": "Ana", "email": "a@b.com", "password": "secret123"})
+
+    assert result["success"] is True
+    rows = await db.query("SELECT name, email, password_hash FROM users")
+    assert rows[0]["password_hash"] != "secret123"
+```
+
+Worked example: `tests/test_plugin_di_fixtures.py`.
+
+- `@pytest.mark.migrations("users", "system")` applies those domains' real
+  migration files. **No marker = a real but empty database**, which is what a
+  test that never touches a table wants.
+- The `db` fixture resolves the **active** db tool, so these tests keep working
+  after a PostgreSQL swap instead of dying at collection on a hardcoded import.
+- Fixtures drive setup/shutdown tolerating sync OR async, exactly as the Kernel
+  does — `LoggerTool.shutdown()` is sync, `SqliteTool.shutdown()` is not.
+- Need something these do not give you? Declare your own fixture with that
+  name; a local one always overrides the shared one.
+
+### Deliberate constraint divergence
+
+The `FieldDivergenceLinter` warns when sibling plugins in a domain validate the
+same field differently. When that is on purpose, record it where it happens —
+do not leave the warning standing:
+
+```python
+password: str = Field(
+    min_length=1,
+    json_schema_extra={"divergence_ok": "login verifies against the hash"},
+)
+```
+
+The reason is required (an empty one is ignored), and the waived declaration
+drops out of the comparison — the others are still compared with each other.
+
+**Prefabs — read these before hand-rolling setup:**
+
+| Helper | For |
+|---|---|
+| `tests/helpers/mock_db.py` | `async with db.transaction()` — a bare `AsyncMock` crashes there. `TxMock` / `FailingTxMock` |
+| `tests/helpers/active_db.py` | A real DB tool with the domain's real migrations applied |
+| `tests/helpers/async_wait.py` | `wait_until(...)` instead of a fixed sleep. Pass `describe=` so a rare timeout reports the observed state, not `<lambda at 0x...>` |
+| `tests/helpers/trace_chains.py` | Asserting a full event chain across domains |
 
 ### 1. Black-Box Integration Testing (Recommended for DB/State/Events)
 To prevent fragile mocks and ensure database queries actually run and pass syntax and dialect checks:
@@ -391,18 +481,47 @@ The project includes pre-built tools and domains in the `extras/` folder. These
 are not active by default to keep the core lean.
 
 ### Activating an Extra
-To activate an extra, move its folder to the corresponding core directory
-(`tools/` or `domains/`). The Kernel will auto-discover and boot it on the next
-restart.
 
-- **PostgreSQL**: Move `extras/available_tools/postgresql/` to `tools/postgresql/`.
-  Ensure `DATABASE_URL` is set in `.env`. It will take over the `db` injection
-  key if the default `sqlite` tool is removed or if it registers with the same
-  name.
-- **Redis State**: Move `extras/available_tools/redis_state/` to `tools/redis_state/`
-  to swap the in-memory `state` for a distributed one.
-- **Chaos Tool/Domain**: Used for resilience testing. Move from `extras/` to
-  `tools/` or `domains/` to enable.
+```bash
+microcoreos add postgres
+```
+
+One command does all three acts: installs the optional dependency, moves the
+source out of `extras/` into `tools/` (and `domains/` for a pair), and appends
+the extra's settings to `.env` without overwriting values already there. Run
+`microcoreos add` with no argument to list what is available.
+
+By hand it is the same three acts, and each one fails in a different place:
+
+```bash
+uv add 'microcoreos[postgres]'                     # 1. the library
+mv extras/available_tools/postgresql tools/        # 2. the source you now own
+# 3. the settings — see the table below
+```
+
+Skipping step 1 does not fail quietly — the Kernel reports a load error for
+that file at boot (`No module named 'asyncpg'`). Skipping step 2 does nothing
+at all: the Kernel only discovers what is under `tools/` and `domains/`.
+
+| Extra | Package step | Folder step |
+|---|---|---|
+| **PostgreSQL** — takes over the `db` key; set `DATABASE_URL` in `.env` | `uv add 'microcoreos[postgres]'` | `mv extras/available_tools/postgresql tools/` |
+| **Redis State** — swaps in-memory `state` for a distributed one | `uv add 'microcoreos[redis]'` | `mv extras/available_tools/redis_state tools/` |
+| **S3** — object storage, private bucket + presigned URLs | `uv add 'microcoreos[s3]'` | `mv extras/available_tools/s3 tools/` |
+| **Scheduler** — cron + in-memory one-shots | `uv add 'microcoreos[scheduler]'` | `mv extras/available_tools/scheduler tools/` |
+| **Chaos** — resilience testing (tool + its domain) | none | `mv extras/available_tools/chaos tools/` and `mv extras/available_domains/chaos domains/` |
+
+**Event Bus drivers** install by dropping the `*_driver.py` into
+`tools/event_bus/` and setting `EVENT_BUS_DRIVER`: `kafka`
+(`uv add 'microcoreos[kafka]'`), `rabbitmq` (`[rabbitmq]`). Redis Streams and
+the durable SQLite driver already ship in `tools/event_bus/` — Redis Streams
+still needs `uv add 'microcoreos[redis]'`.
+
+**Domains that need a tool.** A plugin cannot exist without its tool, so a
+domain extra always requires its tool extra first. `extras/available_domains/scheduler/`
+(durable one-shots, the `scheduler.one_shot.*` bus API) needs the scheduler
+tool installed by both steps above; without it the boot says
+`Plugin scheduler.DurableOneShotsPlugin aborted: Missing tools: scheduler`.
 
 ---
 

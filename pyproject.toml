@@ -5,28 +5,84 @@ description = "Atomic Microkernel Architecture optimized for AI-Driven Developme
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
+# The base set: what the Kernel plus the tools materialized by default
+# (`microcoreos new`) need to boot. Everything a swappable tool needs lives in
+# an extra below, so `uv add microcoreos` installs no broker client nobody uses.
 dependencies = [
-    "aio-pika>=9.4",
-    "aioboto3>=15.5.0",
-    "aiokafka>=0.14.0",
     "aiosqlite>=0.20.0",
-    "apscheduler>=3.10,<4",
-    "asyncpg>=0.29.0",
     "bcrypt>=3.2.2",
     "fastapi>=0.115.0",
-    "httpx>=0.28.1",
     "pydantic[email]>=2.10.0",
     "pyjwt>=2.9.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
-    "redis>=5.0",
     "uvicorn>=0.30.0",
+    # No `import websockets` anywhere: it is uvicorn's WS protocol
+    # implementation, required at runtime by HttpServerTool.add_ws_endpoint().
     "websockets>=13.0",
 ]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+postgres = ["asyncpg>=0.29.0"]
+kafka = ["aiokafka>=0.14.0"]
+rabbitmq = ["aio-pika>=9.4"]
+s3 = ["aioboto3>=15.5.0"]
+scheduler = ["apscheduler>=3.10,<4"]
+all = [
+    "aio-pika>=9.4",
+    "aioboto3>=15.5.0",
+    "aiokafka>=0.14.0",
+    "apscheduler>=3.10,<4",
+    "asyncpg>=0.29.0",
+    "redis>=5.0",
+]
+
+[project.scripts]
+microcoreos = "microcoreos.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = ["**/__pycache__", "**/*.pyc", "**/*.db", "**/*.db-wal", "**/*.db-shm"]
+
+[tool.hatch.build.targets.wheel]
+# Only `microcoreos/` is importable code. tools/, domains/ and the rest ride
+# along as INERT payload under microcoreos/_template/ and are copied out as the
+# user's own source by `microcoreos new` — see Issue 39 in ROADMAP.md. Nothing
+# under _template/ is ever imported from site-packages.
+packages = ["microcoreos"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"tools" = "microcoreos/_template/tools"
+"domains/system" = "microcoreos/_template/domains/system"
+"domains/devtools" = "microcoreos/_template/domains/devtools"
+"domains/users/models/user.py" = "microcoreos/_template/domains/users/models/user.py"
+"domains/users/migrations/001_create_users.sql" = "microcoreos/_template/domains/users/migrations/001_create_users.sql"
+"domains/users/plugins/create_user_plugin.py" = "microcoreos/_template/domains/users/plugins/create_user_plugin.py"
+"domains/users/plugins/login_plugin.py" = "microcoreos/_template/domains/users/plugins/login_plugin.py"
+"domains/users/plugins/get_me_plugin.py" = "microcoreos/_template/domains/users/plugins/get_me_plugin.py"
+"extras" = "microcoreos/_template/extras"
+"plans" = "microcoreos/_template/plans"
+"dev_infra" = "microcoreos/_template/dev_infra"
+"docs" = "microcoreos/_template/docs"
+".agent" = "microcoreos/_template/.agent"
+"main.py" = "microcoreos/_template/main.py"
+"Dockerfile" = "microcoreos/_template/Dockerfile"
+".dockerignore" = "microcoreos/_template/.dockerignore"
+".gitignore" = "microcoreos/_template/.gitignore"
+".env.example" = "microcoreos/_template/.env.example"
+"AGENTS.md" = "microcoreos/_template/AGENTS.md"
+"INSTRUCTIONS_FOR_AI.md" = "microcoreos/_template/INSTRUCTIONS_FOR_AI.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "migrations(*domains): apply these domains' real migrations to the `db` fixture",
+]
 
 [tool.ruff.lint]
 # E701 (one-line `if x: return y`) is an accepted idiom in this codebase.
@@ -34,8 +90,14 @@ ignore = ["E701"]
 
 [dependency-groups]
 dev = [
+    # The suite exercises every swappable tool, including the ones whose client
+    # is an extra for users (redis, postgres, kafka, rabbitmq, s3, scheduler).
+    "microcoreos[all]",
     "anyio[trio]>=4.0.0",
+    # Test-only: the suite drives the ASGI app through httpx's ASGITransport.
+    "httpx>=0.28.1",
     "pytest>=8.0.0",
     "ruff>=0.15.16",
+    # Test-only + `microcoreos dev` (imported lazily, with an install message).
     "watchfiles>=1.1.1",
 ]

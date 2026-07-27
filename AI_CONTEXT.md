@@ -258,38 +258,6 @@ Systems Registry Tool (registry):
                 Intended for health-check plugins that verify tools proactively.
 ```
 
-### 🔧 Tool: `scheduler` (Status: ✅)
-```text
-Scheduler Tool (scheduler):
-        - PURPOSE: Background job scheduling — cron-style recurring jobs and one-shot timed jobs.
-          Backed by APScheduler AsyncIOScheduler. Zero infrastructure required.
-          Supports both async and sync callbacks transparently.
-        - CAPABILITIES:
-            - add_job(cron_expr: str, callback, job_id?: str) -> str:
-                Schedule a recurring job with a 5-field cron expression.
-                e.g. "*/5 * * * *" = every 5 min, "0 9 * * 1-5" = weekdays at 09:00.
-                Returns job_id (auto-generated if not provided).
-                Providing a stable job_id prevents duplicates on restart.
-            - add_one_shot(run_at: datetime, callback, job_id?: str) -> str:
-                Schedule a one-time job at a specific datetime (timezone-aware).
-                Returns job_id. IN-MEMORY: lost if the process restarts before firing.
-                For one-shots that must survive restarts, publish to the bus:
-                "system.one_shot.schedule" (durable scheduling service, system domain).
-            - remove_job(job_id: str) -> bool:
-                Remove a job by ID. Returns True if removed, False if not found.
-            - list_jobs() -> list[dict]:
-                Snapshot of all scheduled jobs: [{id, next_run, trigger}].
-        - REGISTER IN on_boot(): jobs are collected during on_boot(), scheduler starts
-          in on_boot_complete() after all plugins have registered.
-        - SCALING (N replicas): set SCHEDULER_ENABLED=false in worker replicas — jobs
-          register everywhere but fire only in the single "beat" replica. Jobs should
-          publish an event to the bus and return; workers consume it (group semantics
-          guarantee exactly one execution across the fleet). Do heavy work in the
-          worker, never in the job callback.
-        - SWAP: replace with Celery beat by creating a new tool with name = "scheduler"
-          and the same 4-method API. Plugins do not change.
-```
-
 ### 🔧 Tool: `db` (Status: ✅)
 ```text
 Async SQLite Persistence Tool (sqlite):
@@ -364,8 +332,7 @@ Async SQLite Persistence Tool (sqlite):
 - **Plugins**: ping.PingPlugin
 
 ### `system`
-- **Table `scheduler_one_shots`** (storage): job_id (text, PK), run_at_epoch (float, NOT NULL), event (text, NOT NULL), payload (text, NOT NULL)
-- **Model `SchedulerOneShotEntity`** (domain vocabulary): job_id: str, run_at_epoch: float, event: str, payload: str
+- **Tables**: none
 - **Endpoints**:
   - `GET /system/events`
     - **res**: SystemEventsData(events: list[EventEntry(event: str, subscribers: list[str], last_emitters: list[str], times_fired: int)])
@@ -382,9 +349,9 @@ Async SQLite Persistence Tool (sqlite):
   - `SSE /system/metrics/stream`
   - `SSE /system/traces/stream`
 - **Events emitted**: `event.delivery.failed` (attempts, error, event, event_id, subscriber)
-- **Events consumed**: system.one_shot.cancel, system.one_shot.schedule
-- **Dependencies**: config, container, db, event_bus, http, logger, registry, scheduler
-- **Plugins**: system.DurableOneShotsPlugin, system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
+- **Events consumed**: none
+- **Dependencies**: config, container, event_bus, http, logger, registry
+- **Plugins**: system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ### `users`
 - **Table `users`** (storage): id (int, PK), name (text, NOT NULL), email (text, NOT NULL), password_hash (text, NOT NULL), roles (text, NOT NULL, default '["user"]') — UNIQUE(email)
@@ -500,7 +467,7 @@ task needs is missing from them.
 ```python
 from typing import Optional
 from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class CreateThingRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -549,7 +516,7 @@ class CreateThingPlugin(BasePlugin):
 
 ```python
 from pydantic import BaseModel
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 # Consumed event, tolerant reader: declare ONLY the fields your feature's

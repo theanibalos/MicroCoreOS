@@ -1,5 +1,5 @@
 import time
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class BlockingBootPlugin(BasePlugin):
     """

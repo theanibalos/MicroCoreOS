@@ -26,7 +26,7 @@ async def test_detects_tool_in_misnamed_file(tmp_path, monkeypatch):
     tools_dir = tmp_path / "tools" / "payments"
     tools_dir.mkdir(parents=True)
     (tools_dir / "gateway.py").write_text(
-        "from core.base_tool import BaseTool\n"
+        "from microcoreos import BaseTool\n"
         "class PaymentGatewayTool(BaseTool):\n    pass\n"
     )
 
@@ -43,7 +43,7 @@ async def test_detects_plugin_in_misnamed_file(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "orders" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "place_order.py").write_text(
-        "from core.base_plugin import BasePlugin\n"
+        "from microcoreos import BasePlugin\n"
         "class PlaceOrderPlugin(BasePlugin):\n    pass\n"
     )
 
@@ -60,13 +60,13 @@ async def test_correctly_named_files_are_clean(tmp_path, monkeypatch):
     tools_dir = tmp_path / "tools" / "payments"
     tools_dir.mkdir(parents=True)
     (tools_dir / "payment_tool.py").write_text(
-        "from core.base_tool import BaseTool\n"
+        "from microcoreos import BaseTool\n"
         "class PaymentTool(BaseTool):\n    pass\n"
     )
     plugins_dir = tmp_path / "domains" / "orders" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "place_order_plugin.py").write_text(
-        "from core.base_plugin import BasePlugin\n"
+        "from microcoreos import BasePlugin\n"
         "class PlaceOrderPlugin(BasePlugin):\n    pass\n"
     )
 
@@ -81,7 +81,7 @@ async def test_helper_modules_are_not_flagged(tmp_path, monkeypatch):
     tools_dir = tmp_path / "tools" / "sqlite"
     tools_dir.mkdir(parents=True)
     (tools_dir / "errors.py").write_text(
-        "from core.base_tool import ToolUnavailableError\n"
+        "from microcoreos import ToolUnavailableError\n"
         "class DatabaseError(Exception):\n    pass\n"
     )
     (tools_dir / "transaction.py").write_text("class Transaction:\n    pass\n")
@@ -112,7 +112,7 @@ async def test_extras_are_scanned(tmp_path, monkeypatch):
     extras_dir = tmp_path / "extras" / "available_tools" / "mongo"
     extras_dir.mkdir(parents=True)
     (extras_dir / "mongo.py").write_text(
-        "from core.base_tool import BaseTool\n"
+        "from microcoreos import BaseTool\n"
         "class MongoTool(BaseTool):\n    pass\n"
     )
 

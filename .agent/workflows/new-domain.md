@@ -92,7 +92,7 @@ File: `domains/{name}/plugins/create_{name}_plugin.py`
 ```python
 from typing import Optional
 from pydantic import BaseModel
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 # ── Request schema lives HERE ──────────────────────
 class Create{Name}Request(BaseModel):

@@ -2,10 +2,10 @@ import os
 import importlib
 import inspect
 import asyncio
-from core.container import Container
-from core.base_tool import BaseTool
-from core.base_plugin import BasePlugin
-from core.context import current_identity_var
+from microcoreos.container import Container
+from microcoreos.base_tool import BaseTool
+from microcoreos.base_plugin import BasePlugin
+from microcoreos.context import current_identity_var
 
 class Kernel:
     def __init__(self):

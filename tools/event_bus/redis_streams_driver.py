@@ -62,7 +62,7 @@ import asyncio
 import redis.asyncio as aioredis
 from redis import exceptions as redis_exceptions
 from typing import Callable, Optional
-from core.base_tool import ToolUnavailableError
+from microcoreos import ToolUnavailableError
 from tools.event_bus.event_bus_tool import EventBusDriver
 
 

@@ -1,6 +1,6 @@
 """Discovery naming: a tool or plugin class must live in a file the Kernel reads.
 
-The Kernel narrows discovery by filename (core/kernel.py::_load_modules_from_dir):
+The Kernel narrows discovery by filename (microcoreos/kernel.py::_load_modules_from_dir):
 only `*_tool.py` under tools/ and `*_plugin.py` under domains/ are imported.
 That is deliberate — importing every .py would pull in optional drivers whose
 broker library may not be installed, reporting a boot error for a transport
@@ -16,7 +16,7 @@ Registry key: devtools/discovery_naming_violations (read by GET /system/lint).
 """
 
 import ast
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 from domains.devtools.lint.plugin_sources import iter_source_files
 
 # base class → the filename suffix that makes the Kernel import it.
@@ -72,7 +72,7 @@ class DiscoveryNamingLinterPlugin(BasePlugin):
                 if not isinstance(node, ast.ClassDef):
                     continue
                 for base in node.bases:
-                    # `class X(BaseTool)` and `class X(core.base_tool.BaseTool)`
+                    # `class X(BaseTool)` and `class X(microcoreos.base_tool.BaseTool)`
                     base_name = base.id if isinstance(base, ast.Name) else (
                         base.attr if isinstance(base, ast.Attribute) else None
                     )

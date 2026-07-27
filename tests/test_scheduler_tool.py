@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 from datetime import datetime, timedelta, timezone
-from tools.scheduler.scheduler_tool import SchedulerTool
+from extras.available_tools.scheduler.scheduler_tool import SchedulerTool
 
 pytestmark = pytest.mark.anyio
 

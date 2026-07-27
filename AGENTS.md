@@ -100,7 +100,7 @@ This is the coordinator's operational summary:
 ```python
 from typing import Optional
 from pydantic import BaseModel, Field
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 class CreateThingRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)

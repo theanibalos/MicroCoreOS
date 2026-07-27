@@ -12,7 +12,7 @@ from typing import Callable
 
 
 async def wait_until(predicate: Callable[[], bool], timeout: float = 2.0, interval: float = 0.005,
-                      sleep=asyncio.sleep) -> None:
+                      sleep=asyncio.sleep, describe: Callable[[], object] | None = None) -> None:
     """Poll `predicate` on the real clock.
 
     `sleep` defaults to asyncio.sleep but can be overridden with an
@@ -20,12 +20,26 @@ async def wait_until(predicate: Callable[[], bool], timeout: float = 2.0, interv
     `asyncio.sleep` at the module level (mocking it there patches the
     module object itself, so this poll loop would otherwise call the
     mock too and never actually wait).
+
+    `describe` is what makes a rare timeout worth anything. Without it the
+    failure reads `condition not met within 5.0s: <lambda at 0x7f...>`, which
+    says nothing about WHAT the state actually was — and a flake you cannot
+    reproduce is then a flake you cannot diagnose either. Pass a callable
+    returning the observed state and it lands in the message.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while not predicate():
         if loop.time() >= deadline:
-            raise AssertionError(f"condition not met within {timeout}s: {predicate}")
+            observed = ""
+            if describe is not None:
+                try:
+                    observed = f" — observed: {describe()!r}"
+                except Exception as e:            # a broken describe must not
+                    observed = f" — describe() raised {e!r}"   # mask the timeout
+            raise AssertionError(
+                f"condition not met within {timeout}s: {predicate}{observed}"
+            )
         await sleep(interval)
 
 

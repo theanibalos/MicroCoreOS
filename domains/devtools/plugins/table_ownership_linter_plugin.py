@@ -7,7 +7,7 @@ Registry key: devtools/table_ownership_warnings (read by GET /system/lint).
 
 import os
 import re
-from core.base_plugin import BasePlugin
+from microcoreos import BasePlugin
 
 
 class TableOwnershipLinterPlugin(BasePlugin):

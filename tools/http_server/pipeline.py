@@ -13,7 +13,7 @@ import uuid
 import inspect
 from typing import Optional, Any, Callable
 from pydantic import BaseModel
-from core.context import current_identity_var, current_event_id_var
+from microcoreos import current_identity_var, current_event_id_var
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
