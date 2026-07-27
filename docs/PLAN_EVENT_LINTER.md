@@ -6,7 +6,7 @@
 
 > Implementation plan. Goal: detect at boot that the payloads published on the
 > bus are compatible with what consumers expect, in the style of the existing
-> `ArchitectureLinterPlugin` (same pattern: AST scan in `on_boot`, warnings to
+> devtools architecture linters (same pattern: AST scan in `on_boot`, warnings to
 > the logger, findings to `registry.register_domain_metadata`).
 
 ## Location and pattern

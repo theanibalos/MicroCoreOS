@@ -19,6 +19,7 @@ These are the most frequent errors. Check these first before writing any code.
 | `from tools.http_server.http_server_tool import HttpServerTool` | Use DI: `def __init__(self, http)` | Hardcoded imports break tool swapping |
 | Expecting automatic Kernel retries | Handle your own exceptions or use Tool-level resilience | **ToolProxy NO LONGER retries automatically** to prevent duplicates |
 | `return {"success": False, "error": str(e)}` | `logger.error(e); return {"success": False, "error": "Generic Message"}` | `str(e)` leaks table names, paths, and internal logic |
+| `if "UNIQUE" in str(e):` (deciding by the error's text) | `if getattr(e, "kind", None) == "unique_violation":` | Each engine words its errors differently; the db tool classifies them into a closed vocabulary so the branch survives a tool swap |
 | `bus.publish("x.y", {"id": 1})` (raw dict) | Define `XyPayload(BaseModel)` and publish `XyPayload(id=1).model_dump()` | The publisher owns the event contract; raw dicts are flagged `UNTYPED_PAYLOAD` by `/system/lint` |
 | `await asyncio.sleep(0.1)` in a test, then asserting async delivery | `await wait_until(lambda: <condition>)` from `tests/helpers/async_wait.py` | A fixed sleep guesses a duration and flakes under CI CPU contention; polling passes as soon as delivery lands |
 

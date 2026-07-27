@@ -20,6 +20,22 @@ PUBLIC CONTRACT (what plugins use):
 
     ok = await db.health_check()
 
+ERROR CONTRACT (part of the gold standard — any db tool MUST match it):
+─────────────────────────────────────────────
+    Every failure raises DatabaseError carrying `kind` from a CLOSED
+    vocabulary (see ERROR_KINDS), plus best-effort `table` / `columns`:
+
+        try:
+            await db.execute("INSERT INTO users (email) VALUES ($1)", [email])
+        except Exception as e:
+            if getattr(e, "kind", None) == "unique_violation":
+                ...
+
+    Plugins branch on `kind`, NEVER on str(e): the message text is
+    engine-specific ('duplicate key value violates unique constraint
+    "users_email_key"' here, "UNIQUE constraint failed: users.email" on
+    SQLite), so text matching breaks silently on the swap.
+
 PLACEHOLDERS: PostgreSQL uses $1, $2, $3... (NOT '?' like SQLite).
 """
 
@@ -34,9 +50,62 @@ from core.base_tool import BaseTool, ToolUnavailableError
 # EXCEPTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Error-kind vocabulary — CLOSED, shared VERBATIM with the SQLite tool.
+# Same idea as the describe_schema type vocabulary, applied to failures: each
+# engine reports constraint violations its own way (PostgreSQL: SQLSTATE,
+# SQLite: message text), so the tool classifies and every db tool exposes the
+# SAME set of values. Adding a value here means adding it to EVERY db tool.
+ERROR_KINDS = (
+    "unique_violation",
+    "foreign_key_violation",
+    "not_null_violation",
+    "check_violation",
+    "unknown",
+)
+
+
 class DatabaseError(Exception):
-    """Generic database error. Wraps asyncpg exceptions."""
-    pass
+    """Generic database error. Wraps asyncpg exceptions.
+
+    Carries the engine-independent classification of the failure:
+
+        kind:    one of ERROR_KINDS — ALWAYS present.
+        table:   table the violation happened on, or None.
+        columns: tuple of column names involved, possibly empty.
+
+    Plugins branch on `kind`, NEVER on str(e) — the message text is
+    engine-specific and changes under your feet on an engine swap:
+
+        except Exception as e:
+            if getattr(e, "kind", None) == "unique_violation":
+                return {"success": False, "error": "Email already in use"}
+
+    Duck-typed on purpose: a plugin CANNOT import this class (importing from
+    tools/ is an architecture violation — see the architecture linter), so the
+    contract is "an exception carrying these attributes", which any db tool
+    satisfies without plugins knowing which engine is active.
+
+    `table`/`columns` are populated ONLY where EVERY supported engine can
+    supply them: unique and NOT NULL violations. PostgreSQL DOES report the
+    target of a FOREIGN KEY / CHECK failure and SQLite reports none at all
+    ("FOREIGN KEY constraint failed", full stop), so this tool deliberately
+    withholds it: a field that exists here and silently vanishes after a swap
+    is worse than one that is always empty. The full engine detail stays in
+    str(e) for logs.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "unknown",
+        table: str | None = None,
+        columns: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.table = table
+        self.columns = tuple(columns)
 
 
 class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
@@ -46,6 +115,57 @@ class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
     (infrastructure failure), unlike plain DatabaseError (likely business error).
     """
     pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ERROR CLASSIFICATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# PostgreSQL reports every integrity violation with a SQLSTATE code, which
+# asyncpg exposes as `exc.sqlstate` — stable, locale-independent, and NOT the
+# message text. Class 23 = integrity constraint violation.
+#
+
+_SQLSTATE_KINDS = {
+    "23505": "unique_violation",
+    "23503": "foreign_key_violation",
+    "23502": "not_null_violation",
+    "23514": "check_violation",
+}
+
+# Unique violations name the constraint, not the columns; the columns are in
+# DETAIL: 'Key (email)=(ana@mail.com) already exists.'
+_KEY_COLUMNS_RE = re.compile(r"Key \((?P<columns>[^)]*)\)")
+
+
+def _classify_error(exc: Exception) -> dict:
+    """Maps an asyncpg exception to the shared error contract.
+
+    Returns the kwargs for DatabaseError. Anything outside the closed
+    vocabulary maps to "unknown" — the contract never guesses.
+    """
+    kind = _SQLSTATE_KINDS.get(getattr(exc, "sqlstate", None), "unknown")
+
+    if kind == "unique_violation":
+        columns: tuple[str, ...] = ()
+        match = _KEY_COLUMNS_RE.search(getattr(exc, "detail", None) or "")
+        if match:
+            columns = tuple(
+                c.strip().strip('"') for c in match.group("columns").split(",") if c.strip()
+            )
+        return {"kind": kind, "table": getattr(exc, "table_name", None), "columns": columns}
+
+    if kind == "not_null_violation":
+        column = getattr(exc, "column_name", None)
+        return {
+            "kind": kind,
+            "table": getattr(exc, "table_name", None),
+            "columns": (column,) if column else (),
+        }
+
+    # foreign_key_violation / check_violation / unknown: kind only — SQLite
+    # cannot report a target for these, so neither do we (see DatabaseError).
+    return {"kind": kind}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -115,7 +235,7 @@ class Transaction:
             rows = await self._conn.fetch(sql, *params)
             return [dict(row) for row in rows]
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Transaction query failed: {e}") from e
+            raise DatabaseError(f"Transaction query failed: {e}", **_classify_error(e)) from e
 
     async def query_one(self, sql: str, params: list | None = None) -> dict | None:
         """SELECT a single record within the transaction. Returns dict or None."""
@@ -124,7 +244,7 @@ class Transaction:
             row = await self._conn.fetchrow(sql, *params)
             return dict(row) if row is not None else None
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Transaction query_one failed: {e}") from e
+            raise DatabaseError(f"Transaction query_one failed: {e}", **_classify_error(e)) from e
 
     async def execute(self, sql: str, params: list | None = None) -> int | None:
         """
@@ -146,7 +266,7 @@ class Transaction:
                 result = await self._conn.execute(sql, *params)
                 return _parse_affected_rows(result)
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Transaction execute failed: {e}") from e
+            raise DatabaseError(f"Transaction execute failed: {e}", **_classify_error(e)) from e
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -397,7 +517,7 @@ class PostgresqlTool(BaseTool):
                         [domain, filename],
                     )
                 except Exception as e:
-                    raise DatabaseError(f"Migration failed for {key}: {e}") from e
+                    raise DatabaseError(f"Migration failed for {key}: {e}", **_classify_error(e)) from e
 
             print(f"  [Migration] ✅ Applied {key}")
 
@@ -437,7 +557,7 @@ class PostgresqlTool(BaseTool):
                 rows = await conn.fetch(sql, *params)
                 return [dict(row) for row in rows]
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Query failed: {e}") from e
+            raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: query_one() ──────────────────────────
     #
@@ -463,7 +583,7 @@ class PostgresqlTool(BaseTool):
                 row = await conn.fetchrow(sql, *params)
                 return dict(row) if row is not None else None
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Query failed: {e}") from e
+            raise DatabaseError(f"Query failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: execute() ────────────────────────────
     #
@@ -504,7 +624,7 @@ class PostgresqlTool(BaseTool):
                     result = await conn.execute(sql, *params)
                     return _parse_affected_rows(result)
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Execute failed: {e}") from e
+            raise DatabaseError(f"Execute failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: execute_many() ───────────────────────
     #
@@ -530,7 +650,7 @@ class PostgresqlTool(BaseTool):
                 # asyncpg.executemany expects a list of tuples
                 await conn.executemany(sql, [tuple(p) for p in params_list])
         except asyncpg.PostgresError as e:
-            raise DatabaseError(f"Execute many failed: {e}") from e
+            raise DatabaseError(f"Execute many failed: {e}", **_classify_error(e)) from e
 
     # ─── PUBLIC API: transaction() ────────────────────────
     #
@@ -745,6 +865,16 @@ class PostgresqlTool(BaseTool):
               so the same migration yields the same description on any engine.
               Tables whose name starts with "_" are marked internal; engine-owned tables are excluded.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+          Every DatabaseError carries a CLASSIFIED, engine-independent contract:
+            - kind: one of unique_violation / foreign_key_violation /
+              not_null_violation / check_violation / unknown (CLOSED vocabulary —
+              the same values on any engine, so the swap keeps behavior).
+            - table / columns: the target of the violation, filled in only where
+              every engine can report it (unique and NOT NULL); FOREIGN KEY and
+              CHECK carry kind only.
+          Branch on the kind, NEVER on str(e) — the message text is engine-specific:
+            except Exception as e:
+                if getattr(e, "kind", None) == "unique_violation": ...
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot
           (topological sort). Migrations run VERBATIM (no dialect translation).
           Engine-specific SQL commits you to that engine; portable SQL

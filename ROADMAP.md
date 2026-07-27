@@ -112,13 +112,20 @@ it, by construction rather than by omission. This is the same species as
 invariants, invisible from inside any single plugin, and both solved the same
 way. This is the third one.
 
-**Mechanism** — inside `ArchitectureLinterPlugin` (no new plugin, same as 26/27),
-static AST scan of `domains/*/plugins/*_plugin.py` at boot, same timing as the
-table-ownership scan (no pre-mount hook needed: unlike routes, nothing here is
-registered at runtime). Collect every `pydantic.Field(...)` constraint per field
-name, group, and warn when the same name carries different constraints. Registry
-metadata `field_divergence_warnings`; surfaced in `GET /system/lint`; warn-only
-at boot, hard gate in CI (Issue 33). Zero core changes.
+**Mechanism** — `FieldDivergenceLinterPlugin` (own plugin: the linters were
+split one-rule-per-plugin, see Issue 15), static AST scan of
+`domains/*/plugins/*_plugin.py` at boot, same timing as the table-ownership
+scan (no pre-mount hook needed: unlike routes, nothing here is registered at
+runtime). Collect every `pydantic.Field(...)` constraint per field name, group,
+and warn when the same name carries different constraints. Registry metadata
+`field_divergence_warnings`; surfaced in `GET /system/lint`; warn-only at boot,
+hard gate in CI (Issue 33). Zero core changes.
+
+**Status: scope 2 shipped** (request/response fields compared within a domain —
+`tests/test_field_divergence_linter.py`). Scopes 1 (event payload keys compared
+fleet-wide, pairs with the event-contract linter) and 3 (opt-in list of
+system-wide names) remain open — each needs its own comparison rule, and
+shipping them as one would blur exactly the scoping distinction above.
 
 **The design constraint that decides whether it is useful or noise:** a shared
 NAME is not a shared CONCEPT — `name` in users and `name` in products differ
@@ -332,7 +339,7 @@ with no model field is normal and expected — that is `password_hash`, and
 `internal:` records that it is deliberate. So the linter can never flag
 `password` vs `password_hash` as drift; the only thing it catches is the rare
 real error, a model field naming a column that was renamed or dropped. Rides in
-`ArchitectureLinterPlugin` with Issues 26/27/37.
+the devtools linters with Issues 26/27/37.
 
 **Frequency check (why the hand-written model is cheap).** Domain vocabulary
 changes are additive and decelerating: core entities settle in weeks, and
@@ -684,11 +691,19 @@ window — promote to a tool only if a real use case demands it.
 publish site's payload keys vs every subscriber's required keys, exposed at
 `GET /system/lint`. Extended by Issue 29 (typed payloads).
 
-**Issue 15 — ✅ ArchitectureLinterPlugin (Anti-Drift + Isolation)**
+**Issue 15 — ✅ Architecture linters (Anti-Drift + Isolation)**
 - **Domain Isolation Enforcer**: no cross-domain imports, verified at boot.
 - **Anti-Drift Guard**: every public Tool method must be documented in
   `get_interface_description()`; discrepancies mark the Tool with `WARNING`.
-  Tests: `tests/test_arch_linter_drift.py`.
+- **Split one-rule-per-plugin (2026-07-27 session)**: shipped as a single
+  `ArchitectureLinterPlugin` accumulating four checks (15, 26, 27) until
+  Issue 37 would have made it five. Now `domain_isolation_`, `tool_doc_drift_`,
+  `table_ownership_`, `route_collision_` and `field_divergence_linter_plugin.py`
+  in devtools — same registry keys, so `GET /system/lint` is unchanged. Each
+  declares only the tools it uses (only the route linter takes `http`) and one
+  failing check no longer takes the other four down with it. Shared file
+  enumeration in `domains/devtools/lint/plugin_sources.py`.
+  Tests: one file per linter, `tests/test_*_linter.py`.
 
 **Issue 29 — ✅ Typed event payloads, schema catalog & plan format v2 (2026-07-11 session)**
 - **Convention**: the publisher owns the event contract — `XxxPayload(BaseModel)`
@@ -707,7 +722,8 @@ publish site's payload keys vs every subscriber's required keys, exposed at
   `.agent/workflows/`: feature-plan, new-domain, multi-domain-plan, new-tool.
 
 **Issue 26 — ✅ Route-collision linter (2026-07-17 session)**
-Implemented inside `ArchitectureLinterPlugin` (no new plugin). Timing was the
+Implemented inside the architecture linter (its own plugin since the
+2026-07-27 split, see Issue 15). Timing was the
 real problem: plugins' `on_boot()` run concurrently (`asyncio.gather`), so a
 plugin-side check would race other plugins' `add_endpoint()` calls. Solution:
 a **generic** http-tool capability, `register_pre_mount_hook(hook)` — the tool
@@ -719,7 +735,8 @@ listing both owners; registry metadata `route_collisions`; surfaced in
 `GET /system/lint`. Zero core changes. Runtime backstop for plan rule 1.
 
 **Issue 27 — ✅ Table-ownership linter (2026-07-17 session)**
-Also in `ArchitectureLinterPlugin`: scans `domains/*/migrations/*.sql` at
+Also an architecture linter (its own plugin since the 2026-07-27 split, see
+Issue 15): scans `domains/*/migrations/*.sql` at
 boot, extracts `CREATE TABLE [IF NOT EXISTS]` names, warns when one table is
 declared by more than one domain (the second `IF NOT EXISTS` silently no-ops
 against the wrong schema). Registry metadata `table_ownership_warnings`;

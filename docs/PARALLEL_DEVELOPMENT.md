@@ -457,12 +457,12 @@ Boot the system with all features merged. The linters verify that reality
 matches the rules — advisory by design (they warn, never block; a hard gate
 belongs in CI via tests):
 
-- **ArchitectureLinterPlugin** — domain isolation, no hardcoded tool imports,
-  no documentation drift.
+- **Architecture linters** (devtools, one rule per plugin) — domain isolation
+  and no hardcoded tool imports, tool documentation drift, table ownership,
+  route collisions, and field-constraint divergence between sibling plugins.
 - **EventContractLinterPlugin** — every key a consumer requires is present in
-  every statically known publish site (`GET /system/lint`).
-- *(Roadmap: route-collision linter and table-ownership linter — see
-  `ROADMAP.md` Issues 26–27 — complete the namespace coverage.)*
+  every statically known publish site.
+- All of them report to `GET /system/lint`.
 
 Then run the whole suite: every feature brought its tests, so the integration
 proof is `uv run -m pytest`.

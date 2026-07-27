@@ -49,6 +49,16 @@ same API, so plugins are untouched at every stage.
    - **Plugin queries**: every SQL string in `domains/*/plugins/*_plugin.py`
      (they only live there — grep for `db.query`, `db.query_one`,
      `db.execute`, `db.execute_many`, `tx.`).
+   - **Error handling**: every `except` around a `db.`/`tx.` call. It is not
+     SQL, so the greps above miss it, and it changes with the engine just the
+     same: each engine words its constraint violations differently, so a
+     branch that reads the message text (`if "UNIQUE" in str(e)`) silently
+     stops matching after the swap and a handled business case degrades into
+     a generic failure — with every test still green if none covers that path.
+     The db tool classifies the failure for exactly this reason: branch on
+     `kind`, a closed vocabulary with the same values on every engine (see the
+     active tool's `get_interface_description()`), never on `str(e)`. Grep
+     plugins for `str(e)`, `str(exc)` and `.args`: every hit is a swap hazard.
 
    Rewrite anything the target engine does not accept identically. This
    review is the deliberate trade: no ORM abstraction layer to maintain or
@@ -78,9 +88,13 @@ same API, so plugins are untouched at every stage.
       Sequence: `tests/tools/test_db_parity.py` first (proves the tool
       wrapper honors the db contract — it says nothing about plugins), then
       the plugin suite against the target engine, then boot and exercise the
-      endpoints. Note: a behavior no test asserts (e.g. `LIKE` case
-      sensitivity in a search) can still differ silently — that is what the
-      agent sweep in step 2 exists to catch.
+      endpoints. Run the parity suite with BOTH engines reachable: its
+      cross-engine sections (`describe_schema` and the error contract)
+      compare the two side by side and skip silently when the target engine
+      is down — a green run with everything skipped proves nothing. Note: a
+      behavior no test asserts (e.g. `LIKE` case sensitivity in a search) can
+      still differ silently — that is what the agent sweep in step 2 exists
+      to catch.
 4. **Run.** Migrations in `domains/*/migrations/*.sql` are applied on boot
    exactly as with SQLite (same topological sort, same `$1, $2` placeholders).
 

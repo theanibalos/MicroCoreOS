@@ -22,6 +22,7 @@ class SystemLintData(BaseModel):
     event_contract_violations: list[LintFinding] = []
     route_collisions: list[str] = []
     table_ownership_warnings: list[str] = []
+    field_divergence_warnings: list[str] = []
 
 
 class SystemLintResponse(BaseModel):
@@ -338,7 +339,7 @@ class EventContractLinterPlugin(BasePlugin):
     """
     Verifies event bus payload contracts at boot: every key a subscriber's
     handler requires must be present in every statically known publish site
-    for that event. Companion to ArchitectureLinterPlugin.
+    for that event. Companion to the devtools architecture linters.
 
     Also exposes GET /system/lint aggregating all linter findings
     (arch_violations, drift_warnings, event_contract_violations).
@@ -411,6 +412,7 @@ class EventContractLinterPlugin(BasePlugin):
                 event_contract_violations=meta.get("event_contract_violations", []),
                 route_collisions=meta.get("route_collisions", []),
                 table_ownership_warnings=meta.get("table_ownership_warnings", []),
+                field_divergence_warnings=meta.get("field_divergence_warnings", []),
             )
             return {"success": True, "data": payload.model_dump()}
         except Exception as e:

@@ -17,7 +17,7 @@ SEAM (deliberately narrow):
 ────────────────────────────────────────────────────────────────────────────
 The TOOL-FAULT axes touch nothing outside this file: they are built on the
 ALREADY-SANCTIONED meta-plugin introspection precedent (see
-ArchitectureLinterPlugin's container.get_raw_tools() for tool-drift
+ToolDocDriftLinterPlugin's container.get_raw_tools() for tool-drift
 scanning, ToolHealthPlugin's container.get() for proactive health checks):
 this plugin takes `container` and monkey-patches RAW tool methods (bypassing
 the ToolProxy at wrap time, but every call still traverses the ToolProxy at
@@ -296,7 +296,7 @@ class ChaosControlPlugin(BasePlugin):
     full design and the one documented deviation from the ROADMAP's letter.
     """
 
-    # Same exclusion set ArchitectureLinterPlugin uses for its tool-drift
+    # Same exclusion set ToolDocDriftLinterPlugin uses for its tool-drift
     # scan — these are lifecycle/meta methods, not business capabilities,
     # and must never be faulted.
     _IGNORED_TOOL_METHODS = {

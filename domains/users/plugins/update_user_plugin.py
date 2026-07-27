@@ -81,6 +81,8 @@ class UpdateUserPlugin(BasePlugin):
             return {"success": True}
         except Exception as e:
             self.logger.error(f"Failed to update user: {e}")
-            if "UNIQUE" in str(e):
+            # See create_user_plugin: branch on the classified kind, never on
+            # the engine's message text.
+            if getattr(e, "kind", None) == "unique_violation":
                 return {"success": False, "error": "Email already in use"}
             return {"success": False, "error": "Could not update user"}

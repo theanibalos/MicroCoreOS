@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domains.users.plugins.get_users_plugin import ListUsersPlugin
-from tools.sqlite.sqlite_tool import SqliteTool
+from tests.helpers.active_db import active_db
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
 
@@ -20,13 +20,10 @@ def anyio_backend():
 
 @pytest.fixture
 async def db(monkeypatch):
-    monkeypatch.setenv("SQLITE_DB_PATH", ":memory:")
-    tool = SqliteTool()
-    await tool.setup()
-    for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        await tool.execute(migration.read_text())
-    yield tool
-    await tool.shutdown()
+    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
+    # exercises the new engine (see tests/helpers/active_db.py).
+    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
+        yield tool
 
 
 def make_plugin(db):

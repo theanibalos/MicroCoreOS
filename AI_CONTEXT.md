@@ -284,6 +284,16 @@ Async SQLite Persistence Tool (sqlite):
               Tables whose name starts with "_" are marked internal;
               engine-owned tables are excluded.
         - EXCEPTIONS: Raises DatabaseError or DatabaseConnectionError on failure.
+          Every DatabaseError carries a CLASSIFIED, engine-independent contract:
+            - kind: one of unique_violation / foreign_key_violation /
+              not_null_violation / check_violation / unknown (CLOSED vocabulary —
+              the same values on any engine, so the swap keeps behavior).
+            - table / columns: the target of the violation, filled in only where
+              every engine can report it (unique and NOT NULL); FOREIGN KEY and
+              CHECK carry kind only.
+          Branch on the kind, NEVER on str(e) — the message text is engine-specific:
+            except Exception as e:
+                if getattr(e, "kind", None) == "unique_violation": ...
         - MIGRATIONS: SQL files in domains/*/migrations/*.sql are auto-applied on boot via
           topological sort (alphabetical by default). Migrations run VERBATIM (no
           dialect translation). Engine-specific SQL commits you to that engine;
@@ -334,14 +344,14 @@ Scheduler Tool (scheduler):
   - `GET /system/events/schemas`
     - **res**: EventSchemasData(schemas: dict)
   - `GET /system/lint`
-    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str])
+    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str])
   - `POST /system/plan/validate`
     - **req**: plan: Optional[dict], plan_yaml: Optional[str]
     - **res**: ValidatePlanData(valid: bool, errors: list[PlanViolation(rule: int, severity: str, where: str, detail: str)], warnings: list[PlanViolation(rule: int, severity: str, where: str, detail: str)])
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
-- **Plugins**: devtools.ArchitectureLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.PlanValidatorPlugin
+- **Plugins**: devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.PlanValidatorPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
 
 ### `ping`
 - **Tables**: none

@@ -1,7 +1,7 @@
 """Black-box tests for CreateUserPlugin.
 
-Real tools: SQLite :memory: with the users migrations, real AuthTool, real
-in-process event bus. Only the error-path test mocks `db`.
+Real tools: the ACTIVE db tool with the users migrations applied, real
+AuthTool, real in-process event bus. Only the error-path test mocks `db`.
 """
 import asyncio
 from pathlib import Path
@@ -12,7 +12,7 @@ import pytest
 from domains.users.plugins.create_user_plugin import CreateUserPlugin
 from tools.auth.auth_tool import AuthTool
 from tools.event_bus.event_bus_tool import EventBusTool
-from tools.sqlite.sqlite_tool import SqliteTool
+from tests.helpers.active_db import active_db
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
 SECRET = "test-secret-key-32chars-long-ok!"
@@ -27,13 +27,10 @@ def anyio_backend():
 
 @pytest.fixture
 async def db(monkeypatch):
-    monkeypatch.setenv("SQLITE_DB_PATH", ":memory:")
-    tool = SqliteTool()
-    await tool.setup()
-    for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        await tool.execute(migration.read_text())
-    yield tool
-    await tool.shutdown()
+    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
+    # exercises the new engine (see tests/helpers/active_db.py).
+    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
+        yield tool
 
 
 @pytest.fixture

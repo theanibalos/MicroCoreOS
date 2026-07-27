@@ -80,6 +80,10 @@ class CreateUserPlugin(BasePlugin):
             }
         except Exception as e:
             self.logger.error(f"Failed to create user: {e}")
-            if "UNIQUE" in str(e):
+            # The db tool CLASSIFIES the failure: `kind` means the same thing on
+            # every engine (see the tool's ERROR_KINDS). Matching str(e) instead
+            # would bind this branch to one engine's message text and fail
+            # silently on a swap.
+            if getattr(e, "kind", None) == "unique_violation":
                 return {"success": False, "error": "Email already in use"}
             return {"success": False, "error": "Could not create user"}

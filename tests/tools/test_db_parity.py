@@ -276,3 +276,151 @@ async def test_describe_schema_excludes_engine_owned_tables(both_engines):
         schema = await tool.describe_schema()
         assert not any(name.startswith("sqlite_") for name in schema)
         assert not any(name.startswith("pg_") for name in schema)
+
+
+# ─── ERROR CONTRACT ───────────────────────────────────────────────────────────
+#
+# describe_schema parity proves the swap keeps the SHAPE of the data. This
+# section proves it keeps the BEHAVIOR ON FAILURE, which is the other half a
+# plugin depends on: a plugin branches on `kind` to turn a constraint violation
+# into a business answer ("Email already in use"), so if two engines classify
+# the same violation differently, the swap changes observable behavior with
+# every test still green.
+#
+# Engines report violations in completely different ways (SQLite: message text,
+# PostgreSQL: SQLSTATE) — `kind` is the contract that makes them equivalent.
+
+_ERROR_DDL = """
+CREATE TABLE _parity_err (
+    id     INTEGER PRIMARY KEY,
+    email  TEXT NOT NULL UNIQUE,
+    age    INTEGER CHECK (age >= 0)
+)
+"""
+
+_ERROR_CHILD_DDL = """
+CREATE TABLE _parity_err_child (
+    id        INTEGER PRIMARY KEY,
+    parent_id INTEGER NOT NULL REFERENCES _parity_err(id)
+)
+"""
+
+
+async def _create_error_tables(tool):
+    await tool.execute("DROP TABLE IF EXISTS _parity_err_child")
+    await tool.execute("DROP TABLE IF EXISTS _parity_err")
+    await tool.execute(_ERROR_DDL)
+    await tool.execute(_ERROR_CHILD_DDL)
+    await tool.execute("INSERT INTO _parity_err (id, email, age) VALUES ($1, $2, $3)", [1, "a@b.c", 30])
+
+
+async def _drop_error_tables(tool):
+    await tool.execute("DROP TABLE IF EXISTS _parity_err_child")
+    await tool.execute("DROP TABLE IF EXISTS _parity_err")
+
+
+async def _violate(tool, what: str):
+    """Triggers one violation and returns the raised exception."""
+    statements = {
+        # id 1 already exists with this email
+        "unique": ("INSERT INTO _parity_err (id, email) VALUES ($1, $2)", [2, "a@b.c"]),
+        "not_null": ("INSERT INTO _parity_err (id, email) VALUES ($1, $2)", [3, None]),
+        "check": ("INSERT INTO _parity_err (id, email, age) VALUES ($1, $2, $3)", [4, "d@e.f", -1]),
+        "foreign_key": ("INSERT INTO _parity_err_child (id, parent_id) VALUES ($1, $2)", [1, 999]),
+    }
+    sql, params = statements[what]
+    with pytest.raises(Exception) as excinfo:
+        await tool.execute(sql, params)
+    return excinfo.value
+
+
+@pytest.fixture
+async def error_table(db):
+    await _create_error_tables(db)
+    yield db
+    await _drop_error_tables(db)
+
+
+@pytest.mark.parametrize(
+    "violation, expected_kind",
+    [
+        ("unique", "unique_violation"),
+        ("not_null", "not_null_violation"),
+        ("check", "check_violation"),
+        ("foreign_key", "foreign_key_violation"),
+    ],
+)
+async def test_violation_is_classified(error_table, violation, expected_kind):
+    """Each engine, on its own, must classify every integrity violation."""
+    error = await _violate(error_table, violation)
+    assert getattr(error, "kind", None) == expected_kind
+
+
+async def test_unclassified_failure_is_unknown_not_a_guess(error_table):
+    """A non-integrity failure must NOT be forced into a business kind."""
+    with pytest.raises(Exception) as excinfo:
+        await error_table.query("SELECT * FROM _table_that_does_not_exist")
+    assert getattr(excinfo.value, "kind", None) == "unknown"
+
+
+async def test_unique_violation_reports_table_and_columns(error_table):
+    error = await _violate(error_table, "unique")
+    assert error.table == "_parity_err"
+    assert error.columns == ("email",)
+
+
+async def test_not_null_violation_reports_table_and_columns(error_table):
+    error = await _violate(error_table, "not_null")
+    assert error.table == "_parity_err"
+    assert error.columns == ("email",)
+
+
+@pytest.mark.parametrize("violation", ["foreign_key", "check"])
+async def test_untargetable_violations_carry_kind_only(error_table, violation):
+    """SQLite reports no target for these, so NO engine may report one —
+    a field that exists on PostgreSQL and vanishes after the swap is worse
+    than one that is always empty (see the db tools' DatabaseError)."""
+    error = await _violate(error_table, violation)
+    assert error.table is None
+    assert error.columns == ()
+
+
+async def test_violation_inside_transaction_is_classified(error_table):
+    """tx.execute() must classify exactly like db.execute() — the plugin's
+    except block is the same one either way."""
+    with pytest.raises(Exception) as excinfo:
+        async with error_table.transaction() as tx:
+            await tx.execute("INSERT INTO _parity_err (id, email) VALUES ($1, $2)", [2, "a@b.c"])
+    assert getattr(excinfo.value, "kind", None) == "unique_violation"
+
+
+# ─── Error contract: CROSS-ENGINE equality ────────────────────────────────────
+#
+# Same reasoning as describe_schema above: proving each engine classifies on
+# its own is not enough — the two must produce the SAME classification for the
+# SAME violation, or a plugin's `if kind == "unique_violation"` starts meaning
+# something different after the swap.
+
+
+@pytest.fixture
+async def both_engines_errors(both_engines):
+    sqlite_tool, pg_tool = both_engines
+    for tool in (sqlite_tool, pg_tool):
+        await _create_error_tables(tool)
+    yield sqlite_tool, pg_tool
+    for tool in (sqlite_tool, pg_tool):
+        await _drop_error_tables(tool)
+
+
+@pytest.mark.parametrize("violation", ["unique", "not_null", "check", "foreign_key"])
+async def test_violation_classification_is_identical_across_engines(both_engines_errors, violation):
+    """The whole point: swapping the db tool must not change what a plugin sees."""
+    sqlite_tool, pg_tool = both_engines_errors
+
+    sqlite_error = await _violate(sqlite_tool, violation)
+    pg_error = await _violate(pg_tool, violation)
+
+    def contract(error):
+        return (error.kind, error.table, error.columns)
+
+    assert contract(sqlite_error) == contract(pg_error)

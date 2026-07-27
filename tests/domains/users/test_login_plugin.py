@@ -1,6 +1,6 @@
 """Black-box tests for LoginPlugin.
 
-Real tools: SQLite :memory: with the users migrations applied, real AuthTool
+Real tools: the ACTIVE db tool with the users migrations applied, real AuthTool
 (hashing + JWT), real in-memory StateTool (throttle window). Only the
 error-path test mocks `db` to force a failure.
 """
@@ -12,7 +12,7 @@ import pytest
 
 from domains.users.plugins.login_plugin import LoginPlugin
 from tools.auth.auth_tool import AuthTool
-from tools.sqlite.sqlite_tool import SqliteTool
+from tests.helpers.active_db import active_db
 from tools.state.state_tool import StateTool
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
@@ -28,13 +28,10 @@ def anyio_backend():
 
 @pytest.fixture
 async def db(monkeypatch):
-    monkeypatch.setenv("SQLITE_DB_PATH", ":memory:")
-    tool = SqliteTool()
-    await tool.setup()
-    for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        await tool.execute(migration.read_text())
-    yield tool
-    await tool.shutdown()
+    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
+    # exercises the new engine (see tests/helpers/active_db.py).
+    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
+        yield tool
 
 
 @pytest.fixture
