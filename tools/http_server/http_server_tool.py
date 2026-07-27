@@ -130,15 +130,12 @@ REPLACEMENT STANDARD (implement this to swap the backend):
 """
 
 import os
-import uuid
 import asyncio
 import inspect
 import uvicorn
-from typing import Optional, Any, Callable
-from pydantic import BaseModel
+from typing import Optional, Callable
 from fastapi.exceptions import RequestValidationError
 from core.base_tool import BaseTool
-from core.context import current_identity_var, current_event_id_var
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, File, UploadFile, Security
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -146,127 +143,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.concurrency import run_in_threadpool
 
-
-def _serialize(obj):
-    """Recursively convert Pydantic models to dicts so JSONResponse can serialize them."""
-    if isinstance(obj, BaseModel):
-        return _serialize(obj.model_dump())
-    if isinstance(obj, dict):
-        return {k: _serialize(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_serialize(i) for i in obj]
-    return obj
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# HTTP CONTEXT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-class HttpContext:
-    """
-    Response manipulation handle provided to every HTTP handler.
-    Passed as the second argument: async def execute(self, data: dict, context: HttpContext)
-
-    Use to override the status code, set cookies, or add custom headers.
-    All mutations are applied to the response before it is sent to the client.
-    """
-
-    def __init__(self) -> None:
-        self._status_code: int = 200
-        self._status_explicit: bool = False
-        self._cookies: list[dict] = []
-        self._headers: dict[str, str] = {}
-
-    def set_status(self, code: int) -> None:
-        """
-        Override the HTTP response status code.
-
-        Default: 200 if the handler returns {"success": True, ...}; 400 if
-        it returns {"success": False, ...} and set_status() was never called.
-        Call this to pick a more specific code (404, 409, 403...) for a
-        business error — it always wins over the success-based default.
-
-        Examples:
-            context.set_status(201)  # Created
-            context.set_status(404)  # Not Found
-            context.set_status(204)  # No Content
-        """
-        self._status_code = code
-        self._status_explicit = True
-
-    def set_cookie(
-        self,
-        key: str,
-        value: str,
-        max_age: int = 3600,
-        httponly: bool = True,
-        samesite: str = "lax",
-        secure: bool = True,
-        path: str = "/",
-    ) -> None:
-        """
-        Set a cookie on the HTTP response.
-        
-        Defaults:
-            httponly=True: Prevents JavaScript access (XSS protection).
-            samesite="lax": Prevents most CSRF attacks.
-            secure=True: Cookie only sent over HTTPS. Set to False for local HTTP development.
-        """
-        self._cookies.append({
-            "key": key,
-            "value": value,
-            "max_age": max_age,
-            "httponly": httponly,
-            "samesite": samesite,
-            "secure": secure,
-            "path": path,
-        })
-
-    def set_header(self, key: str, value: str) -> None:
-        """Add a custom header to the HTTP response."""
-        self._headers[key] = value
-
-    def redirect(self, url: str, status: int = 302) -> None:
-        """
-        Redirect the browser to the given URL.
-        The handler's return value is ignored when this is called.
-
-        Example:
-            context.redirect("http://localhost:5173/")
-            context.redirect("/dashboard", status=301)
-        """
-        self._redirect_url = url
-        self._status_code = status
-
-    def apply_to(self, response: Any) -> None:
-        """Apply all accumulated cookies and headers to the given response object."""
-        for key, value in self._headers.items():
-            response.headers[key] = value
-        for cookie in self._cookies:
-            response.set_cookie(**cookie)
-
-    def set_binary_response(self, content: bytes, media_type: str = "application/octet-stream") -> None:
-        """
-        Instruct the tool to return raw binary data instead of the default JSON envelope.
-        The handler's return value will be ignored.
-        """
-        self._binary_content = content
-        self._media_type = media_type
-
-    @property
-    def binary_content(self) -> tuple[bytes, str] | None:
-        content = getattr(self, "_binary_content", None)
-        if content is not None:
-            return content, getattr(self, "_media_type", "application/octet-stream")
-        return None
-
-    @property
-    def status_code(self) -> int:
-        return self._status_code
-
-    @property
-    def redirect_url(self) -> str | None:
-        return getattr(self, "_redirect_url", None)
+# HttpContext and the request-processing pipeline were split out into their
+# own modules (mechanical move, no behavior change). Re-exported here since
+# external code imports HttpContext from this module.
+from tools.http_server.context import HttpContext  # noqa: F401 — re-export
+from tools.http_server.pipeline import _process_request, _sse_response
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -535,10 +416,10 @@ class HttpServerTool(BaseTool):
                 request: Request,
                 _bearer_auth: Optional[HTTPAuthorizationCredentials] = Security(self._bearer_scheme),
             ):
-                return await self._sse_response(request, generator, auth_validator)
+                return await _sse_response(request, generator, auth_validator)
         else:
             async def sse_handler(request: Request):
-                return await self._sse_response(request, generator, auth_validator)
+                return await _sse_response(request, generator, auth_validator)
 
         clean_path = path.replace("/", "_")
         sse_handler.__name__ = f"sse{clean_path}"
@@ -552,48 +433,6 @@ class HttpServerTool(BaseTool):
             response_class=StreamingResponse,
             responses={200: {"content": {"text/event-stream": {}},
                              "description": "Server-Sent Events stream"}},
-        )
-
-    async def _sse_response(self, request: Request, generator: Callable, auth_validator: Optional[Callable]):
-        """Shared SSE request-handling body used by add_sse_endpoint's two wrapper variants."""
-        from fastapi.responses import StreamingResponse
-
-        data: dict = {}
-        data.update(request.query_params)
-        data.update(request.path_params)
-
-        if auth_validator:
-            token = self._extract_bearer_token(request)
-            if not token:
-                return JSONResponse(
-                    status_code=401,
-                    content={"success": False, "error": "Missing authorization token"},
-                )
-            if inspect.iscoroutinefunction(auth_validator):
-                payload = await auth_validator(token)
-            else:
-                payload = await run_in_threadpool(auth_validator, token)
-            if not payload:
-                return JSONResponse(
-                    status_code=401,
-                    content={"success": False, "error": "Invalid or expired token"},
-                )
-            data["_auth"] = payload
-
-        async def event_stream():
-            gen = generator(data)
-            try:
-                async for chunk in gen:
-                    if await request.is_disconnected():
-                        break
-                    yield chunk
-            finally:
-                await gen.aclose()
-
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     # ── Endpoint registration ────────────────────────────────────────────────────
@@ -644,18 +483,18 @@ class HttpServerTool(BaseTool):
         # __signature__ is overridden below to control what Swagger shows.
         if request_model and method == "GET":
             async def fastapi_wrapper(request: Request, params: request_model = Depends(), **kwargs):
-                return await self._process_request(request, params, handler, auth_validator)
+                return await _process_request(request, params, handler, auth_validator, self._paused_owners)
         elif has_files:
             # If we have files and a request model, we want the model fields to show up as Form fields.
             # We pass kwargs to _process_request which will contain both path params and Form params.
             async def fastapi_wrapper(request: Request, files: Optional[list[UploadFile]] = File(None), **kwargs):
-                return await self._process_request(request, kwargs, handler, auth_validator, files=files)
+                return await _process_request(request, kwargs, handler, auth_validator, self._paused_owners, files=files)
         elif request_model:
             async def fastapi_wrapper(request: Request, body: request_model = None, **kwargs):
-                return await self._process_request(request, body, handler, auth_validator)
+                return await _process_request(request, body, handler, auth_validator, self._paused_owners)
         else:
             async def fastapi_wrapper(request: Request, **kwargs):
-                return await self._process_request(request, None, handler, auth_validator)
+                return await _process_request(request, None, handler, auth_validator, self._paused_owners)
 
         # Override __signature__ to control OpenAPI documentation.
         # Always remove **kwargs; add explicit path params and Form params if present.
@@ -717,191 +556,3 @@ class HttpServerTool(BaseTool):
             response_model=response_model,
             operation_id=operation_id,
         )
-
-    # ── Request processing pipeline ──────────────────────────────────────────────
-
-    async def _process_request(
-        self,
-        request: Request,
-        body_data: Any,
-        handler: Callable,
-        auth_validator: Optional[Callable],
-        files: Optional[list] = None,
-    ) -> Any:
-        """
-        Core request processing pipeline. Executed for every incoming HTTP request.
-
-        Phases:
-            1. Data Assembly   — merge path params + query params + body into one flat dict
-            2. Context Seeding — set causality ContextVars (event_id, identity)
-            3. Authentication  — validate token if auth_validator is provided → inject into data["_auth"]
-            4. Dispatch        — call the plugin handler (async or sync)
-            5. Response        — serialize result as JSONResponse with the correct status code
-        """
-        # ── Phase 1: Data Assembly ─────────────────────────────────────────────
-        data: dict = {}
-        # 1. Query parameters always come from the request object
-        data.update(request.query_params)
-
-        # 2. Path parameters always included
-        data.update(request.path_params)
-
-        # 3. Body/Form data
-        # If body_data is provided (from FastAPI DI), it contains body/form fields
-        if body_data is not None:
-            if hasattr(body_data, "model_dump"):
-                data.update(body_data.model_dump())
-            elif hasattr(body_data, "dict"):
-                data.update(body_data.dict())
-            elif isinstance(body_data, dict):
-                data.update(body_data)
-        else:
-            # Fallback: manual extraction if no DI model was used
-            content_type = request.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                try:
-                    raw_json = await request.json()
-                    if isinstance(raw_json, dict):
-                        data.update(raw_json)
-                except Exception: pass
-            elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
-                try:
-                    form = await request.form()
-                    for key, value in form.items():
-                        if not hasattr(value, "filename"): # Only take non-field data
-                            data[key] = value
-                except Exception: pass
-
-        if files is not None:
-            data["_files"] = files
-
-        # ── Phase 2: Causality Context Seeding ────────────────────────────────
-        # Honor X-Request-ID from an upstream MicroCoreOS service if present,
-        # so the entire cross-service call chain shares the same root event ID.
-        # If absent (first hop or external client), generate a fresh UUID.
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        # Same identity scheme as the event bus: prefer the kernel-stamped
-        # "domain.ClassName" so emitters and subscribers share one format.
-        owner = getattr(handler, "__self__", None)
-        if owner is not None:
-            base = getattr(owner, "_identity", None) or owner.__class__.__name__
-            identity = f"{base}.{handler.__name__}"
-        else:
-            identity = getattr(handler, "__name__", "unknown")
-        id_token = current_event_id_var.set(request_id)
-        ident_token = current_identity_var.set(identity)
-        print(
-            f"[HttpServer] → {request.method} {request.url.path}"
-            f"  req={request_id[:8]}  identity={identity}"
-        )
-
-        try:
-            # Chaos/ops pause (Issue 34): the paused owner's endpoints answer
-            # 503 before auth or dispatch — simulates the service being down.
-            if any(identity == p or identity.startswith(p + ".")
-                   for p in self._paused_owners):
-                return JSONResponse(
-                    status_code=503,
-                    content={"success": False, "error": "Service temporarily unavailable (paused)"},
-                )
-
-            context = HttpContext()
-
-            # ── Phase 3: Authentication ────────────────────────────────────────
-            if auth_validator:
-                token = self._extract_bearer_token(request)
-                if not token:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"success": False, "error": "Missing authorization token"},
-                    )
-                if inspect.iscoroutinefunction(auth_validator):
-                    payload = await auth_validator(token)
-                else:
-                    payload = await run_in_threadpool(auth_validator, token)
-
-                if not payload:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"success": False, "error": "Invalid or expired token"},
-                    )
-                data["_auth"] = payload
-
-            # ── Phase 4: Handler Dispatch ──────────────────────────────────────
-            if inspect.iscoroutinefunction(handler):
-                result = await handler(data, context)
-            else:
-                result = await run_in_threadpool(handler, data, context)
-
-            status_code = context.status_code
-            if not context._status_explicit and isinstance(result, dict) and result.get("success") is False:
-                status_code = 400
-
-            print(
-                f"[HttpServer] ← {request.method} {request.url.path}"
-                f"  req={request_id[:8]}  status={status_code}"
-            )
-
-            # ── Phase 5: Response ──────────────────────────────────────────────
-            if context.redirect_url:
-                from fastapi.responses import RedirectResponse
-                redirect_response = RedirectResponse(
-                    url=context.redirect_url, status_code=context.status_code
-                )
-                for key, value in context._headers.items():
-                    redirect_response.headers[key] = value
-                for cookie in context._cookies:
-                    redirect_response.set_cookie(**cookie)
-                return redirect_response
-
-            binary = context.binary_content
-            if binary:
-                from fastapi.responses import Response
-                content, media_type = binary
-                response = Response(content=content, media_type=media_type, status_code=context.status_code)
-                context.apply_to(response)
-                return response
-
-            json_response = JSONResponse(status_code=status_code, content=_serialize(result))
-            context.apply_to(json_response)
-            return json_response
-
-        except Exception as e:
-            # Unhandled exception: log the real error server-side, return generic message to client.
-            print(f"[HttpServer] 💥 Unhandled exception in '{identity}': {e}")
-            return JSONResponse(
-                status_code=500,
-                content={"success": False, "error": "Internal server error"},
-            )
-        finally:
-            current_identity_var.reset(ident_token)
-            current_event_id_var.reset(id_token)
-
-    # ── Utilities ────────────────────────────────────────────────────────────────
-
-    def _extract_bearer_token(self, request: Request) -> Optional[str]:
-        """
-        Extracts the Bearer token from the request.
-        Priority: 
-          1. Authorization header (Bearer) -> Preferred for Apps/CLI, immune to CSRF.
-          2. access_token cookie -> Subject to CSRF, requires X-Requested-With guard.
-        """
-        # 1. Bearer Token (Highest security, default for non-browser clients)
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            return auth_header[7:]
-
-        # 2. Cookie Auth (Web clients)
-        token = request.cookies.get("access_token")
-        if token:
-            # CSRF Guard: If it's a mutation method (POST/PUT/DELETE) and we are 
-            # using cookies, we MUST verify the request was initiated by our own 
-            # JavaScript. An attacker-controlled form cannot add custom headers.
-            if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-                if not request.headers.get("X-Requested-With"):
-                    print(f"[HttpServer] 🛡️ CSRF block: Mutation {request.method} "
-                          f"via cookie missing X-Requested-With header.")
-                    return None
-            return token
-
-        return None

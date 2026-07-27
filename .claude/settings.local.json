@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "Bash(cp AI_CONTEXT.md /tmp/ai_context_antes.md)",
+      "Read(//tmp/**)",
+      "Bash(timeout 15 uv run main.py)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

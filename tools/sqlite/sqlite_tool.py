@@ -54,181 +54,32 @@ PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
 
 import os
 import re
-import uuid
 import asyncio
 import aiosqlite
-from contextvars import ContextVar
-from core.base_tool import BaseTool, ToolUnavailableError
+from core.base_tool import BaseTool
+
+from tools.sqlite.errors import DatabaseError, DatabaseConnectionError, _classify_error
+from tools.sqlite.transaction import Transaction, _normalize_sql, _normalize_sql_many, _write_lock_held_var
+from tools.sqlite.migrations import run_migrations
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CONTEXT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Tracks if the current task holds the SQLite write lock to allow reentrancy
-_write_lock_held_var: ContextVar[bool] = ContextVar("sqlite_write_lock_held", default=False)
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# EXCEPTIONS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Error-kind vocabulary — CLOSED, shared VERBATIM with the PostgreSQL tool.
-# Same idea as the describe_schema type vocabulary, applied to failures: each
-# engine reports constraint violations its own way (SQLite: message text,
-# PostgreSQL: SQLSTATE), so the tool classifies and every db tool exposes the
-# SAME set of values. Adding a value here means adding it to EVERY db tool.
-ERROR_KINDS = (
-    "unique_violation",
-    "foreign_key_violation",
-    "not_null_violation",
-    "check_violation",
-    "unknown",
-)
-
-
-class DatabaseError(Exception):
-    """Generic database error. Wraps aiosqlite exceptions.
-
-    Carries the engine-independent classification of the failure:
-
-        kind:    one of ERROR_KINDS — ALWAYS present.
-        table:   table the violation happened on, or None.
-        columns: tuple of column names involved, possibly empty.
-
-    Plugins branch on `kind`, NEVER on str(e) — the message text is
-    engine-specific and changes under your feet on an engine swap:
-
-        except Exception as e:
-            if getattr(e, "kind", None) == "unique_violation":
-                return {"success": False, "error": "Email already in use"}
-
-    Duck-typed on purpose: a plugin CANNOT import this class (importing from
-    tools/ is an architecture violation — see the architecture linter), so the
-    contract is "an exception carrying these attributes", which any db tool
-    satisfies without plugins knowing which engine is active.
-
-    `table`/`columns` are populated ONLY where EVERY supported engine can
-    supply them: unique and NOT NULL violations. SQLite reports no target
-    whatsoever for FOREIGN KEY / CHECK failures ("FOREIGN KEY constraint
-    failed", full stop), so those carry `kind` only on BOTH engines — better a
-    field that is always empty than one that exists on PostgreSQL and silently
-    vanishes after a swap. The raw engine message stays in str(e) for logs.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        kind: str = "unknown",
-        table: str | None = None,
-        columns: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__(message)
-        self.kind = kind
-        self.table = table
-        self.columns = tuple(columns)
-
-
-class DatabaseConnectionError(DatabaseError, ToolUnavailableError):
-    """Connection error to the SQLite file.
-
-    Inherits ToolUnavailableError so ToolProxy marks the tool DEAD immediately
-    (infrastructure failure), unlike plain DatabaseError (likely business error).
-    """
-    pass
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ERROR CLASSIFICATION
+# ERRORS, TRANSACTION, MIGRATIONS — split into sibling modules
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-# SQLite reports constraint failures ONLY as message text (no error codes
-# reachable through sqlite3/aiosqlite). The formats below are stable and
-# English regardless of locale:
+# tools/sqlite/errors.py       — DatabaseError, DatabaseConnectionError,
+#                                 ERROR_KINDS, error-message classification.
+# tools/sqlite/transaction.py  — Transaction, placeholder normalization
+#                                 (_normalize_sql, _normalize_sql_many), and
+#                                 the write-lock reentrancy ContextVar.
+# tools/sqlite/migrations.py   — run_migrations(tool), invoked from setup().
 #
-#   "UNIQUE constraint failed: users.email"       (multi-column: ", "-joined)
-#   "NOT NULL constraint failed: users.name"
-#   "FOREIGN KEY constraint failed"               (never carries a target)
-#   "CHECK constraint failed: age_positive"       (constraint name, not a column)
+# DatabaseError and _normalize_sql are re-exported above (imported into this
+# module's namespace) because external code imports them from
+# tools.sqlite.sqlite_tool, not from their new module — see tests/test_sqlite_tool.py
+# and tests/test_sqlite_concurrency.py.
 #
 
-_UNIQUE_RE = re.compile(r"UNIQUE constraint failed:\s*(?P<targets>[^\n]+)")
-_NOT_NULL_RE = re.compile(r"NOT NULL constraint failed:\s*(?P<targets>[^\n]+)")
-_FOREIGN_KEY_RE = re.compile(r"FOREIGN KEY constraint failed")
-_CHECK_RE = re.compile(r"CHECK constraint failed")
-
-
-def _parse_targets(raw: str) -> tuple[str | None, tuple[str, ...]]:
-    """'users.email, users.tenant' → ('users', ('email', 'tenant'))."""
-    table: str | None = None
-    columns: list[str] = []
-    for target in raw.split(","):
-        target = target.strip()
-        if not target:
-            continue
-        if "." in target:
-            target_table, _, column = target.rpartition(".")
-            table = table or target_table
-            columns.append(column)
-        else:
-            columns.append(target)
-    return table, tuple(columns)
-
-
-def _classify_error(exc: Exception) -> dict:
-    """Maps a sqlite3/aiosqlite exception to the shared error contract.
-
-    Returns the kwargs for DatabaseError. Unrecognized failures map to
-    "unknown" — the contract never guesses.
-    """
-    message = str(exc)
-
-    match = _UNIQUE_RE.search(message)
-    if match:
-        table, columns = _parse_targets(match.group("targets"))
-        return {"kind": "unique_violation", "table": table, "columns": columns}
-
-    match = _NOT_NULL_RE.search(message)
-    if match:
-        table, columns = _parse_targets(match.group("targets"))
-        return {"kind": "not_null_violation", "table": table, "columns": columns}
-
-    if _FOREIGN_KEY_RE.search(message):
-        return {"kind": "foreign_key_violation"}
-
-    if _CHECK_RE.search(message):
-        return {"kind": "check_violation"}
-
-    return {"kind": "unknown"}
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PLACEHOLDER NORMALIZATION
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-_PG_PLACEHOLDER = re.compile(r'\$(\d+)')
-
-def _normalize_sql(sql: str, params: list | None = None) -> tuple[str, list]:
-    """
-    Converts PostgreSQL placeholders ($1, $2...) to SQLite (?).
-    Expands params to match the positional placeholders.
-    """
-    params = params or []
-    matches = _PG_PLACEHOLDER.findall(sql)
-    if not matches:
-        return sql, params
-        
-    new_params = []
-    for m in matches:
-        idx = int(m) - 1
-        if 0 <= idx < len(params):
-            new_params.append(params[idx])
-        else:
-            new_params.append(None)
-            
-    sql = _PG_PLACEHOLDER.sub('?', sql)
-    return sql, new_params
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COLUMN TYPE NORMALIZATION (describe_schema contract)
@@ -261,140 +112,6 @@ def _normalize_column_type(raw_type: str) -> str:
         if any(bare.startswith(prefix) for prefix in prefixes):
             return category
     return "text"
-
-
-def _normalize_sql_many(sql: str, params_list: list[list]) -> tuple[str, list[list]]:
-    matches = _PG_PLACEHOLDER.findall(sql)
-    if not matches:
-        return sql, params_list
-        
-    sql = _PG_PLACEHOLDER.sub('?', sql)
-    new_params_list = []
-    for params in params_list:
-        new_params = []
-        for m in matches:
-            idx = int(m) - 1
-            if 0 <= idx < len(params):
-                new_params.append(params[idx])
-            else:
-                new_params.append(None)
-        new_params_list.append(new_params)
-        
-    return sql, new_params_list
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# TRANSACTION CONTEXT MANAGER
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-class Transaction:
-    """
-    Explicit transaction over the SQLite connection.
-
-    Usage:
-        async with db.transaction() as tx:
-            await tx.execute("INSERT INTO ...", [...])
-            await tx.execute("UPDATE ...", [...])
-            rows = await tx.query("SELECT ...", [...])
-        # Auto-COMMIT on block exit.
-        # Auto-ROLLBACK on any exception.
-
-    The context manager handles:
-    1. Opening a real SQLite transaction (SAVEPOINT).
-    2. RELEASE (commit) if everything succeeds.
-    3. ROLLBACK if an exception occurs.
-    """
-
-    def __init__(self, db: aiosqlite.Connection, lock: asyncio.Lock) -> None:
-        self._db: aiosqlite.Connection = db
-        self._lock: asyncio.Lock = lock
-        self._savepoint_name: str | None = None
-        self._acquired_lock: bool = False
-
-    async def __aenter__(self) -> "Transaction":
-        try:
-            # Check for reentrancy (nested transactions)
-            if not _write_lock_held_var.get():
-                await self._lock.acquire()
-                self._acquired_lock = True
-                _write_lock_held_var.set(True)
-
-            # Use SAVEPOINTs to support nested transactions
-            self._savepoint_name = f"sp_{uuid.uuid4().hex}"
-            await self._db.execute(f"SAVEPOINT {self._savepoint_name}")
-        except Exception as e:
-            if self._acquired_lock:
-                _write_lock_held_var.set(False)
-                self._lock.release()
-            raise DatabaseConnectionError(f"Failed to start transaction: {e}") from e
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        try:
-            if exc_type is None:
-                # No errors → RELEASE SAVEPOINT (equivalent to COMMIT)
-                await self._db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
-            else:
-                # Errors → ROLLBACK TO SAVEPOINT
-                await self._db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
-        except Exception:
-            pass
-        finally:
-            # Only the transaction that acquired the lock should release it
-            if self._acquired_lock:
-                _write_lock_held_var.set(False)
-                if self._lock.locked():
-                    self._lock.release()
-        return False
-
-    # ─── Transaction API ──────────────────────────────────
-
-    async def query(self, sql: str, params: list | None = None) -> list[dict]:
-        """SELECT within the transaction. Returns list[dict]."""
-        sql, params = _normalize_sql(sql, params)
-        try:
-            cursor = await self._db.execute(sql, params)
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            rows = await cursor.fetchall()
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            raise DatabaseError(f"Transaction query failed: {e}", **_classify_error(e)) from e
-
-    async def query_one(self, sql: str, params: list | None = None) -> dict | None:
-        """SELECT a single record within the transaction. Returns dict or None."""
-        sql, params = _normalize_sql(sql, params)
-        try:
-            cursor = await self._db.execute(sql, params)
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            row = await cursor.fetchone()
-            return dict(zip(columns, row)) if row is not None else None
-        except Exception as e:
-            raise DatabaseError(f"Transaction query_one failed: {e}", **_classify_error(e)) from e
-
-    async def execute(self, sql: str, params: list | None = None) -> int | None:
-        """
-        INSERT/UPDATE/DELETE within the transaction.
-
-        - If the SQL contains RETURNING, returns the first column value
-          of the first row (typically the generated ID).
-        - If INSERT without RETURNING, returns lastrowid.
-        - Otherwise, returns the number of affected rows.
-        """
-        sql, params = _normalize_sql(sql, params)
-        try:
-            if "RETURNING" in sql.upper():
-                cursor = await self._db.execute(sql, params)
-                row = await cursor.fetchone()
-                if row is not None:
-                    return row[0]
-                return None
-            else:
-                cursor = await self._db.execute(sql, params)
-                if sql.strip().upper().startswith("INSERT"):
-                    return cursor.lastrowid
-                return cursor.rowcount
-        except Exception as e:
-            raise DatabaseError(f"Transaction execute failed: {e}", **_classify_error(e)) from e
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -471,125 +188,13 @@ class SqliteTool(BaseTool):
 
     # ─── MIGRATIONS: run from setup(), NOT from on_boot_complete() ──
     #
-    # Responsibility: execute pending SQL migrations.
-    #
-    # WHY setup(): the Kernel awaits EVERY tool's setup() together
-    # (asyncio.gather) before plugins boot and before any on_boot_complete
-    # runs. Migrating here means anything that reads the schema afterwards —
-    # a plugin in on_boot(), the manifest generator in on_boot_complete() —
-    # is guaranteed to see the migrated database.
-    # In on_boot_complete the order BETWEEN tools is os.walk order, i.e. a
-    # coin flip: a reader could run before the migrator and silently observe
-    # the previous schema. Not a hazard to manage — one to remove.
-    #
-    # Migrations are located in: domains/*/migrations/*.sql
-    # Applied in topological order (`-- depends:`), each within its own
-    # transaction. If a migration fails, that migration is rolled back and
-    # execution stops (raise) to prevent an inconsistent state. Raising from
-    # setup() registers the tool as FAIL in the registry — a broken migration
-    # is now visible in /system/status instead of a printed line.
+    # The algorithm and the WHY-setup()/topological-order/per-migration-
+    # transaction rationale live in tools/sqlite/migrations.py::run_migrations —
+    # moved there verbatim, this is just the call site.
     #
 
     async def _run_migrations(self) -> None:
-        # Issue 20: in production, replicas must NOT race to migrate at boot.
-        # Migrations run as a pipeline step instead:
-        #   DB_AUTO_MIGRATE=true uv run main.py --boot-tool db
-        if os.getenv("DB_AUTO_MIGRATE", "true").strip().lower() != "true":
-            print("[System] SqliteTool: DB_AUTO_MIGRATE=false — skipping migrations (pipeline runs `DB_AUTO_MIGRATE=true uv run main.py --boot-tool db`).")
-            return
-        print("[System] SqliteTool: Checking for pending migrations...")
-        domains_dir = os.path.abspath("domains")
-        if not os.path.exists(domains_dir):
-            return
-
-        # ── 1. Discover ALL migration files across all domains ──────────
-        migrations = {}  # key: "domain/filename" → value: {"path": ..., "depends": [...]}
-        for domain in sorted(os.listdir(domains_dir)):
-            migrations_dir = os.path.join(domains_dir, domain, "migrations")
-            if not os.path.isdir(migrations_dir):
-                continue
-
-            for filename in sorted(f for f in os.listdir(migrations_dir) if f.endswith(".sql")):
-                key = f"{domain}/{filename}"
-                filepath = os.path.join(migrations_dir, filename)
-
-                # Parse "-- depends: domain/filename" from first lines
-                depends = []
-                with open(filepath, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.lower().startswith("-- depends:"):
-                            dep = line.split(":", 1)[1].strip()
-                            # Allow "-- depends: users/001_create_users_table" (with or without .sql)
-                            if not dep.endswith(".sql"):
-                                dep += ".sql"
-                            depends.append(dep)
-                        elif line.startswith("--"):
-                            continue  # skip other comments
-                        else:
-                            break  # stop parsing after first non-comment line
-
-                migrations[key] = {"path": filepath, "depends": depends, "domain": domain, "filename": filename}
-
-        # ── 2. Topological sort using graphlib ──────────────────────────
-        from graphlib import TopologicalSorter
-
-        graph = {}
-        for key, info in migrations.items():
-            graph[key] = set(info["depends"])
-
-        try:
-            sorter = TopologicalSorter(graph)
-            ordered_keys = list(sorter.static_order())
-        except Exception as e:
-            print(f"  [Migration] ⚠️  Circular dependency detected: {e}")
-            # Fallback to alphabetical
-            ordered_keys = sorted(migrations.keys())
-
-        # ── 3. Apply in topological order ───────────────────────────────
-        for key in ordered_keys:
-            if key not in migrations:
-                continue  # dependency references a migration that doesn't exist (yet)
-
-            info = migrations[key]
-            domain = info["domain"]
-            filename = info["filename"]
-
-            # Check if already applied
-            already_applied = await self.query_one(
-                "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
-                [domain, filename],
-            )
-            if already_applied:
-                continue
-
-            print(f"  [Migration] Applying {key}...")
-
-            with open(info["path"], "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
-
-            # Each migration in its own transaction
-            try:
-                async with self.transaction():
-                    # Manually split and execute to ensure atomicity via our Transaction CM
-                    # This handles triggers if we are careful, but for now we split by ';'
-                    # which is what the user originally had but now inside our safe TX.
-                    statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-                    for statement in statements:
-                        await self._db.execute(statement)
-                    
-                    # Register successful migration
-                    await self._db.execute(
-                        "INSERT INTO _migrations_history (domain, filename) VALUES (?, ?)",
-                        [domain, filename],
-                    )
-                    # transaction __aexit__ will COMMIT
-            except Exception as e:
-                # transaction __aexit__ will ROLLBACK
-                raise DatabaseError(f"Migration failed for {key}: {e}", **_classify_error(e)) from e
-
-            print(f"  [Migration] ✅ Applied {key}")
+        await run_migrations(self)
 
     # ─── LIFECYCLE: shutdown() ────────────────────────────
     #

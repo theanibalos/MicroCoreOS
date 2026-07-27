@@ -1,4 +1,4 @@
-"""Where every devtools linter reads plugin sources from.
+"""Where every devtools linter reads sources from.
 
 Each linter reasons about a different rule, but they all need the same two
 facts first: which files are plugins, and which domain owns each one. That
@@ -30,3 +30,22 @@ def iter_plugin_files() -> Iterator[tuple[str, str]]:
         for filename in sorted(os.listdir(plugins_dir)):
             if filename.endswith(".py"):
                 yield domain, os.path.join(plugins_dir, filename)
+
+
+def iter_source_files(*roots: str) -> Iterator[str]:
+    """Yields every .py file under each root, sorted, __init__.py excluded.
+
+    Wider than iter_plugin_files(): a rule about WHERE a class may live has to
+    look at files the Kernel does not read, which is precisely where a
+    misplaced one hides. Roots that do not exist are skipped, so callers can
+    pass optional trees (extras/) without branching.
+    """
+    for root in roots:
+        abs_root = os.path.abspath(root)
+        if not os.path.isdir(abs_root):
+            continue
+        for current, dirs, files in os.walk(abs_root):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            for filename in sorted(files):
+                if filename.endswith(".py") and filename != "__init__.py":
+                    yield os.path.join(current, filename)

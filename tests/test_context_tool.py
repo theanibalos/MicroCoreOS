@@ -1,9 +1,8 @@
 import ast
-from tools.context.context_tool import ContextTool
+from tools.context import scanners
 
 
 def test_extract_ast_models_simple_and_nested():
-    tool = ContextTool()
     code = """
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -24,7 +23,7 @@ class CreateUserResponse(BaseModel):
     error: Optional[str] = None
 """
     tree = ast.parse(code)
-    models = tool._extract_ast_models(tree)
+    models = scanners._extract_ast_models(tree)
 
     assert "CreateUserRequest" in models
     assert models["CreateUserRequest"] == "name: str, email: EmailStr, password: str"
@@ -34,8 +33,7 @@ class CreateUserResponse(BaseModel):
 
 
 def test_get_domain_endpoints_users():
-    tool = ContextTool()
-    endpoints = tool._get_domain_endpoints("users")
+    endpoints = scanners._get_domain_endpoints("users")
 
     # Verify POST /users includes request and response schema fields
     post_users = [e for e in endpoints if e.startswith("POST /users")]

@@ -1,5 +1,5 @@
 import os
-import importlib.util
+import importlib
 import inspect
 import asyncio
 from core.container import Container
@@ -29,31 +29,54 @@ class Kernel:
             return await res
         return res
 
-    def _load_modules_from_dir(self, directory, base_class):
-        """Discovers and instantiates modules from a directory."""
+    def _load_modules_from_dir(self, directory, base_class, suffix):
+        """Discovers and instantiates modules from a directory.
+
+        Modules are loaded by their real dotted name via import_module, NOT by
+        file path. This matters: path loading builds a private module object, so
+        a file the Kernel loaded AND someone imported normally exists twice, with
+        two distinct copies of every class it defines — `isinstance` between them
+        is False. Importing by name shares one object through sys.modules, so the
+        class a plugin imports is the class the Kernel discovered.
+
+        Only files ending in `suffix` are imported — the repo naming convention
+        ("_tool.py", "_plugin.py"). Discovery is a side effect of import, so
+        importing a file that CANNOT hold a tool is not free: an optional driver
+        whose broker library is not installed (redis, aiokafka) would raise at
+        import and report a boot error for a transport nobody selected. Helper
+        modules split out of a big tool are imported by the tool itself, not here.
+        The cost is that a misnamed file is invisible — the devtools linter
+        catches that in CI, where a silent miss is cheap to find.
+        """
         found_classes = []
-        if not os.path.exists(directory): 
+        if not os.path.exists(directory):
             return found_classes
 
         abs_dir = os.path.abspath(directory)
+        # Dotted prefix of the scanned dir ("tools", "domains"). Import by name
+        # needs the dir reachable from the interpreter's import roots.
+        rel_dir = os.path.relpath(abs_dir, os.getcwd())
+        if rel_dir.startswith(".."):
+            print(f"[Kernel] 🔥 '{directory}' is outside the import root — cannot load.")
+            return found_classes
+        package = rel_dir.replace(os.sep, ".").strip(".")
+
         is_domains_dir = os.path.basename(abs_dir) == "domains"
         for root, _, files in os.walk(abs_dir):
             for file in sorted(files):
-                if not file.endswith(".py") or file == "__init__.py":
+                if not file.endswith(suffix):
                     continue
-                
+
                 path = os.path.join(root, file)
-                module_name = f"mod_{os.path.relpath(path, abs_dir).replace(os.sep, '_').replace('.', '_')}"
-                
+                relative = os.path.relpath(path, abs_dir)
+                module_name = f"{package}.{relative[:-3].replace(os.sep, '.')}"
+
                 try:
-                    spec = importlib.util.spec_from_file_location(module_name, path)
-                    module = importlib.util.module_from_spec(spec)
-                    if spec.loader:
-                        spec.loader.exec_module(module)
+                    module = importlib.import_module(module_name)
 
                     domain_name = None
                     if is_domains_dir:
-                        domain_name = os.path.relpath(path, abs_dir).split(os.sep)[0]
+                        domain_name = relative.split(os.sep)[0]
 
                     for _, obj in inspect.getmembers(module):
                         if inspect.isclass(obj) and issubclass(obj, base_class) and obj is not base_class:
@@ -102,12 +125,12 @@ class Kernel:
                 self.container.registry.register_tool(t_name, "FAIL", str(e))
                 print(f"[Kernel] 🚨 Tool '{t_name}' failed: {e}")
 
-        tool_classes = self._load_modules_from_dir("tools", BaseTool)
+        tool_classes = self._load_modules_from_dir("tools", BaseTool, "_tool.py")
         await asyncio.gather(*[asyncio.create_task(_setup_tool(cls)) for cls, _ in tool_classes])
 
         # 2. Boot Plugins
         boot_tasks = []
-        for plugin_cls, domain in self._load_modules_from_dir("domains", BasePlugin):
+        for plugin_cls, domain in self._load_modules_from_dir("domains", BasePlugin, "_plugin.py"):
             class_name = plugin_cls.__name__
             p_name = f"{domain}.{class_name}" if domain else class_name
             try:
@@ -172,7 +195,7 @@ class Kernel:
         tool and with which env vars is deployment configuration, not code.
         """
         print(f"--- [Kernel] Single-tool boot: '{tool_name}' ---")
-        for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool):
+        for tool_cls, _ in self._load_modules_from_dir("tools", BaseTool, "_tool.py"):
             instance = tool_cls()
             if instance.name != tool_name:
                 continue

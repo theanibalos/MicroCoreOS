@@ -54,9 +54,8 @@ To swap to Kafka/RabbitMQ/Redis Streams:
        leave the default "in_bus" and the Bus sleeps the delay for you
        (publisher-memory only — a crash during the wait loses the event).
     3. On message arrival, deserialize with self._envelope_cls (injected by
-       the Bus via bind() — do NOT import EventEnvelope yourself: the Kernel
-       loads modules by path, so an imported copy is a DIFFERENT class and
-       Pydantic tracing would reject it) and call
+       the Bus via bind(), so a Bus constructed with a custom envelope class
+       still validates against its own) and call
        self._deliver_hook(envelope, callback) — the Bus takes
        over from there (retries, DLQ, tracing all still work).
     4. Install it the same way tools are swapped — file placement, no code
@@ -76,151 +75,19 @@ import asyncio
 import inspect
 import os
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional, Dict, List, Tuple, Set
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Callable, Optional, Dict, List, Tuple, Set
 from starlette.concurrency import run_in_threadpool
 from core.base_tool import BaseTool
 from core.context import current_event_id_var, current_identity_var
+from tools.event_bus.envelope import EventEnvelope, TraceNode, TraceRecord, SubOptions  # noqa: F401 — re-export
+from tools.event_bus.drivers import EventBusDriver, InProcessDriver
 
-
-class EventEnvelope(BaseModel):
-    """The Universal Contract for any message traveling through the system."""
-    model_config = ConfigDict(frozen=True)
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    event: str
-    payload: Dict[str, Any]
-    emitter: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    parent_id: Optional[str] = None
-    correlation_id: Optional[str] = None
-    reply_to: Optional[str] = None
-    
-    key: Optional[str] = None       
-    priority: Optional[int] = None  
-    delay: Optional[int] = None     
-    ttl: Optional[float] = None     
-    headers: Dict[str, Any] = Field(default_factory=dict)
-
-
-class TraceNode(BaseModel):
-    """Rich record for observability, capturing both publication and delivery events."""
-    kind: str  # "published" or "delivered"
-    envelope: EventEnvelope
-    subscribers: List[str] = Field(default_factory=list)
-    success: bool = True
-    error: Optional[str] = None
-    attempts: Optional[int] = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class TraceRecord(TraceNode):
-    """Legacy compatibility alias for TraceNode."""
-    pass
-
-
-class SubOptions(BaseModel):
-    """Configuration for a specific subscription."""
-    retries: int = 0
-    backoff: float = 0.5
-
-
-class EventBusDriver:
-    """Interface for all transport implementations (Translators)."""
-
-    # Capability claims (Issue 30). The contract is semantic; the
-    # implementation is free: a driver may implement a Bus semantic with its
-    # broker's native machinery — as long as the parity suite still passes.
-    # "in_bus" = the Bus runs the universal software fallback; "native" = the
-    # driver takes over. Today only "delay" switches behavior: a native delay
-    # is broker-persisted and SURVIVES a publisher crash, while the in_bus
-    # fallback sleeps in the publisher's memory. "retries" and "dlq" stay
-    # in_bus by design (they are already crash-safe: drivers ack only after
-    # the handler + retries finish, so a dead replica's message redelivers).
-    capabilities: Dict[str, str] = {"delay": "in_bus", "retries": "in_bus", "dlq": "in_bus"}
-
-    async def setup(self): pass
-    def bind(self, deliver_hook: Callable, envelope_cls: Optional[type] = None):
-        """Injected by the Bus to handle message delivery.
-
-        envelope_cls is the Bus's OWN EventEnvelope class: drivers must
-        deserialize with it (self._envelope_cls.model_validate_json) instead
-        of importing EventEnvelope, so envelopes always validate against the
-        exact class the Bus uses for tracing.
-        """
-        self._deliver_hook = deliver_hook
-        self._envelope_cls = envelope_cls or EventEnvelope
-
-    async def publish(self, envelope: EventEnvelope) -> None: 
-        """Pure fire-and-forget transport. Returns nothing."""
-        raise NotImplementedError()
-
-    async def subscribe(self, event_name: str, group: Optional[str], callback: Callable): raise NotImplementedError()
-    async def unsubscribe(self, event_name: str, callback: Callable): raise NotImplementedError()
-    async def unsubscribe_all(self, callback: Callable): raise NotImplementedError()
-    def get_status(self, name_resolver: Callable) -> dict: return {"status": "abstract"}
-    async def shutdown(self): pass
-
-
-class InProcessDriver(EventBusDriver):
-    """Memory transport. Simulates groups and handles internal delays."""
-    def __init__(self):
-        self._groups: Dict[str, Dict[Optional[str], List[Callable]]] = {}
-        self._indices: Dict[str, Dict[Optional[str], int]] = {}
-        self._lock = asyncio.Lock()
-
-    async def publish(self, envelope: EventEnvelope) -> None:
-        # Delay is handled by the Bus fallback (capabilities: delay=in_bus).
-        # 1. Resolve Targets (Logic moved to Driver side)
-        targets = []
-        async with self._lock:
-            if envelope.event in self._groups:
-                for group_name, callbacks in self._groups[envelope.event].items():
-                    if not callbacks: continue
-                    if group_name is None:
-                        targets.extend(callbacks)
-                    else:
-                        idx = self._indices[envelope.event].get(group_name, 0)
-                        targets.append(callbacks[idx % len(callbacks)])
-                        self._indices[envelope.event][group_name] = (idx + 1) % len(callbacks)
-
-        # 2. Trigger Delivery Hook (Inversion of Control)
-        for cb in targets:
-            # We don't await here; the driver schedules the delivery
-            asyncio.create_task(self._deliver_hook(envelope, cb))
-
-    async def subscribe(self, event_name: str, group: Optional[str], callback: Callable):
-        async with self._lock:
-            self._groups.setdefault(event_name, {}).setdefault(group, []).append(callback)
-            self._indices.setdefault(event_name, {}).setdefault(group, 0)
-
-    async def unsubscribe(self, event_name: str, callback: Callable):
-        async with self._lock:
-            self._remove_callback(event_name, callback)
-
-    async def unsubscribe_all(self, callback: Callable):
-        async with self._lock:
-            for event in list(self._groups.keys()):
-                self._remove_callback(event, callback)
-
-    def _remove_callback(self, event_name: str, callback: Callable):
-        group_map = self._groups.get(event_name)
-        if not group_map: return
-        for g_name in list(group_map.keys()):
-            group_map[g_name] = [cb for cb in group_map[g_name] if cb != callback]
-            if not group_map[g_name]:
-                del group_map[g_name]
-                if event_name in self._indices and g_name in self._indices[event_name]:
-                    del self._indices[event_name][g_name]
-        if not group_map:
-            del self._groups[event_name]
-
-    def get_status(self, name_resolver: Callable) -> dict:
-        return {
-            event: [name_resolver(cb) for g in groups.values() for cb in g] 
-            for event, groups in self._groups.items()
-        }
+# EventEnvelope, TraceNode, TraceRecord, SubOptions live in envelope.py and
+# EventBusDriver / InProcessDriver live in drivers.py — re-exported above so
+# `from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope,
+# EventBusDriver, InProcessDriver` keeps working for every existing caller
+# (including the sqlite/redis/kafka/rabbitmq drivers, which import
+# EventBusDriver from THIS module by that exact path).
 
 
 class EventBusTool(BaseTool):
@@ -269,10 +136,8 @@ class EventBusTool(BaseTool):
 
         module = importlib.import_module(f"tools.event_bus.{name}_driver")
         for obj in vars(module).values():
-            # Base matched by NAME: the Kernel loads this file by path, so the
-            # driver's imported EventBusDriver may be a different class object.
             if (isinstance(obj, type) and obj.__module__ == module.__name__
-                    and any(b.__name__ == "EventBusDriver" for b in obj.__mro__[1:])):
+                    and issubclass(obj, EventBusDriver) and obj is not EventBusDriver):
                 return obj()
         raise ValueError(
             f"tools/event_bus/{name}_driver.py defines no EventBusDriver subclass."
