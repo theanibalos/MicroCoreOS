@@ -50,3 +50,8 @@ Thumbs.db
 # appear here; ignored defensively in case a tool/agent creates them again)
 node_modules/
 package-lock.json
+
+# Leftover git worktrees from agent sessions. One of these was once committed
+# as a submodule with no .gitmodules, and every checkout since failed its
+# cleanup step with exit 128.
+.claude/worktrees/
