@@ -10,20 +10,16 @@ only in the beat replica — publishes the due ones to the bus.
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from extras.available_domains.scheduler.plugins.durable_one_shots_plugin import DurableOneShotsPlugin
-from tools.sqlite.sqlite_tool import SqliteTool
 
-pytestmark = pytest.mark.anyio
-
-MIGRATION = (
-    Path(__file__).parent.parent
-    / "extras/available_domains/scheduler/migrations/001_scheduler_one_shots.sql"
-)
+# The scheduler domain is still an extra, so its migration lives under
+# extras/available_domains/. The marker resolves it either way — `microcoreos
+# add scheduler` would move the folder without touching this file.
+pytestmark = [pytest.mark.anyio, pytest.mark.migrations("scheduler")]
 
 
 @pytest.fixture
@@ -41,16 +37,6 @@ class _SchedulerStub:
     def add_job(self, cron_expr, callback, job_id=None):
         self.jobs.append({"cron": cron_expr, "job_id": job_id})
         return job_id
-
-
-@pytest.fixture
-async def db(monkeypatch, tmp_path):
-    monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "test.db"))
-    tool = SqliteTool()
-    await tool.setup()
-    await tool.execute(MIGRATION.read_text(encoding="utf-8"))  # the domain's real migration
-    yield tool
-    await tool.shutdown()
 
 
 async def _make_plugin(db, event_bus) -> DurableOneShotsPlugin:

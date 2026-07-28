@@ -10,10 +10,8 @@ requires-python = ">=3.11"
 # an extra below, so `uv add microcoreos` installs no broker client nobody uses.
 dependencies = [
     "aiosqlite>=0.20.0",
-    "bcrypt>=3.2.2",
     "fastapi>=0.115.0",
     "pydantic[email]>=2.10.0",
-    "pyjwt>=2.9.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
     "uvicorn>=0.30.0",
@@ -23,6 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+auth = ["bcrypt>=3.2.2", "pyjwt>=2.9.0"]
 redis = ["redis>=5.0"]
 postgres = ["asyncpg>=0.29.0"]
 kafka = ["aiokafka>=0.14.0"]
@@ -35,6 +34,8 @@ all = [
     "aiokafka>=0.14.0",
     "apscheduler>=3.10,<4",
     "asyncpg>=0.29.0",
+    "bcrypt>=3.2.2",
+    "pyjwt>=2.9.0",
     "redis>=5.0",
 ]
 
@@ -55,27 +56,11 @@ exclude = ["**/__pycache__", "**/*.pyc", "**/*.db", "**/*.db-wal", "**/*.db-shm"
 # under _template/ is ever imported from site-packages.
 packages = ["microcoreos"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"tools" = "microcoreos/_template/tools"
-"domains/system" = "microcoreos/_template/domains/system"
-"domains/devtools" = "microcoreos/_template/domains/devtools"
-"domains/users/models/user.py" = "microcoreos/_template/domains/users/models/user.py"
-"domains/users/migrations/001_create_users.sql" = "microcoreos/_template/domains/users/migrations/001_create_users.sql"
-"domains/users/plugins/create_user_plugin.py" = "microcoreos/_template/domains/users/plugins/create_user_plugin.py"
-"domains/users/plugins/login_plugin.py" = "microcoreos/_template/domains/users/plugins/login_plugin.py"
-"domains/users/plugins/get_me_plugin.py" = "microcoreos/_template/domains/users/plugins/get_me_plugin.py"
-"extras" = "microcoreos/_template/extras"
-"plans" = "microcoreos/_template/plans"
-"dev_infra" = "microcoreos/_template/dev_infra"
-"docs" = "microcoreos/_template/docs"
-".agent" = "microcoreos/_template/.agent"
-"main.py" = "microcoreos/_template/main.py"
-"Dockerfile" = "microcoreos/_template/Dockerfile"
-".dockerignore" = "microcoreos/_template/.dockerignore"
-".gitignore" = "microcoreos/_template/.gitignore"
-".env.example" = "microcoreos/_template/.env.example"
-"AGENTS.md" = "microcoreos/_template/AGENTS.md"
-"INSTRUCTIONS_FOR_AI.md" = "microcoreos/_template/INSTRUCTIONS_FOR_AI.md"
+# The template payload is NOT listed here. `hatch_build.py` derives it from
+# scaffold.RUNTIME_ENTRIES, which is the same list `microcoreos new` walks in a
+# checkout — a second, hand-maintained copy is what shipped a wrong wheel once.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

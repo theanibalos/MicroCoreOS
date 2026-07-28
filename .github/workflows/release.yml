@@ -1,0 +1,111 @@
+name: Release
+
+# Publishing is deliberately NOT part of ci.yml: that workflow runs on every
+# push, and nothing that runs on every push should be able to upload a release.
+#
+# There is no API token anywhere here. PyPI's trusted publishing takes a
+# short-lived OIDC token minted by GitHub for this workflow, in this repository,
+# in this environment — which is why `id-token: write` appears on the publish
+# job and nowhere else.
+
+on:
+  push:
+    tags: ["v*"]
+  # The rehearsal path: run it by hand against TestPyPI before a real tag.
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Index to publish to
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+# Nothing is granted by default; each job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      # A tag that disagrees with pyproject.toml publishes the wrong number and
+      # PyPI never lets that version be reused. Cheapest possible check, and it
+      # runs before anything is built.
+      - name: The tag must be the version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version ${version}"
+            exit 1
+          fi
+          echo "OK ${GITHUB_REF_NAME} == ${version}"
+
+      - name: Build
+        run: uv build -o dist
+
+      # The wheel carries a generated template payload (hatch_build.py). A build
+      # that produced an empty or half-copied one is a wheel that installs fine
+      # and scaffolds nothing — worth catching here rather than from a bug
+      # report, since the version cannot be republished.
+      - name: The wheel must scaffold with no repo in sight
+        run: |
+          mkdir -p "$RUNNER_TEMP/verify" && cd "$RUNNER_TEMP/verify"
+          uv venv
+          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
+          ./.venv/bin/microcoreos --help > /dev/null
+          ./.venv/bin/microcoreos new app > /dev/null
+          cd app
+          test -f main.py
+          test -f tools/sqlite/sqlite_tool.py
+          test -f .microcoreos/manifest.json
+          # The framework itself must never land in the user's directory.
+          test ! -d microcoreos
+          # Auth is an extra: available, not materialized.
+          test ! -d tools/auth
+          test -f extras/available_tools/auth/auth_tool.py
+          test -f extras/available_domains/users/plugins/logout_plugin.py
+          # And the half that is not shipped must not have ridden along.
+          test ! -f extras/available_domains/users/plugins/get_users_plugin.py
+          echo "✅ the built wheel scaffolds a correct project"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    # The environment is the gate: configure it in Settings → Environments and
+    # only it can publish, no matter who else holds commit access. The name
+    # must match what was registered as the trusted publisher on the index.
+    environment: ${{ inputs.target || 'pypi' }}
+
+    permissions:
+      id-token: write # mint the OIDC token; this is the whole credential
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        if: inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@v1.14.1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.target != 'testpypi'
+        uses: pypa/gh-action-pypi-publish@v1.14.1

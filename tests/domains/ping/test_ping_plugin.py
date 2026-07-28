@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.ping.plugins.ping_plugin import PingPlugin
+from extras.available_domains.ping.plugins.ping_plugin import PingPlugin
 
 pytestmark = pytest.mark.anyio
 

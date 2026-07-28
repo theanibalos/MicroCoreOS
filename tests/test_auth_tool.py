@@ -1,5 +1,5 @@
 import pytest
-from tools.auth.auth_tool import AuthTool
+from extras.available_tools.auth.auth_tool import AuthTool
 
 SECRET = "test-secret-key-32chars-long-ok!"
 
@@ -52,13 +52,13 @@ def test_decode_token_returns_payload(tool):
 
 
 def test_decode_invalid_token_raises(tool):
-    from tools.auth.auth_tool import InvalidTokenError
+    from extras.available_tools.auth.auth_tool import InvalidTokenError
     with pytest.raises(InvalidTokenError, match="Invalid token"):
         tool.decode_token("token_invalido")
 
 
 def test_decode_expired_token_raises(tool):
-    from tools.auth.auth_tool import TokenExpiredError
+    from extras.available_tools.auth.auth_tool import TokenExpiredError
     token = tool.create_token({"sub": "1"}, expires_delta=-1)
     with pytest.raises(TokenExpiredError, match="expired"):
         tool.decode_token(token)
@@ -83,7 +83,7 @@ def test_decode_token_with_wrong_signature_raises(tool):
         "completamente-diferente-secret-key-32",
         algorithm="HS256",
     )
-    from tools.auth.auth_tool import InvalidTokenError
+    from extras.available_tools.auth.auth_tool import InvalidTokenError
     with pytest.raises(InvalidTokenError, match="Invalid token"):
         tool.decode_token(fake_token)
 

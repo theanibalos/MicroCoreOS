@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domains.users.plugins.update_user_plugin import UpdateUserPlugin
+from extras.available_domains.users.plugins.update_user_plugin import UpdateUserPlugin
 
 pytestmark = pytest.mark.anyio
 

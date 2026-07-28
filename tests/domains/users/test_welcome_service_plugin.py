@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from domains.users.plugins.welcome_service_plugin import WelcomeServicePlugin
+from extras.available_domains.users.plugins.welcome_service_plugin import WelcomeServicePlugin
 
 pytestmark = pytest.mark.anyio
 

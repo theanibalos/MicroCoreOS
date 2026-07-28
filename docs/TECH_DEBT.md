@@ -6,13 +6,15 @@ than debt live in [ROADMAP.md](../ROADMAP.md); this file is only what someone
 would reasonably expect to work and does not, or works in a narrower way than it
 looks.
 
-Recorded 2026-07-27, after Issue 39 (Core as an installable package). Items 2
-and 6 were closed the same day, and item 5 reduced to what should stay as it
-is. Items 1 and 3 are blocked on decisions, not on work — see each.
+Recorded 2026-07-27, after Issue 39 (Core as an installable package). Items 1,
+2, 5 and 6 were closed the same day. Nothing left in this file is code anyone
+can write today: item 3 is blocked on publishing, item 4 is waiting for a
+failure to happen again, and items 7 and 8 are notes rather than work — see
+each.
 
 ---
 
-## 1. `auth` is materialized by default — should it be an extra?
+## 1. `auth` is materialized by default ✅ CLOSED — it is an extra now
 
 `tools/auth` and the users starter ship in every scaffolded project. Nothing
 hard-depends on them: `http_server_tool` takes `auth_validator` as an optional
@@ -28,8 +30,53 @@ Arguments both ways, and this is a product call:
 - **Against:** unlike redis or kafka, auth needs no external service, and a web
   framework whose default project cannot log anyone in is a strange default.
 
-**Cost:** the same shape as the scheduler move — two folders, a catalog entry,
-`.env` keys, doc sweep. Half a day. **Why open:** nobody has decided.
+**Decided:** an extra. `microcoreos add auth` installs the tool, the four
+plugins that ARE auth — register, login, who-am-I, logout — and the model and
+migration. A fresh project has no users table, no JWT and no `AUTH_SECRET_KEY`
+requirement. `bcrypt` and `pyjwt` moved out of the base install into a new
+`auth` extra, which is the point: nothing but auth imported them.
+
+`logout` is new to what ships. It was in the repo and never materialized, so
+every scaffolded project had a login with no way out — it costs nothing
+(`http` and `logger`, clears the cookie) and it is half of login's contract.
+The CRUD (list, get-by-id, update, delete) and `welcome_service`, the
+bus-consumer example, stay in this repo: item 8's reasoning, unchanged.
+
+Two things this move surfaced, both now pinned by tests:
+
+- **`new` had two allowlists and nothing kept them in sync.** From a checkout
+  it walks `scaffold.RUNTIME_ENTRIES`; from the wheel it gets whatever
+  `force-include` placed under `_template/`. hatchling's `force-include`
+  ignores the `exclude` list, so the first attempt shipped 4 plugins packaged
+  and 9 from a checkout — green suite, wrong artefact.
+
+  There is one list now. `hatch_build.py` is a build hook that derives the
+  wheel's payload from `RUNTIME_ENTRIES + AI_KIT_ENTRIES`, and the pyproject
+  table is gone. Two tests hold the line: one asserts nobody hand-writes a
+  second copy, the other that every entry names something that exists — a typo
+  in that list does not fail a build, it silently ships one file fewer.
+
+  The hook puts `self.root` on `sys.path` before importing: the build is
+  isolated, so the package being built is not importable by default. Safe
+  here because `scaffold` reaches only `os`, `shutil` and `upgrade`, and
+  `upgrade` reaches only the standard library — no runtime dependency is
+  dragged into the build environment. Keep it that way.
+- **The catalog's `AUTH_SECRET_KEY` placeholder was 24 characters** and
+  `AuthTool` refuses anything under 32 — `add auth` produced a project that
+  died on its first boot. Caught by running the wheel end to end, not by the
+  suite. `test_catalog.py` builds the real tool with the real placeholder now,
+  rather than asserting a length: repeating the 32 in a test would be the same
+  duplication that caused the bug, and the catalog's job is to write a value
+  that WORKS, not one of a given size.
+
+**`ping` went with it.** AGENTS.md sends every agent to
+`domains/ping/plugins/ping_plugin.py` for the shape of a plugin with no
+database — a path that existed in this checkout and in no project ever
+scaffolded from it, since the demo domain was never materialized. No shipped
+domain was a substitute: `system` is introspection and `devtools` is linters.
+It is `extras/available_domains/ping` now, readable in every project and
+installable with `microcoreos add ping`, because a live `/ping` in production
+is somebody's incident.
 
 **Resolved on the way here:** a fresh project used to boot with a
 `FieldDivergenceLinter` WARN, because the auth starter materializes both
@@ -158,7 +205,7 @@ The next move is a recurrence, not a change.
 
 ---
 
-## 5. 37 hand-built tools across 27 test files → 20 across 13
+## 5. 37 hand-built tools across 27 test files → 19 across 12 ✅ CLOSED
 
 `tests/conftest.py` publishes a fixture per Kernel injection key (`db`,
 `event_bus`, `auth`, `state`, `logger`, `config`), so a test asks for tools the
@@ -179,10 +226,16 @@ they fall into three groups that should stay as they are:
 - **Parity suites.** Building several drivers side by side IS the test
   (`tools/test_db_parity.py`, `test_state_parity.py`, and the driver suites).
 
-One genuine near-miss: `test_durable_one_shots.py` keeps its local `db`
-because its migration lives in `extras/available_domains/scheduler/migrations/`
-and the shared fixture's `@pytest.mark.migrations` marker only resolves
-`domains/<name>/migrations`. Teaching the marker about extras would close it.
+The one genuine near-miss is now closed. `test_durable_one_shots.py` kept its
+local `db` because its migration lives in
+`extras/available_domains/scheduler/migrations/` and the marker only resolved
+`domains/<name>/migrations`. The marker now searches both roots, `domains/`
+first so a materialized domain wins over the extra it was installed from — the
+same rule the `db` fixture already follows in resolving the ACTIVE tool. The
+test declares `@pytest.mark.migrations("scheduler")` and builds nothing;
+`microcoreos add scheduler` would move the folder without touching it. That
+takes the count to **19 call sites across 12 files**, and everything left is
+one of the three groups above.
 
 ---
 

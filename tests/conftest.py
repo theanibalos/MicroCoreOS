@@ -58,6 +58,24 @@ def _isolate_event_bus_sqlite_queue(tmp_path, monkeypatch):
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# A domain's migrations live in `domains/` once materialized and in
+# `extras/available_domains/` until then, and the marker should not care which:
+# `microcoreos add scheduler` moves the folder without changing a single test.
+# `domains/` is searched first so a materialized domain wins over the extra it
+# was installed from — the same rule as the ACTIVE db tool below.
+_MIGRATION_ROOTS = (
+    _PROJECT_ROOT / "domains",
+    _PROJECT_ROOT / "extras" / "available_domains",
+)
+
+
+def _migrations_dir(domain: str) -> Path | None:
+    for root in _MIGRATION_ROOTS:
+        candidate = root / domain / "migrations"
+        if candidate.is_dir():
+            return candidate
+    return None
+
 
 async def _lifecycle(tool, method: str):
     """
@@ -87,11 +105,19 @@ async def db(request, monkeypatch):
     collection after a Postgres swap instead of proving anything about it
     (see tests/helpers/active_db.py). With no marker you get a real, empty
     schema, which is what a test that does not touch tables wants.
+
+    The domain may be materialized or still an extra; see `_migrations_dir`.
     """
     marker = request.node.get_closest_marker("migrations")
-    dirs = [_PROJECT_ROOT / "domains" / d / "migrations" for d in (marker.args if marker else ())]
-    missing = [str(d) for d in dirs if not d.is_dir()]
-    assert not missing, f"@pytest.mark.migrations names domains with no migrations/: {missing}"
+    names = marker.args if marker else ()
+    resolved = {name: _migrations_dir(name) for name in names}
+
+    missing = [name for name, d in resolved.items() if d is None]
+    assert not missing, (
+        f"@pytest.mark.migrations names domains with no migrations/ under "
+        f"{' or '.join(str(r.relative_to(_PROJECT_ROOT)) for r in _MIGRATION_ROOTS)}: {missing}"
+    )
+    dirs = list(resolved.values())
 
     async with _active_db(monkeypatch, *dirs) as tool:
         yield tool
@@ -108,7 +134,7 @@ async def event_bus():
 
 @pytest.fixture
 async def auth(monkeypatch):
-    from tools.auth.auth_tool import AuthTool
+    from extras.available_tools.auth.auth_tool import AuthTool
     # The tool refuses a key under 32 chars — a real rule, not test noise.
     monkeypatch.setenv("AUTH_SECRET_KEY", "test-secret-key-0123456789abcdefghij")
     tool = AuthTool()

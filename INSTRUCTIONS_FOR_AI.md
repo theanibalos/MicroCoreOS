@@ -386,7 +386,7 @@ async def test_env():
     await db.setup()
     
     # Run the migrations needed for this domain
-    with open("domains/users/migrations/001_create_users.sql", "r") as f:
+    with open("domains/<your_domain>/migrations/001_create_<table>.sql", "r") as f:
         await db.execute(f.read())
         
     bus = EventBusTool()

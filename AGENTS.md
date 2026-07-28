@@ -147,13 +147,17 @@ When writing a new feature, read these specific files under demand to copy their
 
 | Pattern | File |
 |---|---|
-| **CRUD + Event Bus** | `domains/users/plugins/create_user_plugin.py` |
-| **Protected Endpoint (JWT)** | `domains/users/plugins/get_me_plugin.py` |
-| **Auth, Cookies & Session** | `domains/users/plugins/login_plugin.py` |
-| **Minimal Plugin (No DB)** | `domains/ping/plugins/ping_plugin.py` |
-| **Database Migrations** | `domains/users/migrations/001_create_users.sql` |
+| **CRUD + Event Bus** | `extras/available_domains/users/plugins/create_user_plugin.py` |
+| **Protected Endpoint (JWT)** | `extras/available_domains/users/plugins/get_me_plugin.py` |
+| **Auth, Cookies & Session** | `extras/available_domains/users/plugins/login_plugin.py` |
+| **Minimal Plugin (No DB)** | `extras/available_domains/ping/plugins/ping_plugin.py` |
+| **Database Migrations** | `extras/available_domains/users/migrations/001_create_users.sql` |
 | **Dynamic Introspection** | `domains/system/plugins/system_status_plugin.py` |
 | **Black-Box Integration Tests** | `tests/domains/users/test_login_plugin.py` |
+
+Both point into `extras/` because both are extras: readable in any project,
+and `microcoreos add auth` / `add ping` is what moves them into `domains/`.
+Reading them needs no install — the files are there either way.
 
 ---
 

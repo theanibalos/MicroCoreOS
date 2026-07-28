@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from domains.users.plugins.logout_plugin import LogoutPlugin
+from extras.available_domains.users.plugins.logout_plugin import LogoutPlugin
 
 pytestmark = pytest.mark.anyio
 

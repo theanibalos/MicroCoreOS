@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domains.users.plugins.login_plugin import LoginPlugin
+from extras.available_domains.users.plugins.login_plugin import LoginPlugin
 
 pytestmark = pytest.mark.anyio
 

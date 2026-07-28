@@ -31,6 +31,36 @@ class Extra:
 
 
 CATALOG = {
+    # Unlike every other entry here, auth needs no external service — it is an
+    # extra because a framework should not force a users table, a roles model
+    # and a JWT flavour on a project that wants none, nor make AUTH_SECRET_KEY
+    # a boot requirement for one that never logs anyone in. `http_server_tool`
+    # takes auth_validator as an optional callback and never imports auth, so
+    # nothing in a default project notices its absence.
+    "auth": Extra(
+        dependency="auth",
+        tool="auth",
+        domain="users",
+        env=[
+            # 32 characters minimum — AuthTool refuses to boot below that, so a
+            # shorter placeholder would hand the user a project that dies on
+            # the first run. See test_catalog.py.
+            ("AUTH_SECRET_KEY", "super-secret-key-change-me-in-production", "CHANGE THIS — 32 chars minimum"),
+            ("AUTH_TOKEN_EXPIRE_MINUTES", "60", "JWT expiry in minutes"),
+        ],
+        note="The domain adds register, login, who-am-I and logout. The CRUD "
+             "for your own entities is yours to write.",
+    ),
+    # The hello-world. AGENTS.md sends every agent here for the shape of a
+    # plugin with no database and no dependencies, and before this it pointed
+    # at a path that existed in the framework's checkout and in no project ever
+    # scaffolded from it. Installable rather than materialized: a live /ping in
+    # production is somebody's incident, and this is a domain you read once and
+    # delete.
+    "ping": Extra(
+        domain="ping",
+        note="A single GET /ping. Read it for the shape, then delete domains/ping.",
+    ),
     "postgres": Extra(
         dependency="postgres",
         tool="postgresql",

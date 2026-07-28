@@ -19,29 +19,40 @@ import shutil
 
 from microcoreos.upgrade import write_manifest
 
-# The smallest users domain that actually works: register → login → call a
-# protected endpoint. Without it `tools/auth` ships with no way to obtain a
-# token, which is a tool you cannot use. The rest of the repo's users domain
-# (list, get-by-id, update, delete, logout, the event consumer) stays behind —
-# that is CRUD you will write for your own entities anyway.
-AUTH_STARTER_ENTRIES = [
-    "domains/users/models/user.py",
-    "domains/users/migrations/001_create_users.sql",
-    "domains/users/plugins/create_user_plugin.py",
-    "domains/users/plugins/login_plugin.py",
-    "domains/users/plugins/get_me_plugin.py",
+# The swap catalog. Not a single "extras" entry, because the users domain is
+# only PARTLY shippable: `microcoreos add auth` installs the four plugins that
+# ARE auth — register, login, who-am-I, logout — while the CRUD half and the
+# bus-consumer example stay in the framework's own repo. Those are what you
+# write for your own entities, and shipping them would make the extra
+# something to delete rather than to use.
+#
+# This list is the ONLY one. `hatch_build.py` derives the wheel's payload from
+# it at build time, so `new` copies the same set whether it reads this repo or
+# an installed `_template/`. It used to be written down twice and the two
+# copies drifted the first time anyone edited one — see docs/TECH_DEBT.md.
+EXTRAS_ENTRIES = [
+    "extras/available_tools",
+    "extras/available_domains/chaos",
+    "extras/available_domains/ping",
+    "extras/available_domains/scheduler",
+    "extras/available_domains/users/models",
+    "extras/available_domains/users/migrations",
+    "extras/available_domains/users/plugins/create_user_plugin.py",
+    "extras/available_domains/users/plugins/login_plugin.py",
+    "extras/available_domains/users/plugins/get_me_plugin.py",
+    "extras/available_domains/users/plugins/logout_plugin.py",
 ]
 
-# What a project needs to boot. `domains/ping` stays behind: it is a demo.
+# What a project needs to boot. Nothing under domains/ that is a demo or an
+# opt-in: those ride along in extras/ and `microcoreos add` moves them in.
 RUNTIME_ENTRIES = [
     "tools",
     "domains/system",
     "domains/devtools",
-    *AUTH_STARTER_ENTRIES,
-    # The swap catalog. Not optional: installing infrastructure here IS moving
-    # a folder (`mv extras/available_tools/postgresql tools/`), so a project
-    # without extras/ cannot perform the swap its own docs describe.
-    "extras",
+    # Not optional: installing infrastructure here IS moving a folder
+    # (`mv extras/available_tools/postgresql tools/`), so a project without
+    # extras/ cannot perform the swap its own docs describe.
+    *EXTRAS_ENTRIES,
     "plans",
     "dev_infra",
     "main.py",
@@ -94,7 +105,7 @@ NEXT_STEPS = """
      microcoreos               # boot (or: uv run main.py)
 
    Optional infrastructure — dependency, source and .env in one command:
-     microcoreos add postgres    (also: redis, s3, scheduler, kafka, rabbitmq, chaos)
+     microcoreos add auth        (also: postgres, redis, s3, scheduler, kafka, rabbitmq, chaos)
 """
 
 

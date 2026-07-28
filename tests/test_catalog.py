@@ -105,3 +105,23 @@ def test_add_never_runs_uv_without_a_pyproject(project, monkeypatch):
 
     catalog._install_dependency("postgres", str(project))
     assert called == []
+
+
+def test_the_auth_placeholder_actually_boots(monkeypatch):
+    """
+    `add auth` writes a placeholder secret into .env, and AuthTool validates
+    the secret it finds there. The first version of this entry wrote 24
+    characters against a 32-character minimum: `microcoreos add auth` handed
+    the user a project that died on its first boot.
+
+    This constructs the real tool with the real placeholder rather than
+    asserting a length, so it keeps holding if AuthTool's rule changes — the
+    catalog's job is to write a value that WORKS, not one of a given size.
+    """
+    from extras.available_tools.auth.auth_tool import AuthTool
+    from microcoreos.catalog import CATALOG
+
+    for name, value, _ in CATALOG["auth"].env:
+        monkeypatch.setenv(name, value)
+
+    AuthTool()  # raises if the placeholder would not have booted

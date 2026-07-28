@@ -1,16 +1,15 @@
 """Black-box tests for GetMePlugin (protected endpoint, ownership via _auth)."""
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domains.users.plugins.get_me_plugin import GetMePlugin
-from tests.helpers.active_db import active_db
+from extras.available_domains.users.plugins.get_me_plugin import GetMePlugin
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "domains" / "users" / "migrations"
 
-pytestmark = pytest.mark.anyio
+# The users domain is an extra now; the marker resolves it under
+# extras/available_domains/ without this file naming a path.
+pytestmark = [pytest.mark.anyio, pytest.mark.migrations("users")]
 
 
 @pytest.fixture
@@ -18,12 +17,6 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture
-async def db(monkeypatch):
-    # The ACTIVE db tool, not a hardcoded engine: after a db swap the same test
-    # exercises the new engine (see tests/helpers/active_db.py).
-    async with active_db(monkeypatch, MIGRATIONS_DIR) as tool:
-        yield tool
 
 
 def make_plugin(db):

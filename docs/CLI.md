@@ -20,9 +20,13 @@ booting an empty system and calling it Ready.
 ## `microcoreos new <path>`
 
 Copies the framework's source into your directory: `tools/`, `domains/system`,
-`domains/devtools`, the auth starter, `extras/`, `plans/`, `dev_infra/`,
-`main.py`, `Dockerfile`, `.env.example` — plus the AI kit (`AGENTS.md`,
-`INSTRUCTIONS_FOR_AI.md`, `.agent/`, `docs/`).
+`domains/devtools`, `extras/`, `plans/`, `dev_infra/`, `main.py`, `Dockerfile`,
+`.env.example` — plus the AI kit (`AGENTS.md`, `INSTRUCTIONS_FOR_AI.md`,
+`.agent/`, `docs/`).
+
+One list decides all of it: `scaffold.RUNTIME_ENTRIES`. The wheel's copy under
+`_template/` is generated from that same list by `hatch_build.py`, so what a
+checkout copies and what the package ships cannot disagree.
 
 **Why copied instead of imported.** Installing and swapping infrastructure here
 IS file placement (`mv extras/available_tools/postgresql tools/`, dropping a
@@ -40,10 +44,16 @@ overwritten, so `uv init && uv add microcoreos && microcoreos new .` works.
 | `--force` | Materialize even if `tools/` or `domains/` already exist |
 | `--no-ai-kit` | Skip `AGENTS.md`, `INSTRUCTIONS_FOR_AI.md`, `.agent/`, `docs/` |
 
-**Not materialized:** `domains/ping` (a demo) and the CRUD half of
-`domains/users`. What does ship of it is the auth starter — `create_user`,
-`login`, `get_me`, the model and the migration — the smallest set that makes
-`tools/auth` usable: register, get a token, call a protected endpoint.
+**Not materialized:** `ping` (the hello-world) and auth. A fresh project has no
+`tools/auth` and no `domains/users` — no users table, no JWT, and no
+`AUTH_SECRET_KEY` to set before it will boot. `http_server_tool` takes
+`auth_validator` as an optional callback and never imports auth, so nothing
+misses it.
+
+`microcoreos add auth` installs it: the tool, plus the four plugins that ARE
+auth — `create_user`, `login`, `get_me`, `logout` — with the model and the
+migration. The CRUD around them (list, get-by-id, update, delete) is not
+shipped: that is what you write for your own entities.
 
 ---
 
@@ -72,8 +82,13 @@ microcoreos add postgres
    ✓ .env += PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
 ```
 
-Available: `postgres`, `redis`, `s3`, `scheduler`, `kafka`, `rabbitmq`,
-`chaos`. Run `microcoreos add` with no argument to list them.
+Available: `auth`, `ping`, `postgres`, `redis`, `s3`, `scheduler`, `kafka`,
+`rabbitmq`, `chaos`. Run `microcoreos add` with no argument to list them.
+
+`auth` and `ping` are the two that need no external service. `auth` is an extra
+because a users table, a roles model and a JWT flavour are not something a
+framework should impose; `ping` is a single `GET /ping` you read for the shape
+of a minimal plugin and then delete.
 
 Three rules it follows:
 

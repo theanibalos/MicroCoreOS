@@ -1,4 +1,7 @@
 import ast
+import shutil
+from pathlib import Path
+
 from tools.context import scanners
 
 
@@ -32,7 +35,23 @@ class CreateUserResponse(BaseModel):
     assert "data: Optional[UserData(id: int, name: str, email: EmailStr)]" in models["CreateUserResponse"]
 
 
-def test_get_domain_endpoints_users():
+def test_get_domain_endpoints_users(tmp_path, monkeypatch):
+    """
+    The scanner reads `domains/<name>/plugins` relative to the CWD, so the
+    domain is staged here rather than borrowed from the repo. It is still the
+    REAL plugin source being parsed — copied from the auth extra, which is
+    where `microcoreos add auth` takes it from — so the assertions below keep
+    describing what those plugins actually declare. Pointing at whichever
+    domains happen to exist in this checkout is what broke this test when
+    users moved out of `domains/`.
+    """
+    src = Path(__file__).resolve().parent.parent / "extras/available_domains/users/plugins"
+    staged = tmp_path / "domains" / "users" / "plugins"
+    staged.mkdir(parents=True)
+    for name in ("create_user_plugin.py", "login_plugin.py"):
+        shutil.copy2(src / name, staged / name)
+
+    monkeypatch.chdir(tmp_path)
     endpoints = scanners._get_domain_endpoints("users")
 
     # Verify POST /users includes request and response schema fields

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domains.users.plugins.delete_user_plugin import DeleteUserPlugin
+from extras.available_domains.users.plugins.delete_user_plugin import DeleteUserPlugin
 
 pytestmark = pytest.mark.anyio
 

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domains.users.plugins.create_user_plugin import CreateUserPlugin
+from extras.available_domains.users.plugins.create_user_plugin import CreateUserPlugin
 
 pytestmark = pytest.mark.anyio
 
