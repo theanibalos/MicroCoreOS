@@ -151,16 +151,19 @@ jobs:
           AWS_S3_VERIFY_SSL: "false"
         run: |
           cp -r extras/available_tools/s3 tools/
+          # auth is an extra now; this job is the only one that boots against
+          # real infrastructure, so it installs auth rather than dropping it.
+          cp -r extras/available_tools/auth tools/
+          cp -r extras/available_domains/users domains/
           uv run main.py > boot.log 2>&1 &
           APP_PID=$!
 
           # Wait until the gateway answers (max 30s)
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:5000/ping > /dev/null 2>&1; then break; fi
+            if curl -sf http://localhost:5000/system/status > /dev/null 2>&1; then break; fi
             sleep 1
           done
 
-          curl -sf http://localhost:5000/ping
           curl -sf http://localhost:5000/system/status > status.json
 
           # Assert: every tool OK, every plugin READY
@@ -231,7 +234,9 @@ jobs:
         run: |
           mkdir -p /tmp/e2e && cd /tmp/e2e
           uv venv
-          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler]"
+          # [auth] matters: bcrypt and pyjwt are no longer base dependencies,
+          # so this also proves the extra carries what its tool imports.
+          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler,auth]"
           ./.venv/bin/microcoreos --help
 
       - name: microcoreos new
@@ -244,16 +249,31 @@ jobs:
           test -f .gitignore
           test -f main.py
           test -f tools/sqlite/sqlite_tool.py
-          test -f domains/users/plugins/get_me_plugin.py      # the auth starter
           test -d extras/available_tools                      # the swap catalog
           test ! -d domains/ping                              # demos stay behind
+
+          # Auth is an extra: available, not installed. A fresh project has no
+          # users table and no AUTH_SECRET_KEY to set before it boots.
+          test ! -d tools/auth
+          test ! -d domains/users
+          test -f extras/available_tools/auth/auth_tool.py
+          test -f extras/available_domains/users/plugins/logout_plugin.py
+          # ...and the CRUD half must not have ridden along inside the extra.
+          test ! -f extras/available_domains/users/plugins/get_users_plugin.py
           test ! -d microcoreos                               # the Kernel is NOT copied
 
-      - name: Boot it and use the auth starter
+      - name: Boot it and use auth, once installed
         working-directory: /tmp/e2e/app
         env:
           PYTHONUNBUFFERED: "1"
         run: |
+          # The dependency came with the wheel's [auth] extra above, so this
+          # only has to move the source and write the .env keys.
+          /tmp/e2e/.venv/bin/microcoreos add auth --no-install
+          test -f tools/auth/auth_tool.py
+          test -f domains/users/plugins/logout_plugin.py
+          grep -q "^AUTH_SECRET_KEY=" .env
+
           /tmp/e2e/.venv/bin/microcoreos > boot.log 2>&1 &
           APP_PID=$!
           for i in $(seq 1 30); do
@@ -280,7 +300,7 @@ jobs:
             -d '{"email":"ci@test.com","password":"secret123"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['token'])")
           curl -sf http://localhost:5000/users/me -H "Authorization: Bearer $TOKEN" | grep -q '"email":"ci@test.com"'
           curl -s http://localhost:5000/users/me | grep -q 'Missing authorization token'
-          echo "✅ auth starter works end to end"
+          echo "✅ auth works end to end after add"
 
           grep -q "🔥" boot.log && { echo "load errors in boot"; exit 1; } || true
           kill $APP_PID
@@ -362,7 +382,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/e2e" && cd "$RUNNER_TEMP/e2e"
           uv venv
-          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler]"
+          # [auth] matters: bcrypt and pyjwt are no longer base dependencies,
+          # so this also proves the extra carries what its tool imports.
+          uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler,auth]"
           ./.venv/Scripts/microcoreos --help
 
       - name: microcoreos new

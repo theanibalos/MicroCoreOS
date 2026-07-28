@@ -197,11 +197,62 @@ the shared `wait_until` helper now report the observed state on timeout instead
 of `<lambda at 0x...>` — which is why the original failure could not be
 diagnosed. A recurrence will say which condition and with what values.
 
-**Do not "fix" this without a reproduction.** There is nothing to fix until a
-failure is in hand: an attempt made blind ends up adjusting the test until it
-looks robust, which converts an unknown into a hidden one and throws away the
-instrumentation that is the only thing standing between here and an answer.
-The next move is a recurrence, not a change.
+**It recurred on 2026-07-28**, in CI, on `test (3.12)` — and the
+instrumentation did its job. What the failure reported:
+
+```
+observed: {'seen': [{'n': 1}, {'n': 0}, {'n': 2}], 'rows': 0}
+```
+
+That narrows it a long way, and mostly in the reassuring direction:
+
+- **All three messages were delivered and the backlog drained to zero.** Not a
+  lost message, not a stuck queue, and not test impatience — `rows: 0` is the
+  terminal state, not a partial one caught too early.
+- **The pause held.** `victim.seen == []` during the pause passed, as did
+  `rows == 3`. The scarier of the two readings above — a "paused" plugin
+  receiving a message mid-pause — is **ruled out by observation** now, not by
+  reading.
+- **The only thing wrong was the order**: 1, 0, 2 instead of 0, 1, 2.
+
+So what is left is one question, and it is a contract question rather than a
+bug report: **does this bus promise ordered delivery on resume?** The test
+asserts it and the docstring says "drains in order". Two facts bear on it, both
+verified in the source rather than assumed:
+
+- The subscription is not a broadcast, so it takes a group and goes through the
+  durable `_reader`, which claims `ORDER BY id LIMIT 1` and awaits
+  `asyncio.shield(delivery)` before claiming the next row. Sequential by
+  construction — the earlier note in this file was right about that.
+- The pause is a per-delivery polling loop in `_do_deliver`
+  (`while paused: await asyncio.sleep(0.2)`). Whatever reorders these two
+  deliveries has to get more than one of them parked in that loop at once,
+  because two tasks waking from independent 200 ms sleeps have no defined
+  order between them.
+
+**The contract question is already answered, and not in the test's favour.**
+`sqlite_driver.py`'s header states it as a guarantee:
+
+> `key / priority` → accepted but no-ops (**the queue is totally ordered**, no
+> message priority) — same degradation as Redis Streams.
+
+`key` — documented in `docs/EVENT_BUS.md` as the partition key for ordered
+delivery — is a no-op on this driver *because* total ordering makes it
+redundant. So the test asserts exactly what the driver promises, and the
+observed 1, 0, 2 is a defect rather than an over-assertion.
+
+That also raises the cost of the easy fix. Relaxing the assertion to a set
+would not just hide this: it would quietly turn `key="customer_42"` into a
+silent no-op for anyone who writes it expecting per-customer ordering, since
+the justification for ignoring the key is the guarantee this failure breaks.
+
+**Still do not "fix" it blind.** Reading has gone as far as it goes. The reader
+is sequential — it claims one row and awaits `asyncio.shield(delivery)` before
+claiming the next — so a single subscription should never have two deliveries
+in flight, and yet two of them demonstrably interleaved. The next step is an
+instrumented run that shows how, not a change to the assertion. Pruning
+(`PRUNE_EVERY=128` against 3 publishes), retries (`retries=0`) and due-time
+skew (everything due immediately) are all ruled out.
 
 ---
 
