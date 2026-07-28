@@ -152,26 +152,6 @@ Universal Event Bus (event_bus):
         fallback in this process' memory).
 ```
 
-### 🔧 Tool: `auth` (Status: ✅)
-```text
-Authentication Tool (auth):
-        - PURPOSE: Manage system security, password hashing, and JWT token lifecycle.
-        - CAPABILITIES:
-            - await hash_password(password: str) -> str: Securely hashes a plain-text
-                password using bcrypt. Async — runs in a thread (bcrypt is CPU-bound).
-            - await verify_password(password: str, hashed_password: str) -> bool:
-                Verifies if a password matches its hash. Async — runs in a thread.
-            - create_token(data: dict, expires_delta: Optional[int] = None) -> str:
-                Generates a JWT signed token. 'data' should contain claims (e.g. {'sub': user_id}).
-                'expires_delta' is optional minutes until expiration.
-            - decode_token(token: str) -> dict:
-                Verifies and decodes a JWT token. Returns the payload dictionary.
-                Raises TokenExpiredError / InvalidTokenError / AuthError on failure.
-            - validate_token(token: str) -> dict | None:
-                Safe, non-throwing token validation. Returns the decoded payload
-                if valid, or None if expired/invalid. Ideal for middleware guards.
-```
-
 ### 🔧 Tool: `context_manager` (Status: ✅)
 ```text
 Context Manager Tool (context_manager):
@@ -342,35 +322,6 @@ Async SQLite Persistence Tool (sqlite):
 - **Events consumed**: none
 - **Dependencies**: config, container, event_bus, http, logger, registry
 - **Plugins**: system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
-
-### `users`
-- **Table `users`** (storage): id (int, PK), name (text, NOT NULL), email (text, NOT NULL), password_hash (text, NOT NULL), roles (text, NOT NULL, default '["user"]') — UNIQUE(email)
-- **Model `UserEntity`** (domain vocabulary): id: int | None, name: str, email: EmailStr, roles: list[str]
-- **Endpoints**:
-  - `DELETE /users/{user_id}`
-    - **res**: None
-  - `GET /users`
-    - **req**: limit: int, offset: int
-    - **res**: ListUsersData(users: List[UserData(id: int, name: str, email: EmailStr)], limit: int, offset: int)
-  - `GET /users/me`
-    - **res**: UserData(id: int, name: str, email: EmailStr, roles: list[str])
-  - `GET /users/{user_id}`
-    - **res**: UserData(id: int, name: str, email: EmailStr)
-  - `POST /auth/login`
-    - **req**: email: EmailStr, password: str
-    - **res**: LoginData(token: str)
-  - `POST /auth/logout`
-    - **res**: None
-  - `POST /users`
-    - **req**: name: str, email: EmailStr, password: str
-    - **res**: CreatedUserData(id: int, name: str, email: EmailStr, roles: list[str])
-  - `PUT /users/{user_id}`
-    - **req**: name: str | None, email: EmailStr | None, password: str | None
-    - **res**: None
-- **Events emitted**: `user.created` (email, id, roles), `user.deleted` (id), `welcome.notify.sent` (email, user_id)
-- **Events consumed**: user.created
-- **Dependencies**: auth, db, event_bus, http, logger, state
-- **Plugins**: users.CreateUserPlugin, users.DeleteUserPlugin, users.GetMePlugin, users.GetUserByIdPlugin, users.ListUsersPlugin, users.LoginPlugin, users.LogoutPlugin, users.UpdateUserPlugin, users.WelcomeServicePlugin
 
 ## 🧩 Plugin Authoring Guide
 

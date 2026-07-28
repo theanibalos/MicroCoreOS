@@ -1,5 +1,8 @@
 import asyncio
+import threading
+
 import pytest
+from microcoreos import current_event_id_var
 from tools.event_bus.event_bus_tool import EventBusTool, EventEnvelope
 from tests.helpers.async_wait import wait_until
 
@@ -149,3 +152,94 @@ async def test_dropped_event_subscriber_drop_does_not_retrigger(event_bus):
         "broken_monitor" not in r.envelope.payload["subscriber"]
         for r in published_dropped
     )
+
+
+async def test_a_sync_subscriber_runs_off_the_event_loop(event_bus):
+    """
+    A plain `def` handler is delivered too — on a worker thread, because a
+    blocking subscriber on the loop stalls every other delivery in the process.
+
+    This branch shipped untested: replacing the raise inside it with an
+    exception left the whole suite green. It is also the bus's only tie to
+    starlette, so anything that changes how it dispatches needs a test that
+    notices.
+    """
+    seen = []
+    loop_thread = threading.current_thread().ident
+
+    def handler(event: EventEnvelope):        # deliberately NOT async
+        seen.append((event.payload, threading.current_thread().ident))
+
+    await event_bus.subscribe("sync.work", handler)
+    await event_bus.publish("sync.work", {"n": 1})
+    await wait_until(lambda: seen, describe=lambda: {"seen": seen})
+
+    payload, ran_on = seen[0]
+    assert payload == {"n": 1}
+    assert ran_on != loop_thread, "a sync subscriber must not run on the event loop"
+
+
+async def test_a_sync_subscriber_carries_the_event_context(event_bus):
+    """
+    The bus stamps `current_event_id_var` around delivery, and a thread hop
+    loses context vars unless the dispatcher copies the context. Handlers read
+    these — losing them silently unstamps every log line and trace a sync
+    subscriber produces.
+    """
+    seen = []
+
+    def handler(event: EventEnvelope):
+        seen.append(current_event_id_var.get())
+
+    await event_bus.subscribe("sync.ctx", handler)
+    await event_bus.publish("sync.ctx", {})
+    await wait_until(lambda: seen, describe=lambda: {"seen": seen})
+
+    assert seen[0] is not None, "the event id did not survive the thread hop"
+
+
+async def test_publishes_arrive_in_call_order(event_bus):
+    """
+    `publish()` returns before the message reaches the transport — that is the
+    decoupling mandate and it stays. What must NOT leak out of it is the order:
+    three publishes in a row raced each other to the driver, and a durable
+    queue then stored, and delivered, whatever order the threads won in.
+
+    Twenty rather than three: the race window is per hand-off, so a longer run
+    is far more likely to catch a regression than the three-message case that
+    took months to show up once.
+    """
+    seen = []
+
+    async def handler(event: EventEnvelope):
+        seen.append(event.payload["n"])
+
+    await event_bus.subscribe("order.seq", handler)
+    for n in range(20):
+        await event_bus.publish("order.seq", {"n": n})
+
+    await wait_until(lambda: len(seen) == 20, describe=lambda: {"seen": seen})
+    assert seen == list(range(20)), f"out of order: {seen}"
+
+
+async def test_ordering_is_per_key_not_global(event_bus):
+    """
+    The guarantee is the one every broker makes — Kafka per partition, SQS FIFO
+    per MessageGroupId — and this pins its shape: each key's own sequence is
+    ordered, while nothing is promised ACROSS keys, because promising that
+    would mean serializing every publish in the process.
+    """
+    seen = []
+
+    async def handler(event: EventEnvelope):
+        seen.append((event.key, event.payload["n"]))
+
+    await event_bus.subscribe("order.keyed", handler)
+    for n in range(10):
+        await event_bus.publish("order.keyed", {"n": n}, key="a")
+        await event_bus.publish("order.keyed", {"n": n}, key="b")
+
+    await wait_until(lambda: len(seen) == 20, describe=lambda: {"seen": seen})
+    for key in ("a", "b"):
+        assert [n for k, n in seen if k == key] == list(range(10)), \
+            f"key {key!r} out of order: {seen}"

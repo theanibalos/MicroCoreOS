@@ -7,10 +7,10 @@ would reasonably expect to work and does not, or works in a narrower way than it
 looks.
 
 Recorded 2026-07-27, after Issue 39 (Core as an installable package). Items 1,
-2, 5 and 6 were closed the same day. Nothing left in this file is code anyone
-can write today: item 3 is blocked on publishing, item 4 is waiting for a
-failure to happen again, and items 7 and 8 are notes rather than work — see
-each.
+2, 5 and 6 were closed the same day; item 4 the day after, once the failure
+finally reproduced and turned out to be a real defect in `publish()` rather
+than the flaky test everyone assumed. Item 3 is blocked on publishing, and
+items 7 and 8 are notes rather than work — see each.
 
 ---
 
@@ -173,7 +173,7 @@ release the resolution path is different and untested. The CI job passes
 
 ---
 
-## 4. The flaky nobody has reproduced
+## 4. The flaky nobody could reproduce ✅ CLOSED — it was `publish()`
 
 `tests/test_chaos_control.py::test_pause_accumulates_durable_backlog_and_drains`
 failed once. It did not reproduce in 21 isolated runs, 15 full-suite runs, or
@@ -246,13 +246,65 @@ would not just hide this: it would quietly turn `key="customer_42"` into a
 silent no-op for anyone who writes it expecting per-customer ordering, since
 the justification for ignoring the key is the guarantee this failure breaks.
 
-**Still do not "fix" it blind.** Reading has gone as far as it goes. The reader
-is sequential — it claims one row and awaits `asyncio.shield(delivery)` before
-claiming the next — so a single subscription should never have two deliveries
-in flight, and yet two of them demonstrably interleaved. The next step is an
-instrumented run that shows how, not a change to the assertion. Pruning
-(`PRUNE_EVERY=128` against 3 publishes), retries (`retries=0`) and due-time
-skew (everything due immediately) are all ruled out.
+**Found, and it was neither the pause nor the reader.** Reading could not get
+there; four instrumented probes did, in this order — each one ruling out the
+answer the previous one suggested:
+
+1. *Do two deliveries overlap?* A recorder around the handler said no,
+   `max_in_flight == 1`, and the order was still wrong. But the handler is
+   instantaneous, so it runs inside a single event-loop step: two deliveries
+   can both be past the pause loop without their handlers ever overlapping.
+   The instrument was measuring the wrong thing.
+2. *Wrap `_do_deliver` instead.* Still exactly one delivery in flight at any
+   moment — the reader's `asyncio.shield` serializes perfectly — and yet the
+   FIRST delivery handed to the Bus was n=1. So the scrambling happened before
+   delivery, at the claim.
+3. *Dump the queue before resume.* This was the answer:
+
+   ```
+   id=1 status='processing' due_at=…6120594 n=0
+   id=2 status='pending'    due_at=…632277  n=2   ← n=2 holds the lower id
+   id=3 status='pending'    due_at=…6322117 n=1   ← published FIRST, id 3
+   ```
+
+   n=1's `due_at` is earlier than n=2's, so it was published first, and it
+   still got the higher id. **The rows were stored out of order.** Everything
+   downstream — `ORDER BY id`, the sequential reader — then worked perfectly,
+   faithfully delivering an order that was already wrong.
+
+**The cause is `publish()` being fire-and-forget.** It created a task for the
+transport hand-off and returned, so three `await bus.publish(...)` calls in a
+row left three tasks racing into `asyncio.to_thread(_stage)`. Whichever thread
+won the INSERT took the lower id. The pause never caused anything: it only held
+three messages in the queue at once, which is what made the scrambling
+survive long enough to be seen. Without it each message is delivered before the
+next arrives and nobody notices.
+
+Which means the real blast radius was never the chaos extra. **Any caller
+publishing several events in a row could have them delivered out of order**,
+with or without chaos installed. Two documents each stated half of a
+contradiction nobody had put side by side: AGENTS.md's Event Bus Mandate 2
+("`publish()` is strictly fire-and-forget") and the sqlite driver's header
+("the queue is totally ordered").
+
+**The fix keeps both halves honest.** Publication stays decoupled — `publish()`
+still returns without waiting for the broker — but the hand-offs are chained
+per ordering unit, built synchronously on the event loop where order is
+deterministic rather than left to thread scheduling. The unit is `key`, falling
+back to the event name, which is the guarantee every broker actually makes:
+Kafka orders per partition, SQS FIFO per MessageGroupId, RabbitMQ per queue.
+Different keys still publish in parallel.
+
+That also retires the "totally ordered" claim, which was never true, and turns
+`key` from a documented no-op into the ordering unit it always claimed to be —
+now with the same meaning on all five drivers instead of one.
+
+**Verification.** Before: 1 failure in 20 runs of the flaky test locally, twice
+in CI. After: 80/80 clean on the flaky test and 80/80 on the probe — about
+eight expected failures, none observed. The two regression tests in
+`test_event_bus_tool.py` are stronger than either: they fail **8 times out of
+8** without the fix, because 20 publishes widen a window that three barely
+opened.
 
 ---
 

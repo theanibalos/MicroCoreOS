@@ -37,8 +37,15 @@ TRANSPORT MAPPING:
         a cache-invalidation replayed after reboot would be wrong.
     delay                 → stored as due_at (now + delay): DURABLE — a
         pending delay fires after a restart, at its stored due time.
-    key / priority        → accepted but no-ops (the queue is totally ordered,
-        no message priority) — same degradation as Redis Streams.
+    key                   → the ORDERING UNIT, as on every other transport.
+        Same-key publishes reach this queue in call order (the Bus chains the
+        hand-offs); across keys nothing is promised. Rows are still claimed
+        ORDER BY id, so a single consumer sees each key's sequence intact.
+        This used to read "no-op, the queue is totally ordered" — it was not:
+        publish() is fire-and-forget and the hand-offs raced, so the row order
+        was the order threads won in. See docs/TECH_DEBT.md item 4.
+    priority              → accepted but a no-op (no priority lanes) — same
+        degradation as Redis Streams.
     ttl                   → enforced Bus-side at delivery (age check), so an
         expired event still produces its "ttl_expired" trace node.
 

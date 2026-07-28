@@ -29,7 +29,9 @@ CONSUMER IDENTITY (how replicas are recognized — Elastic Monolith core rule):
     distributed — an audit consumer reads the topics/streams directly.)
 
 UNIVERSAL HINTS (kwargs):
-- key: String. Strict ordering (Kafka/SQS).
+- key: String. The ordering unit: same-key publishes reach the transport
+  in call order, on every driver. Across keys nothing is promised (Kafka
+  orders per partition, SQS FIFO per MessageGroupId — same shape).
 - priority: Integer (1-10). Importance (RabbitMQ).
 - delay: Integer (seconds). Delivery schedule.
 - ttl: Float (seconds). Message expiration (Broker-side).
@@ -76,7 +78,6 @@ import inspect
 import os
 from datetime import datetime, timezone
 from typing import Callable, Optional, Dict, List, Tuple, Set
-from starlette.concurrency import run_in_threadpool
 from microcoreos import BaseTool
 from microcoreos import current_event_id_var, current_identity_var
 from tools.event_bus.envelope import EventEnvelope, TraceNode, TraceRecord, SubOptions  # noqa: F401 — re-export
@@ -101,6 +102,9 @@ class EventBusTool(BaseTool):
         self._failure_listeners: list = []
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._pending_tasks: Set[asyncio.Task] = set()
+        # Ordering unit → the last publish handed to the transport for it.
+        # See publish(): this is what keeps same-key publishes in call order.
+        self._publish_chain: Dict[str, asyncio.Task] = {}
         self._sub_options: Dict[Tuple[str, Callable], SubOptions] = {}
         # Chaos/ops pause (Issue 34): owner identities ("domain.Class", or a
         # bare domain prefix) whose deliveries are held. Deliberately NOT
@@ -254,10 +258,53 @@ class EventBusTool(BaseTool):
         
         print(f"[EventBus] 📣 {envelope.event} [{envelope.id[:8]}]")
 
-        # 2. Hand over to Driver (Fire and Forget)
-        task = asyncio.create_task(self._transport_publish(envelope))
+        # 2. Hand over to Driver — fire and forget for the CALLER, ordered
+        #    for the transport.
+        #
+        #    Publication stays decoupled: publish() returns without waiting for
+        #    the broker. What must not leak out of that is the ORDER. These
+        #    hand-offs used to race each other, so the order messages reached
+        #    the transport was the order threads happened to win in — and a
+        #    durable queue then stored, and delivered, that scrambled order
+        #    faithfully. Three publishes in a row could arrive 1, 0, 2.
+        #
+        #    Each publish now chains onto the previous one for its ordering
+        #    unit. The chain is built HERE, synchronously on the event loop,
+        #    which is the one point in this path where order is deterministic —
+        #    not left to task start order or lock fairness.
+        #
+        #    The unit is the partition key, falling back to the event name:
+        #    the guarantee every broker actually makes (Kafka orders per
+        #    partition, SQS FIFO per MessageGroupId, RabbitMQ per queue).
+        #    Different keys still publish in parallel; only same-key ones queue.
+        unit = envelope.key or envelope.event
+        previous = self._publish_chain.get(unit)
+        task = asyncio.create_task(self._transport_publish_after(previous, envelope))
+        self._publish_chain[unit] = task
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
+        task.add_done_callback(lambda t, u=unit: self._release_chain(u, t))
+
+    def _release_chain(self, unit: str, task: asyncio.Task) -> None:
+        """Drop a finished chain tail so `_publish_chain` cannot grow forever.
+
+        Only while it IS still the tail: if a later publish under the same unit
+        has already chained onto this task, removing it here would let the next
+        one start unordered.
+        """
+        if self._publish_chain.get(unit) is task:
+            del self._publish_chain[unit]
+
+    async def _transport_publish_after(self, previous, envelope: EventEnvelope) -> None:
+        if previous is not None:
+            # Wait for the predecessor to reach the transport, but never inherit
+            # its fate: one publish failing must not silently drop every later
+            # message under the same key.
+            try:
+                await previous
+            except Exception:
+                pass
+        await self._transport_publish(envelope)
 
     async def _transport_publish(self, envelope: EventEnvelope) -> None:
         """Universal software fallbacks (Issue 30) + hand-off to the driver.
@@ -344,7 +391,11 @@ class EventBusTool(BaseTool):
                     if inspect.iscoroutinefunction(callback):
                         result = await callback(envelope)
                     else:
-                        result = await run_in_threadpool(callback, envelope)
+                        # stdlib, not starlette: the bus must not depend on
+                        # the HTTP tool's framework — they are swapped
+                        # separately. to_thread copies the context, which
+                        # the event-id and identity vars ride on.
+                        result = await asyncio.to_thread(callback, envelope)
 
                     if envelope.reply_to and result is not None:
                         await self.publish(

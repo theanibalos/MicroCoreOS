@@ -21,7 +21,7 @@ MicroCoreOS uses a standardized **Event Envelope** (Pydantic model) for all mess
 | `parent_id` | str \| None | ID of the triggering event (causality chain) |
 | `correlation_id` | str \| None | Used internally for RPC request/response |
 | `reply_to` | str \| None | Reply channel name, used internally by `request()` |
-| `key` | str \| None | Partition key for ordered delivery (Kafka/SQS) |
+| `key` | str \| None | Ordering unit: same-key publishes keep call order, on every driver |
 | `priority` | int \| None | Priority level 1–10 (RabbitMQ) |
 | `delay` | int \| None | Seconds before delivery |
 | `ttl` | float \| None | Time-to-live in seconds (expired events are discarded) |
