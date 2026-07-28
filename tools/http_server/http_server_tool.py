@@ -102,6 +102,13 @@ AUTH VALIDATOR CONTRACT:
     # The returned payload is injected into data["_auth"] for the handler to use.
     # The token is extracted from: Authorization: Bearer <token>  OR  Cookie: access_token=<token>
 
+    # WHY THIS IS A CALLBACK. This tool must never import an auth tool: they are
+    # swapped separately, and one of them is not even installed by default
+    # (`microcoreos add auth`). A plugin receives both by injection and wires
+    # them together itself — composition lives in the plugin layer, never
+    # between tools. That decoupling is what let auth move out of the default
+    # project without one line changing here.
+
 
 REPLACEMENT STANDARD (implement this to swap the backend):
 ────────────────────────────────────────────────────────────────────────────────
