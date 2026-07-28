@@ -27,7 +27,8 @@ interface (`EventBusDriver`) where retries, DLQ, RPC and tracing are broker-agno
 Redis Streams, RabbitMQ, Kafka and a durable SQLite transport already shipped.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/microcoreos.svg)](https://pypi.org/project/microcoreos/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/theanibalos/MicroCoreOS/actions/workflows/ci.yml/badge.svg)](https://github.com/theanibalos/MicroCoreOS/actions)
 
 ---
@@ -53,7 +54,7 @@ uv run main.py                  # or: uv run microcoreos
 
 No configuration needed. SQLite is the default (zero setup). The Kernel discovers all plugins, injects dependencies, runs migrations, and starts the server.
 
-**Only the Kernel comes from the package.** Tools and domains are copied into your project, because installing and swapping infrastructure here is file placement — and you cannot move files inside `site-packages`. Optional infrastructure travels as extras: `uv add 'microcoreos[redis]'`, `[postgres]`, `[kafka]`, `[rabbitmq]`, `[s3]`, `[scheduler]`, or `[all]`.
+**Only the Kernel comes from the package.** Tools and domains are copied into your project, because installing and swapping infrastructure here is file placement — and you cannot move files inside `site-packages`. Optional infrastructure travels as extras: `uv add 'microcoreos[auth]'`, `[redis]`, `[postgres]`, `[kafka]`, `[rabbitmq]`, `[s3]`, `[scheduler]`, or `[all]`. Better still, `microcoreos add <extra>` does all three parts at once — the dependency, the source, and the `.env` keys.
 
 ---
 
@@ -103,9 +104,17 @@ Drop this file in `domains/products/plugins/`, restart, and it works. No `main.p
 
 ## What Makes It Different
 
-### ~360 functional lines of kernel. Pure stdlib. No external dependencies in core.
+### 366 functional lines of kernel. Pure stdlib. No external dependencies in core.
 
 The entire orchestration engine — DI, plugin discovery, tool lifecycle, fault tolerance — uses only Python's standard library.
+
+That is the code your app depends on, and it is the whole of it: booting loads
+`kernel`, `container`, `registry`, `context` and the two base classes, and
+nothing else. The rest of the package — the scaffolder, the extras catalog,
+`upgrade` — is the `microcoreos` command, build-time work that never executes
+inside your application. `tests/test_core_purity.py` enforces both halves of
+that: a third-party import in the kernel fails the suite, and so does the
+kernel importing the CLI half.
 
 ### DI by parameter name.
 
@@ -134,7 +143,7 @@ one review pass over your migration SQL. The full procedure is in
 
 This pattern works for any infrastructure: swap the event bus backend, the HTTP server, the auth mechanism — as long as the new tool has the same `name` and API, plugins keep working.
 
-Additional tools (PostgreSQL, Redis state, chaos testing) are available in extras/available_tools/. To activate, move them into tools/ — and if the new tool reuses an existing `name` (e.g. `redis_state` registers as `"state"`), move the tool it replaces out of tools/ first: only one tool per name may be discovered.
+Additional tools — PostgreSQL, Redis state, auth, S3, the scheduler, chaos — ship in `extras/` and install with `microcoreos add <name>`. If the new tool reuses an existing `name` (e.g. `redis_state` registers as `"state"`), move the tool it replaces out of `tools/` first: only one tool per name may be discovered.
 
 The Redis state swap is verified by a parity suite (`tests/tools/test_state_parity.py`): the same contract battery runs against the in-memory reference and against a real Redis, so the replacement is proven equivalent, not assumed.
 
@@ -158,25 +167,31 @@ The Kernel is "logic-free." `ToolProxy` observes and reports health but **never 
 
 ```
 MicroCoreOS/
-├── microcoreos/             # ~360 functional lines, zero external deps (the pip package)
-│   ├── kernel.py           # Discovery, DI, lifecycle
-│   ├── container.py        # DI container + ToolProxy (Health/Metrics)
-│   ├── registry.py         # Thread-safe system state
-│   ├── context.py          # causality & Identity context
-│   ├── base_plugin.py      # Plugin contract (11 lines)
-│   ├── base_tool.py        # Tool contract (24 lines)
-│   └── cli.py              # The `microcoreos` command
+├── microcoreos/             # the pip package — two halves that never mix
+│   ├── kernel.py           # ┐ Discovery, DI, lifecycle
+│   ├── container.py        # │ DI container + ToolProxy (Health/Metrics)
+│   ├── registry.py         # │ Thread-safe system state
+│   ├── context.py          # │ causality & Identity context      366 lines,
+│   ├── base_plugin.py      # │ Plugin contract (11 lines)        pure stdlib —
+│   ├── base_tool.py        # ┘ Tool contract (24 lines)          this is what
+│   │                       #                                     your app loads
+│   ├── cli.py              # ┐ The `microcoreos` command
+│   ├── scaffold.py         # │ `new` — materializes your source
+│   ├── catalog.py          # │ `add` — dependency + folders + .env
+│   └── upgrade.py          # ┘ `upgrade` — the SHA-256 baseline
 ├── tools/                   # Stateless, swappable infrastructure
 │   ├── http_server/        # FastAPI (REST + WebSocket + SSE)
 │   ├── sqlite/             # Relational DB — isolation + smart retries
 │   ├── event_bus/          # TTL + Retries + DLQ + Causal tracing
-│   ├── auth/               # JWT + bcrypt
 │   ├── telemetry/          # OpenTelemetry (optional)
 │   └── ...                 # logger, state, config, registry
 ├── domains/                 # Business logic
-│   ├── users/              # Full CRUD + auth + JWT + events
 │   ├── system/             # Observability endpoints
+│   ├── devtools/           # Boot-time linters
 │   └── {your_domain}/
+├── extras/                  # Available, not installed — `microcoreos add`
+│   ├── available_tools/    # auth, postgresql, redis_state, s3, scheduler...
+│   └── available_domains/  # users (auth), ping, scheduler, chaos
 └── AI_CONTEXT.md           # Auto-generated on every boot
 ```
 
@@ -207,14 +222,21 @@ MicroCoreOS/
 | `http`      | FastAPI gateway — REST, WebSocket, SSE, auto-generated OpenAPI |
 | `db`        | SQLite (default) or PostgreSQL — same API, drop-in swap at the tool-API level |
 | `event_bus` | Pub/sub + RPC + TTL + Retries + DLQ + causal tracing. Transports swap by env var: in-process (default), SQLite (durable, survives restarts), Redis Streams (distributed); RabbitMQ in extras |
-| `auth`      | JWT lifecycle + bcrypt password hashing                           |
 | `logger`    | Structured logging with sink pattern                              |
 | `state`     | Thread-safe in-memory key-value store                             |
 | `registry`  | Runtime introspection + metrics + health status                   |
 | `telemetry` | OpenTelemetry — auto-instruments all tool calls                   |
 | `config`    | Environment variable validation for plugins                       |
+| `context_manager` | Regenerates `AI_CONTEXT.md` on every boot                    |
 
-**Available in `extras/available_tools/` (move to `tools/` to activate):**
+`auth` is not in that table on purpose: it is an extra. A fresh project has no
+users table, no JWT and no `AUTH_SECRET_KEY` to set before it boots —
+`microcoreos add auth` installs the tool plus register, login, who-am-I and
+logout. `http` takes `auth_validator` as an optional callback and never imports
+auth, so nothing in a default project misses it.
+
+**Available as extras — `microcoreos add <name>` installs the dependency, moves
+the source and writes the `.env` keys in one command:**
 
 | Tool         | Description                                                              |
 | ------------ | ------------------------------------------------------------------------ |
@@ -223,6 +245,10 @@ MicroCoreOS/
 | `state`      | Redis-backed state — drop-in swap for in-memory StateTool                |
 | `rabbitmq`   | RabbitMQ **driver** for the Event Bus — transports swap by file, like tools: drop the `*_driver.py` into `tools/event_bus/` and set `EVENT_BUS_DRIVER=rabbitmq` |
 | `scheduler`  | Cron jobs + in-memory one-shots (APScheduler) |
+| `auth`       | JWT lifecycle + bcrypt hashing, plus register / login / who-am-I / logout |
+| `kafka`      | Kafka **driver** for the Event Bus, same file-placement swap as RabbitMQ |
+| `chaos`      | Fault injection and plugin pause/resume — never enable in production |
+| `ping`       | A single `GET /ping`. The hello-world you read for the shape, then delete |
 
 **Tools and the domains that need them.** The dependency runs one way — a
 plugin cannot exist without its tool, but a tool stands on its own. So the
@@ -273,10 +299,11 @@ pinpoints the plugin whose SQL or contract actually broke.
 
 ```python
 @pytest.mark.anyio
-async def test_create_user_persists_and_publishes(db, bus, auth):
-    # db  = SqliteTool on ":memory:" with the users migration applied
-    # bus = in-process EventBusTool; auth = real AuthTool
-    plugin = CreateUserPlugin(http=MagicMock(), db=db, event_bus=bus,
+@pytest.mark.migrations("users")
+async def test_create_user_persists_and_publishes(db, event_bus, auth):
+    # The fixtures are named after the Kernel's injection keys, so a test's
+    # signature and its plugin's signature are the same vocabulary.
+    plugin = CreateUserPlugin(http=MagicMock(), db=db, event_bus=event_bus,
                               logger=MagicMock(), auth=auth)
 
     result = await plugin.execute(
@@ -305,15 +332,17 @@ Quick Start · First Plugin Tutorial · Plugin Reference · Tools Reference · O
 Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
 
 - **Monolith track**: route-collision & table-ownership linters, automatic test
-  generation, `uv add microcoreos` (Core as an installable package)
+  generation. `uv add microcoreos` shipped in 0.1.0 (ROADMAP Issue 39)
 - **Distributed track**: event ACLs (Redis Streams, RabbitMQ, Kafka and the
   durable SQLite transport already shipped, all with crash-safe native
   delay via capability claims), runtime contracts via the schema catalog,
   distributed observability (export local, aggregate outside), transactional
   outbox (deferred until a real chain needs it)
-- Tool distribution — tools are **copied into your project**, not installed into
-  site-packages: you own them and can edit them, and swapping stays what it is
-  today, moving a file. Only the Core travels in the package (ROADMAP Issue 39)
+- Tool distribution — shipped. Tools are **copied into your project**, not
+  installed into site-packages: you own them and can edit them, and swapping
+  stays what it is today, moving a file. Only the Kernel travels in the
+  package, and `microcoreos upgrade` carries later fixes to the files you never
+  touched. Release procedure: [docs/RELEASING.md](docs/RELEASING.md)
 
 ---
 

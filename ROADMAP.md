@@ -367,30 +367,44 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 
 ---
 
-**Issue 39 — 🟢 Core as an installable package (`uv add microcoreos`) — scoped 2026-07-27, all 7 steps built 2026-07-27**
+**Issue 39 — ✅ Core as an installable package (`uv add microcoreos`) — scoped 2026-07-27, built 2026-07-27, PUBLISHED 2026-07-28**
 
-> **Status:** built and verified end to end. The wheel installs, `microcoreos
-> new` scaffolds a project that boots green and serves, `microcoreos add`
-> installs an extra in one command, and `microcoreos upgrade` reports and
-> applies upstream changes without touching local edits. **The only thing
-> left is publishing to PyPI** — name, account, release workflow.
+> **Status:** shipped. [`microcoreos 0.1.0` is on PyPI](https://pypi.org/project/microcoreos/),
+> published by tag through `.github/workflows/release.yml` — OIDC trusted
+> publishing, no API token anywhere. Rehearsed on TestPyPI first, which is what
+> it is for: the real run then failed once on a network timeout to
+> `upload.pypi.org` and a re-run fixed it, with nothing uploaded and the version
+> number intact.
 >
-> Known gaps and their cost are recorded in [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
+> Verified from a clean venv against the real index, not a path dependency:
+> `uv pip install 'microcoreos[auth]'` resolves, `microcoreos add postgres`
+> runs its own `uv add` without `--no-install` and lands asyncpg, and the
+> resulting project boots with 11 tools and 22 plugins.
 >
-> **The free-breaking window closes at that publish.** Nothing is released, so
-> every rename in this issue cost nothing. From the first upload onward three
-> things become compatibility surface: the five names re-exported from
+> Known gaps and their cost are recorded in [docs/TECH_DEBT.md](docs/TECH_DEBT.md),
+> where every item is now closed or a standing note.
+>
+> **The free-breaking window is closed.** Three things are compatibility
+> surface as of 0.1.0: the five names re-exported from
 > `microcoreos/__init__.py`, the `[project.optional-dependencies]` extra names
-> (`microcoreos add` and every doc reference them), and the
-> `.microcoreos/manifest.json` format — readers already tolerate missing keys
-> (`.get("moved", {})`), and must keep doing so.
+> as published (`auth`, `kafka`, `postgres`, `rabbitmq`, `redis`, `s3`,
+> `scheduler`, `all`), and the `.microcoreos/manifest.json` format — readers
+> already tolerate missing keys (`.get("moved", {})`), and must keep doing so.
 >
 > Built past the original checklist: `microcoreos add` (Issue 39 assumed manual
 > `mv`), `microcoreos upgrade` + the `.microcoreos/manifest.json` baseline
-> (was future work), a generated project README, `docs/CLI.md`, and the auth
-> starter — `create_user`/`login`/`get_me` materialize, so `tools/auth` is not
-> a tool you cannot use. `domains/ping` and the CRUD half of `domains/users`
-> still stay behind.
+> (was future work), a generated project README and `docs/CLI.md`.
+>
+> **Auth ended up an extra, not a starter.** The original plan materialized
+> `create_user`/`login`/`get_me` so `tools/auth` would not be a tool you cannot
+> use. Decided the other way on 2026-07-28: a framework should not impose a
+> users table, a roles model and a JWT flavour on a project that wants none,
+> nor make `AUTH_SECRET_KEY` a boot requirement for one that never logs anyone
+> in. `microcoreos add auth` installs the tool plus register, login, who-am-I
+> and **logout** — which had never materialized before, so every scaffolded
+> project shipped a login with no way out. `bcrypt` and `pyjwt` left the base
+> install with it; nothing else imported them. `ping` went the same way, since
+> AGENTS.md pointed every agent at a path no scaffolded project ever had.
 
 
 Only `core/` ships in the wheel (570 lines: Kernel, Container, Registry, the two

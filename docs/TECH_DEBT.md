@@ -7,10 +7,14 @@ would reasonably expect to work and does not, or works in a narrower way than it
 looks.
 
 Recorded 2026-07-27, after Issue 39 (Core as an installable package). Items 1,
-2, 5 and 6 were closed the same day; item 4 the day after, once the failure
-finally reproduced and turned out to be a real defect in `publish()` rather
-than the flaky test everyone assumed. Item 3 is blocked on publishing, and
-items 7 and 8 are notes rather than work — see each.
+2, 5 and 6 were closed the same day; items 3 and 4 the day after — item 4 once
+the failure finally reproduced and turned out to be a real defect in
+`publish()` rather than the flaky test everyone assumed, and item 3 by
+publishing 0.1.0 and resolving against the real index.
+
+**Every item here is now closed or a note.** 7 is the compatibility surface,
+frozen as of that release; 8 is what is unfinished on purpose. Nothing in this
+file is outstanding work.
 
 ---
 
@@ -162,14 +166,37 @@ runners do not offer.
 
 ---
 
-## 3. `microcoreos add` has never resolved against a real index
+## 3. `microcoreos add` had never resolved against a real index ✅ CLOSED
 
-`uv add 'microcoreos[postgres]'` works in every test because the package is a
-**local path dependency** already in the lockfile. Against a published PyPI
-release the resolution path is different and untested. The CI job passes
-`--no-install` for exactly this reason.
+`uv add 'microcoreos[postgres]'` used to work in every test only because the
+package was a **local path dependency** already in the lockfile. Against a
+published release the resolution path is different, and it was untested.
 
-**Cost:** one CI run after the first publish. **Why open:** nothing is published.
+**Verified on 2026-07-28**, against `microcoreos 0.1.0` on PyPI, from a clean
+venv with no path dependency and a single index:
+
+- `uv pip install 'microcoreos[auth]'` resolves, and the extra carries what its
+  tool imports — bcrypt 5.0.0 and pyjwt 2.13.0, which stopped being base
+  dependencies the day before.
+- `microcoreos add postgres` and `microcoreos add auth` run **without**
+  `--no-install`: the CLI's own `uv add` resolves from PyPI, rewrites the
+  project's dependency to `microcoreos[auth,postgres]`, and installs asyncpg
+  0.31.0, bcrypt and pyjwt into the project's venv.
+- The result boots: 11 tools, 22 plugins, System Ready, PostgresqlTool
+  connected to a real server.
+
+**`--no-install` stays in CI, and not out of caution.** That job installs the
+wheel it just built; letting the CLI run `uv add 'microcoreos[postgres]'` there
+would resolve `microcoreos` from PyPI and pull the *published* version into the
+project instead of the one under test. The job would then pass while testing an
+artefact nobody changed — the worst kind of green. The dependency-install half
+is exercised against the real index by hand at release time, as above, which is
+the only place it can be exercised honestly.
+
+One trap worth writing down, because it cost a wrong conclusion here: `uv add`
+operates on the **project's** venv, creating `app/.venv` — not the venv the
+`microcoreos` command was launched from. Checking the wrong one shows the
+dependency missing and looks exactly like a failure.
 
 ---
 
@@ -361,16 +388,17 @@ debt register if someone told it the path.
 
 ---
 
-## 7. Compatibility surface, frozen at the first publish
+## 7. Compatibility surface — frozen since 0.1.0 (2026-07-28)
 
-Nothing is released, so everything so far has been free to rename. From the
-first upload onward, three things become breaking to change:
+It is no longer hypothetical: `microcoreos 0.1.0` is on PyPI, so renaming any
+of these three breaks projects that already installed it.
 
 - The five names re-exported from `microcoreos/__init__.py` (`BasePlugin`,
   `BaseTool`, `ToolUnavailableError`, and the two context vars) — every
   generated plugin imports them.
-- The `[project.optional-dependencies]` extra names — `microcoreos add` and
-  every doc reference them by string.
+- The `[project.optional-dependencies]` extra names, as published:
+  `auth`, `kafka`, `postgres`, `rabbitmq`, `redis`, `s3`, `scheduler`, `all`.
+  `microcoreos add` and every doc reference them by string.
 - The `.microcoreos/manifest.json` format. Readers already tolerate missing
   keys (`.get("moved", {})`) and must keep doing so.
 
