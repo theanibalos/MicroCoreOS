@@ -13,40 +13,57 @@
 
 ## 🧱 Monolith Track — active
 
-**Issue 44 — 🟡 Tools in the package, materialized only on demand (scoped 2026-07-28)**
+**Issue 44 — 🟡 `tools/` is for YOUR tools (scoped 2026-07-28)**
 
-The direction: a project holds **plugins**, and `tools/` is empty until you want
-to change one. Today `new` copies nine tools you will likely never open — the
-bulk of the 101 files that make first contact heavy (Issue 43). An `eject`
-model inverts it: tools run from the package, and
-`microcoreos eject http` drops that one into `tools/` as your source when you
-actually intend to edit or replace it.
+The direction, in one rule: **the framework's tools live in the package and are
+maintained here; `tools/` in a user's project holds only the ones they wrote or
+ejected.** A project that uses nothing but what ships does not have a `tools/`
+directory at all — it is `domains/`, `main.py`, `.env`, `pyproject.toml`.
 
-**What decides is not "stable" — it is "would you ever edit or swap this".**
-Two groups, and only one of them is really yours:
+That rule is worth more than the earlier draft of this issue, which proposed
+hiding *some* tools (`registry`, `context_manager`, `telemetry`, `config`) and
+materializing the rest. That version needed a case-by-case defence of why `db`
+is yours and `registry` is not. This one needs no list.
 
-| Candidates to stay hidden | Must stay materialized |
-|---|---|
-| `registry`, `context_manager`, `telemetry`, `config` | `http`, `db`, `event_bus`, `state` |
+**What it buys:**
 
-The right column is the promise. "Scaling is a tool swap" and the whole
-REPLACEMENT STANDARD depend on those files being on disk and editable. The left
-column is framework plumbing that happens to be delivered as tools; hiding it
-costs the user nothing and shortens the first contact considerably.
+- **First contact stops being 101 files.** Almost all of them are tools nobody
+  opens (Issue 43). A project becomes what the user actually writes.
+- **`upgrade` stops being needed for tools.** They ship with the package and
+  move with it. The hardest feature in the codebase shrinks to what it is
+  really for: domains, and anything deliberately ejected.
+- **`add` stops moving folders.** Dependency plus an environment variable —
+  which is already exactly how `EVENT_BUS_DRIVER=kafka` selects a transport.
 
-**Half the mechanism already exists.** `EVENT_BUS_DRIVER={name}` selects a
-transport by environment variable without the file being anywhere special. The
-same selection could pick a packaged tool over a materialized one — and the
-precedence rule is already the natural one: a tool present in `tools/` wins,
-exactly as `redis_state` wins over `state` today by being the one on disk.
+**What does NOT change, and this is the point:** swappability. Write a tool
+with `name = "db"` into your own `tools/` and it wins over the packaged one.
+The REPLACEMENT STANDARD headers stay exactly as they are; only the origin of
+the default implementation moves.
 
-**What it costs, stated plainly.** `scaffold.py` opens by saying the
-install-and-swap model *is* file placement, and that none of it works against
-site-packages — read-only, and overwritten by the next upgrade. Every tool that
-moves into the package leaves that world: it cannot be edited, cannot be
-swapped by moving a file, and `microcoreos upgrade` has nothing to compare for
-it. That is a fine trade for `registry`; it is the end of the argument for
-`db`. The design work is drawing that line and defending it, not the code.
+**The five things to design, none of them large but none skippable:**
+
+1. **Precedence, stated and tested.** A tool in the project beats a packaged
+   tool of the same name. Today "only one tool per name may be discovered" is a
+   sentence in the README; it becomes load-bearing and needs a test.
+2. **What `eject` is.** `microcoreos eject http` copies that one tool out as
+   your source, records it in the manifest, and from then on `upgrade` treats
+   it like any other vendored file.
+3. **Reading without ejecting.** Today you learn the framework by opening
+   `tools/sqlite/sqlite_tool.py`. Hidden, a human loses that; an AI does not,
+   because `AI_CONTEXT.md` already carries every signature. Something like
+   `microcoreos show db` may be enough.
+4. **The linters must see packaged tools.** `DiscoveryNamingLinter` and
+   `ToolDocDriftLinter` scan `tools/` on disk. Half their subject moves.
+5. **The README's central claim changes.** "Tools and domains are copied into
+   your project — you own them" becomes "domains are yours; tools are the
+   framework's until you eject one". Arguably a better story — it is the Rails
+   and Django model with an escape hatch, instead of vendoring by default —
+   but it is the front page and it is a promise already made in 0.1.0.
+
+**Do not confuse this with walking back the thesis.** `scaffold.py` argues that
+install-and-swap *is* file placement, and that stays true for the case it was
+written for: your tools, your domains, your edits. What moves is only the
+default implementation of infrastructure the user never asked to own.
 
 ---
 
