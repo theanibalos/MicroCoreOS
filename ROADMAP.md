@@ -13,6 +13,43 @@
 
 ## 🧱 Monolith Track — active
 
+**Issue 44 — 🟡 Tools in the package, materialized only on demand (scoped 2026-07-28)**
+
+The direction: a project holds **plugins**, and `tools/` is empty until you want
+to change one. Today `new` copies nine tools you will likely never open — the
+bulk of the 101 files that make first contact heavy (Issue 43). An `eject`
+model inverts it: tools run from the package, and
+`microcoreos eject http` drops that one into `tools/` as your source when you
+actually intend to edit or replace it.
+
+**What decides is not "stable" — it is "would you ever edit or swap this".**
+Two groups, and only one of them is really yours:
+
+| Candidates to stay hidden | Must stay materialized |
+|---|---|
+| `registry`, `context_manager`, `telemetry`, `config` | `http`, `db`, `event_bus`, `state` |
+
+The right column is the promise. "Scaling is a tool swap" and the whole
+REPLACEMENT STANDARD depend on those files being on disk and editable. The left
+column is framework plumbing that happens to be delivered as tools; hiding it
+costs the user nothing and shortens the first contact considerably.
+
+**Half the mechanism already exists.** `EVENT_BUS_DRIVER={name}` selects a
+transport by environment variable without the file being anywhere special. The
+same selection could pick a packaged tool over a materialized one — and the
+precedence rule is already the natural one: a tool present in `tools/` wins,
+exactly as `redis_state` wins over `state` today by being the one on disk.
+
+**What it costs, stated plainly.** `scaffold.py` opens by saying the
+install-and-swap model *is* file placement, and that none of it works against
+site-packages — read-only, and overwritten by the next upgrade. Every tool that
+moves into the package leaves that world: it cannot be edited, cannot be
+swapped by moving a file, and `microcoreos upgrade` has nothing to compare for
+it. That is a fine trade for `registry`; it is the end of the argument for
+`db`. The design work is drawing that line and defending it, not the code.
+
+---
+
 **Issue 43 — 🟡 A fresh project has nothing to look at (scoped 2026-07-28)**
 
 Moving auth to an extra the same day 0.1.0 shipped cost the first impression,
@@ -49,6 +86,32 @@ who boots, sees `POST /users` in `/docs`, wonders where it lives and finds
 event together — has understood the whole thesis without being told. With
 twelve `/system` routes there is nothing to trace. What is lost is the proof,
 not the decoration.
+
+**Three stumbles observed live, 2026-07-28, by the framework's own author**
+following his own README on a clean machine. None of them is a code bug; all
+three are onboarding text, and none produced a message that pointed anywhere
+useful:
+
+1. `uv add microcoreos new .` instead of `uv run`. The two lines of the Quick
+   Start begin identically and do unrelated things. uv's error talks about
+   self-dependencies and the project name — nothing about the wrong subcommand.
+2. `uv add 'microcoreos[auth]'` and then a boot with no auth. That installs the
+   **dependency only**; the source stays in `extras/` where nothing discovers
+   it. **Nothing fails** — the system boots green with the feature simply
+   absent, which is the worst possible feedback. The README listed `uv add` as
+   the primary form and `microcoreos add` as "better still". Reversed now: the
+   one-step command is the form, and the extra is described as the piece it
+   installs.
+3. `microcoreos add auth` → `command not found`, then `microcoreos add <extra>`
+   → a bash syntax error from the angle brackets. The console script lives in
+   `.venv/bin`. **The docs had 28 bare `microcoreos ...` invocations against 3
+   with `uv run`** — including the NEXT_STEPS message `new` prints, which is
+   the single highest-traffic text in the product and told every user to type a
+   command that does not resolve.
+
+Fixed in NEXT_STEPS, the README and `docs/CLI.md` (which now states the prefix
+once, at the top, and that `<brackets>` are placeholders). The remaining bare
+invocations across the docs are worth a sweep.
 
 **Two moves, in order:**
 

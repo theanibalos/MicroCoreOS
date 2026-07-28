@@ -7,7 +7,9 @@ even though it starts from a completely different sys.path.
 
 import io
 import os
+import pickle
 import sys
+import types
 
 from microcoreos import cli
 
@@ -96,3 +98,35 @@ def test_env_is_loaded_from_the_project_not_from_the_package(tmp_path, monkeypat
 
     assert os.environ["MICROCOREOS_ENV_PROBE"] == "from-the-project"
     monkeypatch.delenv("MICROCOREOS_ENV_PROBE", raising=False)
+
+
+def test_dev_hands_watchfiles_only_picklable_things(tmp_path, monkeypatch):
+    """
+    watchfiles starts the reload child with multiprocessing's spawn method, so
+    everything it receives is pickled. `dev` used to pass two lambdas defined
+    inside itself and died on every single run with "Can't get local object
+    'dev.<locals>.<lambda>'" — the command was broken from the moment it
+    shipped, and the only test it had covered the missing-watchfiles path.
+
+    Pickling is the assertion because unpicklable is exactly what was wrong.
+    """
+    captured = {}
+
+    def fake_run_process(root, target=None, args=(), watch_filter=None, **kwargs):
+        captured.update(root=root, target=target, args=args, watch_filter=watch_filter)
+
+    monkeypatch.setitem(
+        sys.modules, "watchfiles", types.SimpleNamespace(run_process=fake_run_process)
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tools").mkdir()
+
+    assert cli.dev([]) == 0
+
+    pickle.dumps(captured["target"])
+    pickle.dumps(captured["watch_filter"])
+    pickle.dumps(captured["args"])
+
+    # And the filter still filters: sources reload, bytecode does not.
+    assert captured["watch_filter"](None, "domains/orders/plugins/x_plugin.py")
+    assert not captured["watch_filter"](None, "domains/orders/__pycache__/x.pyc")

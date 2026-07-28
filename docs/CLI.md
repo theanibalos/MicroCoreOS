@@ -11,6 +11,11 @@ microcoreos [run] [--boot-tool <tool>]           Boot the Kernel
 microcoreos dev                                  Boot with auto-reload
 ```
 
+**Every example below needs a `uv run` prefix** (or an activated venv): the
+console script lives in `.venv/bin`, so a bare `microcoreos` is "command not
+found". And `<angle brackets>` mark a placeholder — type the value, not the
+brackets.
+
 Except for `new`, run them from the root of a project — the directory holding
 `tools/`, `domains/` and `plans/`. Running elsewhere is refused rather than
 booting an empty system and calling it Ready.

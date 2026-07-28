@@ -134,6 +134,11 @@ def run(argv: list[str]) -> int:
     return 0
 
 
+def _watch_python_sources(change, path: str) -> bool:
+    """Which file changes trigger a reload. Module level so it can be pickled."""
+    return path.endswith(".py") and "__pycache__" not in path
+
+
 def dev(argv: list[str]) -> int:
     """Boot with auto-reload. watchfiles is a dev dependency, hence the lazy import."""
     _stdio_speaks_unicode()  # Reached without `main` as the root `cli.py` shim.
@@ -149,10 +154,17 @@ def dev(argv: list[str]) -> int:
     # The project root — not the package — is what gets watched and booted.
     root = _ensure_project_on_path()
 
+    # Everything handed to run_process must survive pickling: watchfiles starts
+    # the child with multiprocessing's SPAWN method, which serializes the target
+    # rather than inheriting it. Two lambdas defined right here used to sit in
+    # this call, and `microcoreos dev` died on every invocation with
+    # "Can't get local object 'dev.<locals>.<lambda>'". Module-level names
+    # pickle by reference; local ones cannot pickle at all.
     run_process(
         root,
-        target=lambda: run(argv),
-        watch_filter=lambda change, path: path.endswith(".py") and "__pycache__" not in path,
+        target=run,
+        args=(argv,),
+        watch_filter=_watch_python_sources,
     )
     return 0
 

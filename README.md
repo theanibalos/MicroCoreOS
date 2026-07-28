@@ -54,7 +54,28 @@ uv run main.py                  # or: uv run microcoreos
 
 No configuration needed. SQLite is the default (zero setup). The Kernel discovers all plugins, injects dependencies, runs migrations, and starts the server.
 
-**Only the Kernel comes from the package.** Tools and domains are copied into your project, because installing and swapping infrastructure here is file placement — and you cannot move files inside `site-packages`. Optional infrastructure travels as extras: `uv add 'microcoreos[auth]'`, `[redis]`, `[postgres]`, `[kafka]`, `[rabbitmq]`, `[s3]`, `[scheduler]`, or `[all]`. Better still, `microcoreos add <extra>` does all three parts at once — the dependency, the source, and the `.env` keys.
+**Only the Kernel comes from the package.** Tools and domains are copied into your project, because installing and swapping infrastructure here is file placement — and you cannot move files inside `site-packages`. Optional infrastructure installs in one step:
+
+```bash
+uv run microcoreos add auth
+```
+
+| Command | What lands in your project | Needs a service |
+|---|---|---|
+| `add auth` | `tools/auth` + `domains/users` — register, login, who-am-I, logout | no |
+| `add ping` | `domains/ping` — one `GET /ping`, the hello-world | no |
+| `add postgres` | `tools/postgresql` — replaces SQLite as `db`, same API | yes |
+| `add redis` | `tools/redis_state` — replaces the in-memory `state` | yes |
+| `add s3` | `tools/s3` — object storage, presigned URLs | yes |
+| `add scheduler` | `tools/scheduler` + `domains/scheduler` — cron and durable one-shots | no |
+| `add kafka` | a driver into `tools/event_bus/` + `EVENT_BUS_DRIVER=kafka` | yes |
+| `add rabbitmq` | a driver into `tools/event_bus/` + `EVENT_BUS_DRIVER=rabbitmq` | yes |
+| `add chaos` | `tools/chaos` + `domains/chaos` — fault injection. Never in production | no |
+
+`uv run microcoreos add` with no argument lists them too. Each one writes its
+own `.env` keys and never overwrites a value you already set.
+
+Use that rather than `uv add 'microcoreos[auth]'`. The extra is only the **dependency** — installing it alone leaves the source in `extras/`, where nothing discovers it, and the boot looks perfectly fine with the feature simply absent. `microcoreos add` does all three parts: the dependency, the source, and the `.env` keys.
 
 ---
 

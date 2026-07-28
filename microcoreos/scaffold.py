@@ -101,11 +101,13 @@ NEXT_STEPS = """
 
    Next:
      cd {target}
-     cp .env.example .env      # already done if you had no .env
-     microcoreos               # boot (or: uv run main.py)
+     uv run microcoreos              # boot
 
-   Optional infrastructure — dependency, source and .env in one command:
-     microcoreos add auth        (also: postgres, redis, s3, scheduler, kafka, rabbitmq, chaos)
+   Add auth, a database, a broker — dependency, source and .env in one step:
+     uv run microcoreos add auth     # also: ping postgres redis s3 scheduler kafka rabbitmq chaos
+
+   `uv run` is not optional: the command lives in .venv/bin, so a bare
+   `microcoreos` is "command not found" until you activate the venv.
 """
 
 

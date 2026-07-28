@@ -6,6 +6,7 @@ first test here is that it has not drifted from them.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -125,3 +126,19 @@ def test_the_auth_placeholder_actually_boots(monkeypatch):
         monkeypatch.setenv(name, value)
 
     AuthTool()  # raises if the placeholder would not have booted
+
+
+def test_the_readme_table_lists_every_extra():
+    """
+    The README documents each `microcoreos add` target in a table, and a table
+    written by hand drifts the moment someone adds an extra — which is how the
+    same README ended up claiming Python 3.10 and listing 5 of 9 extras.
+    """
+    from microcoreos.catalog import CATALOG
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    documented = {n for n in CATALOG if f"`add {n}`" in readme}
+
+    assert documented == set(CATALOG), (
+        f"README's extras table is out of date — missing: {sorted(set(CATALOG) - documented)}"
+    )
