@@ -13,6 +13,103 @@
 
 ## 🧱 Monolith Track — active
 
+**Issue 43 — 🟡 A fresh project has nothing to look at (scoped 2026-07-28)**
+
+Moving auth to an extra the same day 0.1.0 shipped cost the first impression,
+and the cost is bigger than it looked. A newly scaffolded project now serves:
+
+```
+12 routes, every one of them /system/*
+```
+
+Observability endpoints and no business feature. Yesterday the same command
+gave you `POST /users`, `POST /auth/login` and `GET /users/me` — a working CRUD
+with JWT and CSRF, on the first boot, with nothing configured. TECH_DEBT item 1
+recorded exactly this as the argument against ("a web framework whose default
+project cannot log anyone in is a strange default"). It was foreseen, and it is
+worse in practice than on paper.
+
+**Do not fix it by reverting.** The architectural case stands: a webhook
+receiver should not inherit a users table, a roles model, a JWT flavour and a
+mandatory `AUTH_SECRET_KEY`. Two different questions got the same answer by
+accident — *what should a default project contain* and *what should an
+evaluator see in sixty seconds*. They can be answered separately.
+
+**Why this is not a marketing item.** The comparison that matters is not
+`@app.get("/")` — that is a library, and this is an architecture. It is
+`full-stack-fastapi-template`: Docker, Traefik, Alembic, a React frontend,
+hundreds of files people fork and never finish reading. Against that, 101 files
+is modest, and the real claim is not "fewer files" but **the number of files
+you must understand does not grow with the project** — two, `AI_CONTEXT.md` and
+one plugin, no matter how large the codebase gets.
+
+The demo is the only thing that *demonstrates* that in sixty seconds. Someone
+who boots, sees `POST /users` in `/docs`, wonders where it lives and finds
+`domains/users/plugins/create_user_plugin.py` — one file, schema and logic and
+event together — has understood the whole thesis without being told. With
+twelve `/system` routes there is nothing to trace. What is lost is the proof,
+not the decoration.
+
+**Two moves, in order:**
+
+1. **The Quick Start becomes two commands** (no code): `microcoreos new my-app`
+   then `microcoreos add auth`. Whoever is evaluating sees what they used to;
+   whoever does not want auth simply does not type it.
+2. **`microcoreos new --demo`**: scaffold and install auth in one command, so
+   the sixty-second path stays one line while `new` on its own keeps giving a
+   clean project.
+
+---
+
+**Issue 42 — 🟡 Ship the tests with the code they test (scoped 2026-07-28)**
+
+A scaffolded project gets `pytest` configured and nothing to run: no `tests/`,
+no `conftest.py`, no fixtures. Yet the testing model is documented as a
+selling point — black-box plugins, fixtures named after the Kernel's injection
+keys so a test's signature and its plugin's signature are the same vocabulary.
+That `conftest.py` exists only in this repo, so anyone following the README has
+to rebuild it from scratch without knowing it is there.
+
+The principle is the vendoring one, already applied everywhere else: **if the
+code is yours, its tests are yours.** You own `tools/sqlite/sqlite_tool.py` —
+edit it and only its tests can tell you whether it still honours the contract.
+`microcoreos upgrade` would carry test fixes the same way it carries tool
+fixes.
+
+The split mirrors the kernel/distribution line drawn in `microcoreos/`
+(`tests/test_core_purity.py`):
+
+- **Ships:** `conftest.py`, `tests/helpers/`, the tests of the nine default
+  tools, the `devtools` linter tests and the `system` domain tests. Their
+  imports (`from tools.sqlite...`) are already identical in this repo and in a
+  user's project, so they travel unchanged.
+- **Does not ship:** `test_kernel.py`, `test_core.py`, `test_tool_proxy.py`,
+  `test_registry_collisions.py`, `test_cli.py`, `test_scaffold.py`,
+  `test_catalog.py`, `test_upgrade.py`, `test_core_purity.py` — all of them
+  test the package, which the user does not own and cannot edit.
+- **Travels with its extra:** `add postgres` should also place
+  `test_postgresql_tool.py`, `add auth` its plugin tests, and so on.
+
+**Two things to solve before it can be done, both verified:**
+
+1. **Extras tests import a path that moves.** They read
+   `from extras.available_domains.users.plugins...`, but `microcoreos add auth`
+   puts that code in `domains/users/`. Shipped as-is they would import
+   something that does not exist there. `add` already moves folders and records
+   the move in the manifest; rewriting that one import line while it moves is
+   mechanical, but it is a design decision nobody has made.
+2. **Fourteen test files need external services.** They must skip cleanly, not
+   error. `tests/test_postgresql_tool.py` currently *errors* with no Postgres
+   running (recorded in TECH_DEBT item 8's neighbourhood) — shipping that hands
+   every new user a red suite on day one.
+
+**Suggested order.** Phase 1 is the fixtures plus the default-tool tests: no
+obstacle, and it carries most of the value, since the common case is a user
+editing a tool they were given. Phase 2 is the extras, and it needs decisions 1
+and 2 first.
+
+---
+
 **Issue 14 — 🚀 Automatic Test Generation (1 Plugin = 1 Test)**
 
 Every new plugin should come with its own unit test automatically generated by the LLM.
@@ -27,129 +124,6 @@ Every new plugin should come with its own unit test automatically generated by t
 `test:` per feature and one `e2e_test:` per flow (validity rules 5 & 8 in
 `docs/PARALLEL_DEVELOPMENT.md`, chain helper in `tests/helpers/trace_chains.py`).
 Generation now has an explicit spec to target instead of inferring what to test.
-
----
-
-**Issue 34 — 🟢 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12, shipped 2026-07-19**
-
-✅ **Shipped complete** (`extras/available_domains/chaos/plugins/chaos_control_plugin.py`,
-suite `tests/test_chaos_control.py`): tool faults (`down`/`slow`/`flaky`,
-global and caller-scoped, via raw-method wrapping — zero core changes) AND
-plugin pause/resume (`POST /system/chaos/off|on {plugin}`; a bare domain
-prefix pauses the whole domain). Pause mechanics as designed: private
-`_paused_owners` sets in the bus and http tools (NOT public API — the Issue
-36 freeze holds), mutated only by the chaos plugin. One documented deviation
-from the letter below: in_process deliveries are HELD (accumulate as pending
-tasks, drain on resume) rather than dropped — uniform "backlog drains"
-semantics on every rung; ephemerality is preserved at crash level. Durable
-transports hold BEFORE ack, so the backlog accumulates broker-side (proven:
-sqlite rows stay on disk while paused, drain in order on resume). Paused
-owners' HTTP endpoints answer 503 with routes still mounted. Original design:
-
-The chaos extras cover boot-time failure; what's missing is **runtime** chaos
-for live experiments (MicroCoreBench drives it, but any operator can). Two
-interception points, one tiny generic primitive each:
-
-- **Plugins → pause/resume at the Bus** (NOT unsubscribe — that loses the
-  callback for re-enabling and collides with auto-unsubscribe). The bus
-  already names every subscription `domain.Class.method`: add a paused-owner
-  set the delivery loop checks. The right semantics fall out of each driver
-  for free: `in_process` drops the delivery (honest ephemeral), durable
-  groups simply stop claiming rows → **backlog accumulates while paused,
-  drains on resume** — the "turn payment off under traffic, watch it
-  recover" experiment with zero queue logic written. HTTP side: the paused
-  owner's endpoints answer 503 (routes are not unmounted — simulates the
-  service being down for callers).
-- **Tools → fault modes at the ToolProxy**, the universal interception seam
-  (metrics/spans/DEAD-marking already live there): `down` (every call
-  raises), `slow` (injected sleep), `flaky` (fail N%). This exercises the
-  plugins' real Safe-Error paths, trips the registry's existing DEAD
-  marking, and lights up tool_health/the City — every defense reacts as if
-  real, because for them it IS real.
-
-`ChaosControlPlugin` (extras/available_domains/chaos/, never active by
-default) exposes it: `POST /system/chaos/{off|on}` {plugin},
-`/system/chaos/latency` {event, seconds}, `/system/chaos/fail` {event, rate},
-`/system/chaos/tool` {name, mode}. Every chaos action publishes a
-`system.chaos.*` event so experiments appear causally in the trace tree.
-
-**Zero core changes.** The paused set is a Bus feature (`tools/event_bus/` —
-a tool, not core), the 503s are an http-tool feature, and tool faults need no
-proxy change: the chaos plugin takes `container` (the sanctioned meta-plugin
-introspection precedent) and wraps raw tool methods via `get_raw_tools()`,
-keeping originals for restore — calls still traverse the ToolProxy, so DEAD
-marking, metrics and spans react unmodified. All monkey-patching stays inside
-the deletable extras plugin. A first-class fault flag in the ToolProxy (same
-family as its existing DEAD marking) is the promotion path ONLY if wrapping
-proves fragile — the usual decision-log criterion. Auto-unsubscribe interplay
-is free observability: sustained injected failures end in
-`system.subscriber.dropped` after 5 final failures, causally traced.
-
----
-
-**Issue 37 — 🟡 Field-constraint divergence linter (the third cross-feature invariant)**
-
-`1 file = 1 feature` trades duplication for locality — a deliberate and correct
-trade when the writer is an agent: rewriting 120 lines is cheaper than
-refactoring an abstraction, and "change it in 40 places" stopped being work the
-moment traversing the repo became a 10-minute job. **The residual cost is not
-effort, it is detection**: nobody greps for a rule they forgot exists.
-
-The failure mode is **semantic divergence** — not duplicated code, a duplicated
-*decision* that later drifts apart:
-
-- three plugins validate price as `gt=0`, `ge=0` and `> 0`; three tests pass;
-  the system now holds three definitions of "valid price" and nothing is red.
-- two consumers of the same event re-declare tolerant-reader models, one reads
-  `total_cents`, the other `total`; the publisher renames; one breaks loudly,
-  the other silently takes a default.
-
-**Why no existing check sees it:** a black-box test proves that a feature
-honors ITS contract, never that two features honor THE SAME contract.
-Divergence is a property *between* features, so no per-feature test can observe
-it, by construction rather than by omission. This is the same species as
-**Issue 26 (route collisions)** and **Issue 27 (table ownership)** — cross-feature
-invariants, invisible from inside any single plugin, and both solved the same
-way. This is the third one.
-
-**Mechanism** — `FieldDivergenceLinterPlugin` (own plugin: the linters were
-split one-rule-per-plugin, see Issue 15), static AST scan of
-`domains/*/plugins/*_plugin.py` at boot, same timing as the table-ownership
-scan (no pre-mount hook needed: unlike routes, nothing here is registered at
-runtime). Collect every `pydantic.Field(...)` constraint per field name, group,
-and warn when the same name carries different constraints. Registry metadata
-`field_divergence_warnings`; surfaced in `GET /system/lint`; warn-only at boot,
-hard gate in CI (Issue 33). Zero core changes.
-
-**Status: scope 2 shipped** (request/response fields compared within a domain —
-`tests/test_field_divergence_linter.py`). Scopes 1 (event payload keys compared
-fleet-wide, pairs with the event-contract linter) and 3 (opt-in list of
-system-wide names) remain open — each needs its own comparison rule, and
-shipping them as one would blur exactly the scoping distinction above.
-
-**The design constraint that decides whether it is useful or noise:** a shared
-NAME is not a shared CONCEPT — `name` in users and `name` in products differ
-legitimately, and a naive global comparison produces enough false positives to
-be ignored, which is worse than not shipping it. Scoping rule:
-
-1. **Event payload keys → compare fleet-wide.** Here the contract genuinely IS
-   shared (the publisher owns it, Issue 29), so any divergence is a real defect
-   and pairs with the existing event-contract linter.
-2. **Request/response fields → compare within a domain only.** Same domain,
-   same name, different constraints is almost always a mistake.
-3. **Cross-domain request fields → silent by default**, opt-in via an explicit
-   list of names declared as system-wide (`email`, `price`, `currency`...).
-
-Out of scope by decision: divergence expressed in SQL predicates
-(`deleted_at IS NULL` vs `status = 'active'` for "active user"). That is semantic
-equivalence of queries, not constraint comparison — a different and much harder
-problem, and pretending to cover it would make the linter dishonest about what
-it checks.
-
-**Trigger:** the first time two plugins are found disagreeing on a constraint in
-a real project. The `Examples/` products are where that shows up — same
-discipline as every other issue here: the pattern is specified now, the code
-ships when a real chain demands it.
 
 ---
 
@@ -367,6 +341,166 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 
 ---
 
+**Issue 40 — 🟡 Drop-in marketplace for tools and domains (deferred until one exists)**
+
+WordPress plugins land in `wp-content/plugins/`, VS Code extensions in the
+user's extensions dir — both are "drop a directory in, it is discovered". The
+Kernel already works exactly that way, and Issue 39's materialization model is
+the same mechanism, so the marketplace needs no new architecture. What it needs
+is the surrounding machinery, and one bug fixed first.
+
+**Blocker — tool name collisions are silent.** `core/container.py` does
+`self._tools[tool.name] = ToolProxy(...)` with no existence check. Two tools
+claiming `"state"` and the second silently replaces the first; `list_tools()`
+reports one. Worse, *which* one wins depends on registration order, which comes
+from the `asyncio.gather` in `_setup_tool` — the same non-determinism already
+visible in the tool ordering of a regenerated `AI_CONTEXT.md`. Today this is
+survivable because README tells you to move the replaced tool out of `tools/`
+first, by hand. With third parties publishing, a coin flip per boot is not
+survivable. `tests/test_registry_collisions.py` covers the PLUGIN case (solved
+by the domain prefix); the tool case is uncovered. Fix: fail loudly in
+`register()`. Small, and independent of everything else here.
+
+**Already in place — the acceptance gate.** The hardest part of a marketplace
+is answering "does this stranger's tool really honour the contract?", and the
+answer is already executable: `tests/tools/test_db_parity.py`,
+`test_state_parity.py`, `test_event_bus_broker_parity.py`, `test_s3_parity.py`.
+A tool published as `db` must pass the db parity suite. Written for Issue 22,
+reusable as-is.
+
+**Still missing:** a manifest per tool/domain (name, version, author, which
+contract it implements, which env vars it reads — `get_interface_description()`
+already carries part of this); a CLI (`microcoreos add X`, which is just
+automating the `mv` from `extras/available_tools/`); and a trust story, since
+drop-in code runs at boot with full access — the security history of WordPress
+plugins is the cautionary tale. Worth deciding before third parties publish,
+not before.
+
+---
+
+## 🌐 Distributed Track — active
+
+**Issue 16 — 🌐 Event ACL enforcement (trimmed 2026-07-11)**
+
+*The driver work originally listed here lives in Issue 18 (Redis Streams
+already proved zero-code scaling: a domain moves to a separate instance by
+copying its folder). What remains of this issue is ACL only.*
+
+The `billing` domain should be the only one authorized to publish
+`invoice.paid`. The source of truth already exists: the formal plan declares
+every event's publisher (`publishes:`), and the schema catalog names the
+owning domain per event. Enforcement point: the bus (tool level) at publish
+time, reading an ACL derived from the plan/catalog.
+
+---
+
+**Issue 23 — 🟡 Runtime event contracts (Dynamic Event Guard) — simplified 2026-07-11**
+
+The `EventContractLinterPlugin` is static analysis of local code: if the
+consumer lives in ANOTHER instance, it cannot see it. The path is now concrete
+thanks to typed payloads:
+
+1. Each instance serves its own contract catalog (`/system/events/schemas`).
+   The **union of the fleet's catalogs IS the system contract** — mechanically
+   comparable across instances, no remote static analysis needed.
+2. With the Kafka driver (Issue 18), produce-time payload enforcement is
+   delegated to the broker's Schema Registry, fed from the same catalog.
+
+---
+
+**Issue 24 — 🟡 Distributed observability — decided 2026-07-11: export local, aggregate outside**
+
+**Each replica exports what it sees; an external platform aggregates the
+fleet. No custom aggregator gets built here** (same discipline as Issue 13:
+don't rebuild what the platform layer already solves). By signal:
+
+- **Causal tree**: in distributed mode every event transits the shared broker,
+  so fleet-wide causality is read at the broker itself — an external consumer
+  over the topics/streams (since the 2026-07-19 wildcard removal, Issue 36,
+  this is broker tooling, not a Bus subscription). Verified: envelopes carry
+  `id`/`parent_id` across instances intact.
+- **Spans & tool metrics**: genuinely per-process → OTel (already integrated)
+  exports per replica; Jaeger/Tempo/Prometheus aggregate. Building our own
+  aggregator would be rebuilding Tempo.
+- **Health & lint** (`/system/status`, `/system/lint`): per replica, correct
+  as-is — the orchestrator/load balancer that already watches each replica is
+  the aggregator.
+- Exploratory (kept): **event locality** — deliver an event in the local
+  instance without a broker round-trip when the consumer lives there.
+
+---
+
+**Issue 28 — 🟡 Transactional Outbox (deferred by decision, 2026-07-11)**
+
+Deliberately NOT implemented yet — same criterion as Issue 13 (rate limiting):
+a pattern is specified now; code ships only when a real feature demands it.
+
+**The problem it solves — atomicity, not durability.** Today a plugin commits
+its business INSERT and then publishes; if the process dies between the two,
+the event is lost. This gap is NOT covered by a distributed broker: Kafka's
+log protects the event from the broker onwards, and offsets/consumer-groups
+protect the consumer side — nothing protects the segment between the business
+DB commit and the publish reaching the broker. For the same reason the outbox
+can never live inside the event bus (a bus with its own storage is a dual
+write again, and that storage is exactly what Kafka already provides). The
+outbox row must be written **in the same business-DB transaction** as the
+business data — so it lives where that transaction is visible: the plugin layer.
+
+**Design (follows the Issue 19 precedent — a tool never uses other tools;
+compose in the plugin layer):**
+- Migration in `system`: table `event_outbox` (id, event, payload JSON,
+  created_at, published_at NULL).
+- The pattern: the business plugin writes its INSERT **and** the outbox INSERT
+  inside the same `db.transaction()` block.
+- `OutboxRelayPlugin`: scheduler cron (beat replica only) reads unpublished
+  rows, `bus.publish()`es them (payloads are typed — Issue 29), marks
+  `published_at`. Delivery is at-least-once; consumers are already required to
+  be idempotent by the bus contract.
+  **Note (2026-07-27):** it depends on the `scheduler` tool, which is now an
+  extra (Issue 39). So it cannot live in `domains/system` — a mandatory plugin
+  cannot depend on an optional tool. It belongs either in the scheduler
+  domain's bundle (`extras/available_domains/scheduler/`) or in a bundle of
+  its own; its migration travels with it, not with `system`.
+- Transport-agnostic by construction: swapping the bus driver to Kafka changes
+  nothing in the relay — the outbox is what makes that swap safe for
+  features that need it.
+
+**Implementation trigger:** the first real feature whose event chain answers
+"no" to the plan checklist question *"can this chain tolerate losing the event
+if the process dies between commit and publish?"* (payments, orders, billing).
+The formal plan format carries that checkbox per chain (`atomic_with_db`).
+
+**Known trade-offs of the pattern itself (true of any correct implementation,
+not an implementation bug):**
+- **Breaks `parent_id` causality across that one hop.** The relay publishes
+  from its own cron tick, not from inside the original request's context —
+  so the event it relays becomes a new causal root in `/system/traces/tree`
+  instead of nesting under the transaction that produced it. It stays
+  correlatable by whatever business key is in its payload (e.g. `order_id`),
+  just not by `parent_id`. Gaining commit+publish atomicity costs the direct
+  causal edge for that specific hop; every other hop keeps nesting normally.
+- **The relay only sees what existed at query time.** A chain of N links that
+  are all `atomic_with_db` needs N relay ticks to fully resolve — each link
+  only writes the next link's outbox row after its own tick already read its
+  batch. Under sustained failures this can stretch out unpredictably with no
+  way to ask "how many ticks are left to drain." A natural low-cost
+  complement when this ships: `GET /system/outbox/pending` (count + oldest
+  unpublished row).
+- **Atomicity on the publish side doesn't imply atomicity on the consume
+  side.** `atomic_with_db` only protects the commit→publish segment;
+  `idempotent: true` on the receiving link is a separate, unenforced claim.
+  If the dedupe check behind it lives in process memory (not a persisted
+  read/write against a table), a restart resets it exactly like a
+  non-atomic publish would lose an event — the same durability requirement
+  that motivates the outbox applies symmetrically to the consumer's own
+  idempotency check.
+
+---
+
+## ✅ Decision Log (completed)
+
+### Foundations & DX
+
 **Issue 39 — ✅ Core as an installable package (`uv add microcoreos`) — scoped 2026-07-27, built 2026-07-27, PUBLISHED 2026-07-28**
 
 > **Status:** shipped. [`microcoreos 0.1.0` is on PyPI](https://pypi.org/project/microcoreos/),
@@ -405,7 +539,6 @@ FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_t
 > project shipped a login with no way out. `bcrypt` and `pyjwt` left the base
 > install with it; nothing else imported them. `ping` went the same way, since
 > AGENTS.md pointed every agent at a path no scaffolded project ever had.
-
 
 Only `core/` ships in the wheel (570 lines: Kernel, Container, Registry, the two
 base classes, the identity ContextVars). Everything else — `tools/` (4.9k),
@@ -600,44 +733,335 @@ the package-per-tool model rejected above.
 
 ---
 
-**Issue 40 — 🟡 Drop-in marketplace for tools and domains (deferred until one exists)**
+**Issue 34 — 🟢 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12, shipped 2026-07-19**
 
-WordPress plugins land in `wp-content/plugins/`, VS Code extensions in the
-user's extensions dir — both are "drop a directory in, it is discovered". The
-Kernel already works exactly that way, and Issue 39's materialization model is
-the same mechanism, so the marketplace needs no new architecture. What it needs
-is the surrounding machinery, and one bug fixed first.
+✅ **Shipped complete** (`extras/available_domains/chaos/plugins/chaos_control_plugin.py`,
+suite `tests/test_chaos_control.py`): tool faults (`down`/`slow`/`flaky`,
+global and caller-scoped, via raw-method wrapping — zero core changes) AND
+plugin pause/resume (`POST /system/chaos/off|on {plugin}`; a bare domain
+prefix pauses the whole domain). Pause mechanics as designed: private
+`_paused_owners` sets in the bus and http tools (NOT public API — the Issue
+36 freeze holds), mutated only by the chaos plugin. One documented deviation
+from the letter below: in_process deliveries are HELD (accumulate as pending
+tasks, drain on resume) rather than dropped — uniform "backlog drains"
+semantics on every rung; ephemerality is preserved at crash level. Durable
+transports hold BEFORE ack, so the backlog accumulates broker-side (proven:
+sqlite rows stay on disk while paused, drain in order on resume). Paused
+owners' HTTP endpoints answer 503 with routes still mounted. Original design:
 
-**Blocker — tool name collisions are silent.** `core/container.py` does
-`self._tools[tool.name] = ToolProxy(...)` with no existence check. Two tools
-claiming `"state"` and the second silently replaces the first; `list_tools()`
-reports one. Worse, *which* one wins depends on registration order, which comes
-from the `asyncio.gather` in `_setup_tool` — the same non-determinism already
-visible in the tool ordering of a regenerated `AI_CONTEXT.md`. Today this is
-survivable because README tells you to move the replaced tool out of `tools/`
-first, by hand. With third parties publishing, a coin flip per boot is not
-survivable. `tests/test_registry_collisions.py` covers the PLUGIN case (solved
-by the domain prefix); the tool case is uncovered. Fix: fail loudly in
-`register()`. Small, and independent of everything else here.
+The chaos extras cover boot-time failure; what's missing is **runtime** chaos
+for live experiments (MicroCoreBench drives it, but any operator can). Two
+interception points, one tiny generic primitive each:
 
-**Already in place — the acceptance gate.** The hardest part of a marketplace
-is answering "does this stranger's tool really honour the contract?", and the
-answer is already executable: `tests/tools/test_db_parity.py`,
-`test_state_parity.py`, `test_event_bus_broker_parity.py`, `test_s3_parity.py`.
-A tool published as `db` must pass the db parity suite. Written for Issue 22,
-reusable as-is.
+- **Plugins → pause/resume at the Bus** (NOT unsubscribe — that loses the
+  callback for re-enabling and collides with auto-unsubscribe). The bus
+  already names every subscription `domain.Class.method`: add a paused-owner
+  set the delivery loop checks. The right semantics fall out of each driver
+  for free: `in_process` drops the delivery (honest ephemeral), durable
+  groups simply stop claiming rows → **backlog accumulates while paused,
+  drains on resume** — the "turn payment off under traffic, watch it
+  recover" experiment with zero queue logic written. HTTP side: the paused
+  owner's endpoints answer 503 (routes are not unmounted — simulates the
+  service being down for callers).
+- **Tools → fault modes at the ToolProxy**, the universal interception seam
+  (metrics/spans/DEAD-marking already live there): `down` (every call
+  raises), `slow` (injected sleep), `flaky` (fail N%). This exercises the
+  plugins' real Safe-Error paths, trips the registry's existing DEAD
+  marking, and lights up tool_health/the City — every defense reacts as if
+  real, because for them it IS real.
 
-**Still missing:** a manifest per tool/domain (name, version, author, which
-contract it implements, which env vars it reads — `get_interface_description()`
-already carries part of this); a CLI (`microcoreos add X`, which is just
-automating the `mv` from `extras/available_tools/`); and a trust story, since
-drop-in code runs at boot with full access — the security history of WordPress
-plugins is the cautionary tale. Worth deciding before third parties publish,
-not before.
+`ChaosControlPlugin` (extras/available_domains/chaos/, never active by
+default) exposes it: `POST /system/chaos/{off|on}` {plugin},
+`/system/chaos/latency` {event, seconds}, `/system/chaos/fail` {event, rate},
+`/system/chaos/tool` {name, mode}. Every chaos action publishes a
+`system.chaos.*` event so experiments appear causally in the trace tree.
+
+**Zero core changes.** The paused set is a Bus feature (`tools/event_bus/` —
+a tool, not core), the 503s are an http-tool feature, and tool faults need no
+proxy change: the chaos plugin takes `container` (the sanctioned meta-plugin
+introspection precedent) and wraps raw tool methods via `get_raw_tools()`,
+keeping originals for restore — calls still traverse the ToolProxy, so DEAD
+marking, metrics and spans react unmodified. All monkey-patching stays inside
+the deletable extras plugin. A first-class fault flag in the ToolProxy (same
+family as its existing DEAD marking) is the promotion path ONLY if wrapping
+proves fragile — the usual decision-log criterion. Auto-unsubscribe interplay
+is free observability: sustained injected failures end in
+`system.subscriber.dropped` after 5 final failures, causally traced.
 
 ---
 
-## 🌐 Distributed Track — active
+**Issue 41 — ✅ Module identity, tool modularization & discovery by convention (2026-07-27 session)**
+
+Four changes, in dependency order — each one was the precondition for the next.
+
+- **Loader imports by name, not by path.** `_load_modules_from_dir` built module
+  objects with `spec_from_file_location` under a synthetic `mod_*` name. Any file
+  the Kernel loaded AND someone imported normally therefore existed **twice**,
+  with two distinct copies of every class it defined — `isinstance` between them
+  False. The codebase had already grown two workarounds for this (a warning in
+  the driver contract saying "do NOT import EventEnvelope yourself", and an
+  `isinstance` replaced by MRO name-matching in `_driver_from_env`); both are
+  now deleted. `importlib.import_module` shares one object through `sys.modules`,
+  so the class a plugin imports is the class the Kernel discovered.
+- **The four large tools split** (13 modules where there were 4 files), safe only
+  after the above: `sqlite_tool` 986→591 (`errors`/`transaction`/`migrations`),
+  `http_server_tool` 907→558 (`context`/`pipeline`), `event_bus_tool` 591→455
+  (`envelope`/`drivers`), `context_tool` 527→161 (`scanners`/`renderers`).
+  Pure moves, verified line-by-line; `AI_CONTEXT.md` byte-identical afterwards.
+  Symbols external code imported from the old addresses are re-exported (marked
+  `# noqa: F401` — ruff cannot see that four drivers import `EventBusDriver`
+  from `event_bus_tool` by that exact path, and `--fix` would delete them).
+- **Discovery narrowed to `*_tool.py` / `*_plugin.py`.** The walker imported 22
+  files under `tools/` to find 11 tools. Importing a file that CANNOT hold a tool
+  is not free: `redis_streams_driver.py` imports `redis` at module level, so a
+  core without redis installed reported a boot error for a transport nobody
+  selected — a hard blocker for Issue 39. The convention holds perfectly across
+  the repo (11/11 tools, 28/28 plugins, extras included) and was already relied
+  on by `tests/helpers/active_db.py` for this exact reason. Note the filter is
+  the FILENAME, not "imports base_tool": `redis_streams_driver.py` and
+  `sqlite/errors.py` both import from `core.base_tool` (for
+  `ToolUnavailableError`) and are not tools.
+- **`DiscoveryNamingLinterPlugin`** — the mandatory other half: a misnamed file
+  is no longer an error, it is simply never found, and the only runtime symptom
+  is a plugin reporting `Missing tools: x` from a domain nobody touched. AST
+  scan over `tools/`, `domains/` and `extras/` (extras included because those
+  files are activated by moving them in — a wrong name there detonates the day
+  someone swaps it). Verified live: renaming `state_tool.py` drops the Kernel
+  from 11 tools to 10 in silence, and the linter names it.
+
+Also fixed on the way, pre-existing and unrelated: the `SQLiteDriver` queue
+(`EVENT_BUS_SQLITE_PATH`, default `event_bus_queue.db` at the repo root) leaked
+state between runs — under `EVENT_BUS_DRIVER=sqlite` the second run of the bus
+suite failed on rows left by the first. 11 test files built a bare
+`EventBusTool()`, so the fix is one autouse fixture in a new `tests/conftest.py`
+rather than per-file patches. No test depended on the leftover to pass.
+
+**Issue 1 — ✅ Domain-level AI_CONTEXT.md**
+Each domain is summarized in the auto-generated `AI_CONTEXT.md` (tables,
+endpoints, events emitted with payload keys, events consumed, dependencies,
+plugins). The AI reads this instead of code to know what exists.
+
+**Issue 2 — ✅ Standardized validation pattern**
+`pydantic.Field` with explicit constraints is the only accepted pattern for
+request schemas. Documented in `INSTRUCTIONS_FOR_AI.md`.
+
+**Issue 11 — ✅ Normalize 422 validation errors to standard envelope**
+`RequestValidationError` handler in `HttpServerTool.setup()` returns the
+standard `{"success": bool, "error": ..., "details": ...}` envelope. All HTTP
+responses use the same envelope regardless of error type.
+
+**Issue 12 — ✅ Scheduler tool**
+Implemented as `tools/scheduler/` (APScheduler backend, zero infra). API:
+`add_job(cron_expr, callback)`, `add_one_shot(run_at, callback)`,
+`remove_job(job_id)`, `list_jobs()`. Swappable to Celery beat via the same
+replacement standard. See Issue 19 for the N-replica singleton pattern.
+
+**Issue 13 — ✅ Rate limiting (resolved as a pattern, NOT as a tool — decision 2026-06-10)**
+Decision: **no tool is created**. The problem splits into two layers and neither needs one:
+- **Volumetric/anonymous (per-IP, anti-abuse, DDoS)** → edge infrastructure
+  (nginx/gateway/CDN), not the monolith's concern. Documented in `docs/ELASTIC_DEPLOYMENT.md`.
+- **Identity-aware (per user/API key/plan)** → business policy on top of a
+  primitive that already exists: `state.increment(key, ttl=window)` → 429 +
+  `Retry-After`. Pattern documented in `INSTRUCTIONS_FOR_AI.md` ("Rate Limiting
+  Pattern"). With RedisStateTool swapped in, the limit is distributed for free.
+
+The proposed tool (`check(key, limit, window)`) was ~5 lines over `state` and
+would have duplicated its Redis backend. The only uncovered value: sliding
+window — promote to a tool only if a real use case demands it.
+
+### Contracts & Governance
+
+**Issue 5 — ✅ Event contract validation**
+`EventContractLinterPlugin` (devtools domain): static AST cross-check of every
+publish site's payload keys vs every subscriber's required keys, exposed at
+`GET /system/lint`. Extended by Issue 29 (typed payloads).
+
+**Issue 15 — ✅ Architecture linters (Anti-Drift + Isolation)**
+- **Domain Isolation Enforcer**: no cross-domain imports, verified at boot.
+- **Anti-Drift Guard**: every public Tool method must be documented in
+  `get_interface_description()`; discrepancies mark the Tool with `WARNING`.
+- **Split one-rule-per-plugin (2026-07-27 session)**: shipped as a single
+  `ArchitectureLinterPlugin` accumulating four checks (15, 26, 27) until
+  Issue 37 would have made it five. Now `domain_isolation_`, `tool_doc_drift_`,
+  `table_ownership_`, `route_collision_` and `field_divergence_linter_plugin.py`
+  in devtools — same registry keys, so `GET /system/lint` is unchanged. Each
+  declares only the tools it uses (only the route linter takes `http`) and one
+  failing check no longer takes the other four down with it. Shared file
+  enumeration in `domains/devtools/lint/plugin_sources.py`.
+  Tests: one file per linter, `tests/test_*_linter.py`.
+
+**Issue 29 — ✅ Typed event payloads, schema catalog & plan format v2 (2026-07-11 session)**
+- **Convention**: the publisher owns the event contract — `XxxPayload(BaseModel)`
+  inline in the publisher plugin, published via bare `.model_dump()`; consumers
+  are tolerant readers (re-declare only the fields they need, never import the
+  publisher's model). Documented in `INSTRUCTIONS_FOR_AI.md` + AI_CONTEXT rule 11.
+- **Linter**: resolves `Payload(...).model_dump()` statically (direct and via
+  variables); raw-dict publishes flagged `UNTYPED_PAYLOAD` (info, advisory);
+  `model_dump(args)` honestly reported as `UNKNOWN_PAYLOAD`.
+- **`GET /system/events/schemas`**: event → JSON Schema catalog from the real
+  Pydantic classes — the Schema Registry seed for the Kafka driver (Issue 18).
+- **Plan format v2** (`docs/PARALLEL_DEVELOPMENT.md`): flows declare happy path
+  + sad-path checklist per link (retries, idempotency, DLQ watcher,
+  `atomic_with_db` → Issue 28, compensation → saga) and an e2e chain test
+  (helper `tests/helpers/trace_chains.py`). Four workflow levels in
+  `.agent/workflows/`: feature-plan, new-domain, multi-domain-plan, new-tool.
+
+**Issue 26 — ✅ Route-collision linter (2026-07-17 session)**
+Implemented inside the architecture linter (its own plugin since the
+2026-07-27 split, see Issue 15). Timing was the
+real problem: plugins' `on_boot()` run concurrently (`asyncio.gather`), so a
+plugin-side check would race other plugins' `add_endpoint()` calls. Solution:
+a **generic** http-tool capability, `register_pre_mount_hook(hook)` — the tool
+invokes registered hooks once from its own `on_boot_complete()` (the first
+point where every plugin has definitely registered), passing the buffered
+endpoints as `{method, path, owner}` (owner = the `domain.ClassName` identity
+the Kernel stamps on every plugin). Duplicate `(method, path)` → warning
+listing both owners; registry metadata `route_collisions`; surfaced in
+`GET /system/lint`. Zero core changes. Runtime backstop for plan rule 1.
+
+**Issue 27 — ✅ Table-ownership linter (2026-07-17 session)**
+Also an architecture linter (its own plugin since the 2026-07-27 split, see
+Issue 15): scans `domains/*/migrations/*.sql` at
+boot, extracts `CREATE TABLE [IF NOT EXISTS]` names, warns when one table is
+declared by more than one domain (the second `IF NOT EXISTS` silently no-ops
+against the wrong schema). Registry metadata `table_ownership_warnings`;
+surfaced in `GET /system/lint`. Runtime backstop for plan rules 2/14 — it
+covers code written outside the plan workflow, which the plan validator
+cannot see.
+
+**Issue 37 — ✅ Field-constraint divergence linter (built 2026-07-27, closed 2026-07-28)**
+
+`1 file = 1 feature` trades duplication for locality — a deliberate and correct
+trade when the writer is an agent: rewriting 120 lines is cheaper than
+refactoring an abstraction, and "change it in 40 places" stopped being work the
+moment traversing the repo became a 10-minute job. **The residual cost is not
+effort, it is detection**: nobody greps for a rule they forgot exists.
+
+The failure mode is **semantic divergence** — not duplicated code, a duplicated
+*decision* that later drifts apart:
+
+- three plugins validate price as `gt=0`, `ge=0` and `> 0`; three tests pass;
+  the system now holds three definitions of "valid price" and nothing is red.
+- two consumers of the same event re-declare tolerant-reader models, one reads
+  `total_cents`, the other `total`; the publisher renames; one breaks loudly,
+  the other silently takes a default.
+
+**Why no existing check sees it:** a black-box test proves that a feature
+honors ITS contract, never that two features honor THE SAME contract.
+Divergence is a property *between* features, so no per-feature test can observe
+it, by construction rather than by omission. This is the same species as
+**Issue 26 (route collisions)** and **Issue 27 (table ownership)** — cross-feature
+invariants, invisible from inside any single plugin, and both solved the same
+way. This is the third one.
+
+**Mechanism** — `FieldDivergenceLinterPlugin` (own plugin: the linters were
+split one-rule-per-plugin, see Issue 15), static AST scan of
+`domains/*/plugins/*_plugin.py` at boot, same timing as the table-ownership
+scan (no pre-mount hook needed: unlike routes, nothing here is registered at
+runtime). Collect every `pydantic.Field(...)` constraint per field name, group,
+and warn when the same name carries different constraints. Registry metadata
+`field_divergence_warnings`; surfaced in `GET /system/lint`; warn-only at boot,
+hard gate in CI (Issue 33). Zero core changes.
+
+**Status: scope 2 shipped** (request/response fields compared within a domain —
+`tests/test_field_divergence_linter.py`). Scopes 1 (event payload keys compared
+fleet-wide, pairs with the event-contract linter) and 3 (opt-in list of
+system-wide names) remain open — each needs its own comparison rule, and
+shipping them as one would blur exactly the scoping distinction above.
+
+**The design constraint that decides whether it is useful or noise:** a shared
+NAME is not a shared CONCEPT — `name` in users and `name` in products differ
+legitimately, and a naive global comparison produces enough false positives to
+be ignored, which is worse than not shipping it. Scoping rule:
+
+1. **Event payload keys → compare fleet-wide.** Here the contract genuinely IS
+   shared (the publisher owns it, Issue 29), so any divergence is a real defect
+   and pairs with the existing event-contract linter.
+2. **Request/response fields → compare within a domain only.** Same domain,
+   same name, different constraints is almost always a mistake.
+3. **Cross-domain request fields → silent by default**, opt-in via an explicit
+   list of names declared as system-wide (`email`, `price`, `currency`...).
+
+Out of scope by decision: divergence expressed in SQL predicates
+(`deleted_at IS NULL` vs `status = 'active'` for "active user"). That is semantic
+equivalence of queries, not constraint comparison — a different and much harder
+problem, and pretending to cover it would make the linter dishonest about what
+it checks.
+
+**Trigger:** the first time two plugins are found disagreeing on a constraint in
+a real project. The `Examples/` products are where that shows up — same
+discipline as every other issue here: the pattern is specified now, the code
+ships when a real chain demands it.
+
+**Closed 2026-07-28.** It was built and the flag was never lowered:
+`domains/devtools/plugins/field_divergence_linter_plugin.py` (178 lines),
+10 tests, and it runs green on every boot. The waiver mechanism shipped
+with it — a declaration carries `json_schema_extra={"divergence_ok": ...}`
+with a reason, drops out of the comparison rather than silencing the field,
+and an empty reason is not honoured. That is what let a scaffolded project
+boot with zero warnings instead of a permanent one nobody would read
+(docs/TECH_DEBT.md item 1).
+
+**Issue 35 — ✅ Plan `contract:` for phase-0 tools & checklist coverage (2026-07-17 session)**
+- **`contract:`** — a NEW tool in `phase_0.tools` now declares its method
+  signatures + return shapes in the plan, so the phase 0 author writes it
+  1:1 ("never inventing a method" — same rule as `columns:` for migrations).
+  It is a handoff, not a second source of truth: after the phase 0 boot,
+  `AI_CONTEXT.md` carries the real interface and is what the wave reads.
+  Replacements declare no contract (the reference tool's header spec is the
+  contract). Documented in `docs/PARALLEL_DEVELOPMENT.md` + `new-tool.md`.
+- **Validity rule 15 (advisory)** — `POST /system/plan/validate` now
+  cross-checks every task path the plan declares against the execution
+  checklist (`plans/active_plan.md`): a task missing from the checklist is
+  never dispatched and the checklist reaches all-`[x]` with the feature
+  silently absent. Path-or-basename matching, and the check skips itself for
+  checklists sharing zero paths with the plan (drafts). Zero new procedures —
+  it rides the validate call the orchestrator already makes.
+
+**Issue 32 — ✅ Plan format v3 (crash points, proofs) & mechanical plan validator (2026-07-12 session)**
+- **Format v3** (`docs/PARALLEL_DEVELOPMENT.md`): per-feature `db:` persistence
+  contract (black-box contract = input + output + storage + events); per-flow
+  `durability` (the "in-flight event dies with the process" crash point —
+  connects the plan to the Issue 31 driver ladder), `sad_path_test` and
+  `rpc_links` (timeout is RPC's one failure mode); per-link `idempotency_test`
+  (the double-delivery proof — "idempotent" was a claim, at-least-once rests
+  on it). Idempotency now mandatory where `retries > 0` OR the flow is durable
+  (durable transports re-deliver after a crash even with zero retries).
+- **Crash-test split**: redelivery is proven once by the transport
+  (kill-and-reboot suite, Issue 31); flows prove only their side — idempotency.
+  No feature ever writes a kill test. Sad-path chains assert via the existing
+  helper: `_dlq.<event>` publishes inside the failing delivery's context, so
+  `assert_chain(tree, ["x", "_dlq.x"])` works with no new machinery.
+- **Validator**: `PlanValidatorPlugin` (devtools domain) —
+  `POST /system/plan/validate` takes the plan (YAML or JSON) and executes all
+  15 validity rules against the plan AND the live system (routes via AST scan,
+  tables via migrations, events via registry metadata + bus subscribers,
+  driver via env). ERRORS = invalid plan; WARNINGS = advisory (e.g. durable
+  flow on `in_process`). "Mechanically checkable" became literal: the
+  orchestrator validates with a tool, not with attention.
+
+---
+
+**Issue 33 — ✅ devtools domain & CI lint gate (2026-07-12 session)**
+- **The split**: `domains/system/` was hosting two families — runtime
+  observability (traces, metrics, status, streams: production needs these)
+  and development tooling (both linters, the schema catalog, the plan
+  validator: the AI/orchestrator needs these). The second family moved to
+  `domains/devtools/` — a deployment that wants a smaller surface deletes the
+  folder and nothing else changes (each plugin is one self-contained file).
+  Routes keep their documented `/system/*` paths (the contract is the path,
+  not the folder); registry metadata moved to the `devtools` key.
+- **Advisory at boot, hard gate in CI** — made literal on both halves:
+  the full pytest suite already gates event contracts and now also domain
+  isolation over the real repo (`test_real_repo_has_no_isolation_violations`);
+  the `smoke-boot` CI job now curls `/system/lint` on the booted system and
+  fails the pipeline on any arch violation, tool drift, or event contract
+  warning (drift needs live tools, so the smoke boot is where it can gate).
+  Boot linters stay warn-only by design: a running system is never blocked.
+
+---
+
+### Transport & Durability
 
 **Issue 18 — 🟢 Distributed Event Bus drivers (Redis Streams ✅ / Kafka ✅ / RabbitMQ ✅)**
 
@@ -804,327 +1228,6 @@ Deferred driver optimizations — each with its written trigger, none is a gap:
   Trigger: the first handler whose natural implementation is not idempotent.
 
 ---
-
-**Issue 16 — 🌐 Event ACL enforcement (trimmed 2026-07-11)**
-
-*The driver work originally listed here lives in Issue 18 (Redis Streams
-already proved zero-code scaling: a domain moves to a separate instance by
-copying its folder). What remains of this issue is ACL only.*
-
-The `billing` domain should be the only one authorized to publish
-`invoice.paid`. The source of truth already exists: the formal plan declares
-every event's publisher (`publishes:`), and the schema catalog names the
-owning domain per event. Enforcement point: the bus (tool level) at publish
-time, reading an ACL derived from the plan/catalog.
-
----
-
-**Issue 23 — 🟡 Runtime event contracts (Dynamic Event Guard) — simplified 2026-07-11**
-
-The `EventContractLinterPlugin` is static analysis of local code: if the
-consumer lives in ANOTHER instance, it cannot see it. The path is now concrete
-thanks to typed payloads:
-
-1. Each instance serves its own contract catalog (`/system/events/schemas`).
-   The **union of the fleet's catalogs IS the system contract** — mechanically
-   comparable across instances, no remote static analysis needed.
-2. With the Kafka driver (Issue 18), produce-time payload enforcement is
-   delegated to the broker's Schema Registry, fed from the same catalog.
-
----
-
-**Issue 24 — 🟡 Distributed observability — decided 2026-07-11: export local, aggregate outside**
-
-**Each replica exports what it sees; an external platform aggregates the
-fleet. No custom aggregator gets built here** (same discipline as Issue 13:
-don't rebuild what the platform layer already solves). By signal:
-
-- **Causal tree**: in distributed mode every event transits the shared broker,
-  so fleet-wide causality is read at the broker itself — an external consumer
-  over the topics/streams (since the 2026-07-19 wildcard removal, Issue 36,
-  this is broker tooling, not a Bus subscription). Verified: envelopes carry
-  `id`/`parent_id` across instances intact.
-- **Spans & tool metrics**: genuinely per-process → OTel (already integrated)
-  exports per replica; Jaeger/Tempo/Prometheus aggregate. Building our own
-  aggregator would be rebuilding Tempo.
-- **Health & lint** (`/system/status`, `/system/lint`): per replica, correct
-  as-is — the orchestrator/load balancer that already watches each replica is
-  the aggregator.
-- Exploratory (kept): **event locality** — deliver an event in the local
-  instance without a broker round-trip when the consumer lives there.
-
----
-
-**Issue 28 — 🟡 Transactional Outbox (deferred by decision, 2026-07-11)**
-
-Deliberately NOT implemented yet — same criterion as Issue 13 (rate limiting):
-a pattern is specified now; code ships only when a real feature demands it.
-
-**The problem it solves — atomicity, not durability.** Today a plugin commits
-its business INSERT and then publishes; if the process dies between the two,
-the event is lost. This gap is NOT covered by a distributed broker: Kafka's
-log protects the event from the broker onwards, and offsets/consumer-groups
-protect the consumer side — nothing protects the segment between the business
-DB commit and the publish reaching the broker. For the same reason the outbox
-can never live inside the event bus (a bus with its own storage is a dual
-write again, and that storage is exactly what Kafka already provides). The
-outbox row must be written **in the same business-DB transaction** as the
-business data — so it lives where that transaction is visible: the plugin layer.
-
-**Design (follows the Issue 19 precedent — a tool never uses other tools;
-compose in the plugin layer):**
-- Migration in `system`: table `event_outbox` (id, event, payload JSON,
-  created_at, published_at NULL).
-- The pattern: the business plugin writes its INSERT **and** the outbox INSERT
-  inside the same `db.transaction()` block.
-- `OutboxRelayPlugin`: scheduler cron (beat replica only) reads unpublished
-  rows, `bus.publish()`es them (payloads are typed — Issue 29), marks
-  `published_at`. Delivery is at-least-once; consumers are already required to
-  be idempotent by the bus contract.
-  **Note (2026-07-27):** it depends on the `scheduler` tool, which is now an
-  extra (Issue 39). So it cannot live in `domains/system` — a mandatory plugin
-  cannot depend on an optional tool. It belongs either in the scheduler
-  domain's bundle (`extras/available_domains/scheduler/`) or in a bundle of
-  its own; its migration travels with it, not with `system`.
-- Transport-agnostic by construction: swapping the bus driver to Kafka changes
-  nothing in the relay — the outbox is what makes that swap safe for
-  features that need it.
-
-**Implementation trigger:** the first real feature whose event chain answers
-"no" to the plan checklist question *"can this chain tolerate losing the event
-if the process dies between commit and publish?"* (payments, orders, billing).
-The formal plan format carries that checkbox per chain (`atomic_with_db`).
-
-**Known trade-offs of the pattern itself (true of any correct implementation,
-not an implementation bug):**
-- **Breaks `parent_id` causality across that one hop.** The relay publishes
-  from its own cron tick, not from inside the original request's context —
-  so the event it relays becomes a new causal root in `/system/traces/tree`
-  instead of nesting under the transaction that produced it. It stays
-  correlatable by whatever business key is in its payload (e.g. `order_id`),
-  just not by `parent_id`. Gaining commit+publish atomicity costs the direct
-  causal edge for that specific hop; every other hop keeps nesting normally.
-- **The relay only sees what existed at query time.** A chain of N links that
-  are all `atomic_with_db` needs N relay ticks to fully resolve — each link
-  only writes the next link's outbox row after its own tick already read its
-  batch. Under sustained failures this can stretch out unpredictably with no
-  way to ask "how many ticks are left to drain." A natural low-cost
-  complement when this ships: `GET /system/outbox/pending` (count + oldest
-  unpublished row).
-- **Atomicity on the publish side doesn't imply atomicity on the consume
-  side.** `atomic_with_db` only protects the commit→publish segment;
-  `idempotent: true` on the receiving link is a separate, unenforced claim.
-  If the dedupe check behind it lives in process memory (not a persisted
-  read/write against a table), a restart resets it exactly like a
-  non-atomic publish would lose an event — the same durability requirement
-  that motivates the outbox applies symmetrically to the consumer's own
-  idempotency check.
-
----
-
-## ✅ Decision Log (completed)
-
-### Foundations & DX
-
-**Issue 41 — ✅ Module identity, tool modularization & discovery by convention (2026-07-27 session)**
-
-Four changes, in dependency order — each one was the precondition for the next.
-
-- **Loader imports by name, not by path.** `_load_modules_from_dir` built module
-  objects with `spec_from_file_location` under a synthetic `mod_*` name. Any file
-  the Kernel loaded AND someone imported normally therefore existed **twice**,
-  with two distinct copies of every class it defined — `isinstance` between them
-  False. The codebase had already grown two workarounds for this (a warning in
-  the driver contract saying "do NOT import EventEnvelope yourself", and an
-  `isinstance` replaced by MRO name-matching in `_driver_from_env`); both are
-  now deleted. `importlib.import_module` shares one object through `sys.modules`,
-  so the class a plugin imports is the class the Kernel discovered.
-- **The four large tools split** (13 modules where there were 4 files), safe only
-  after the above: `sqlite_tool` 986→591 (`errors`/`transaction`/`migrations`),
-  `http_server_tool` 907→558 (`context`/`pipeline`), `event_bus_tool` 591→455
-  (`envelope`/`drivers`), `context_tool` 527→161 (`scanners`/`renderers`).
-  Pure moves, verified line-by-line; `AI_CONTEXT.md` byte-identical afterwards.
-  Symbols external code imported from the old addresses are re-exported (marked
-  `# noqa: F401` — ruff cannot see that four drivers import `EventBusDriver`
-  from `event_bus_tool` by that exact path, and `--fix` would delete them).
-- **Discovery narrowed to `*_tool.py` / `*_plugin.py`.** The walker imported 22
-  files under `tools/` to find 11 tools. Importing a file that CANNOT hold a tool
-  is not free: `redis_streams_driver.py` imports `redis` at module level, so a
-  core without redis installed reported a boot error for a transport nobody
-  selected — a hard blocker for Issue 39. The convention holds perfectly across
-  the repo (11/11 tools, 28/28 plugins, extras included) and was already relied
-  on by `tests/helpers/active_db.py` for this exact reason. Note the filter is
-  the FILENAME, not "imports base_tool": `redis_streams_driver.py` and
-  `sqlite/errors.py` both import from `core.base_tool` (for
-  `ToolUnavailableError`) and are not tools.
-- **`DiscoveryNamingLinterPlugin`** — the mandatory other half: a misnamed file
-  is no longer an error, it is simply never found, and the only runtime symptom
-  is a plugin reporting `Missing tools: x` from a domain nobody touched. AST
-  scan over `tools/`, `domains/` and `extras/` (extras included because those
-  files are activated by moving them in — a wrong name there detonates the day
-  someone swaps it). Verified live: renaming `state_tool.py` drops the Kernel
-  from 11 tools to 10 in silence, and the linter names it.
-
-Also fixed on the way, pre-existing and unrelated: the `SQLiteDriver` queue
-(`EVENT_BUS_SQLITE_PATH`, default `event_bus_queue.db` at the repo root) leaked
-state between runs — under `EVENT_BUS_DRIVER=sqlite` the second run of the bus
-suite failed on rows left by the first. 11 test files built a bare
-`EventBusTool()`, so the fix is one autouse fixture in a new `tests/conftest.py`
-rather than per-file patches. No test depended on the leftover to pass.
-
-**Issue 1 — ✅ Domain-level AI_CONTEXT.md**
-Each domain is summarized in the auto-generated `AI_CONTEXT.md` (tables,
-endpoints, events emitted with payload keys, events consumed, dependencies,
-plugins). The AI reads this instead of code to know what exists.
-
-**Issue 2 — ✅ Standardized validation pattern**
-`pydantic.Field` with explicit constraints is the only accepted pattern for
-request schemas. Documented in `INSTRUCTIONS_FOR_AI.md`.
-
-**Issue 11 — ✅ Normalize 422 validation errors to standard envelope**
-`RequestValidationError` handler in `HttpServerTool.setup()` returns the
-standard `{"success": bool, "error": ..., "details": ...}` envelope. All HTTP
-responses use the same envelope regardless of error type.
-
-**Issue 12 — ✅ Scheduler tool**
-Implemented as `tools/scheduler/` (APScheduler backend, zero infra). API:
-`add_job(cron_expr, callback)`, `add_one_shot(run_at, callback)`,
-`remove_job(job_id)`, `list_jobs()`. Swappable to Celery beat via the same
-replacement standard. See Issue 19 for the N-replica singleton pattern.
-
-**Issue 13 — ✅ Rate limiting (resolved as a pattern, NOT as a tool — decision 2026-06-10)**
-Decision: **no tool is created**. The problem splits into two layers and neither needs one:
-- **Volumetric/anonymous (per-IP, anti-abuse, DDoS)** → edge infrastructure
-  (nginx/gateway/CDN), not the monolith's concern. Documented in `docs/ELASTIC_DEPLOYMENT.md`.
-- **Identity-aware (per user/API key/plan)** → business policy on top of a
-  primitive that already exists: `state.increment(key, ttl=window)` → 429 +
-  `Retry-After`. Pattern documented in `INSTRUCTIONS_FOR_AI.md` ("Rate Limiting
-  Pattern"). With RedisStateTool swapped in, the limit is distributed for free.
-
-The proposed tool (`check(key, limit, window)`) was ~5 lines over `state` and
-would have duplicated its Redis backend. The only uncovered value: sliding
-window — promote to a tool only if a real use case demands it.
-
-### Contracts & Governance
-
-**Issue 5 — ✅ Event contract validation**
-`EventContractLinterPlugin` (devtools domain): static AST cross-check of every
-publish site's payload keys vs every subscriber's required keys, exposed at
-`GET /system/lint`. Extended by Issue 29 (typed payloads).
-
-**Issue 15 — ✅ Architecture linters (Anti-Drift + Isolation)**
-- **Domain Isolation Enforcer**: no cross-domain imports, verified at boot.
-- **Anti-Drift Guard**: every public Tool method must be documented in
-  `get_interface_description()`; discrepancies mark the Tool with `WARNING`.
-- **Split one-rule-per-plugin (2026-07-27 session)**: shipped as a single
-  `ArchitectureLinterPlugin` accumulating four checks (15, 26, 27) until
-  Issue 37 would have made it five. Now `domain_isolation_`, `tool_doc_drift_`,
-  `table_ownership_`, `route_collision_` and `field_divergence_linter_plugin.py`
-  in devtools — same registry keys, so `GET /system/lint` is unchanged. Each
-  declares only the tools it uses (only the route linter takes `http`) and one
-  failing check no longer takes the other four down with it. Shared file
-  enumeration in `domains/devtools/lint/plugin_sources.py`.
-  Tests: one file per linter, `tests/test_*_linter.py`.
-
-**Issue 29 — ✅ Typed event payloads, schema catalog & plan format v2 (2026-07-11 session)**
-- **Convention**: the publisher owns the event contract — `XxxPayload(BaseModel)`
-  inline in the publisher plugin, published via bare `.model_dump()`; consumers
-  are tolerant readers (re-declare only the fields they need, never import the
-  publisher's model). Documented in `INSTRUCTIONS_FOR_AI.md` + AI_CONTEXT rule 11.
-- **Linter**: resolves `Payload(...).model_dump()` statically (direct and via
-  variables); raw-dict publishes flagged `UNTYPED_PAYLOAD` (info, advisory);
-  `model_dump(args)` honestly reported as `UNKNOWN_PAYLOAD`.
-- **`GET /system/events/schemas`**: event → JSON Schema catalog from the real
-  Pydantic classes — the Schema Registry seed for the Kafka driver (Issue 18).
-- **Plan format v2** (`docs/PARALLEL_DEVELOPMENT.md`): flows declare happy path
-  + sad-path checklist per link (retries, idempotency, DLQ watcher,
-  `atomic_with_db` → Issue 28, compensation → saga) and an e2e chain test
-  (helper `tests/helpers/trace_chains.py`). Four workflow levels in
-  `.agent/workflows/`: feature-plan, new-domain, multi-domain-plan, new-tool.
-
-**Issue 26 — ✅ Route-collision linter (2026-07-17 session)**
-Implemented inside the architecture linter (its own plugin since the
-2026-07-27 split, see Issue 15). Timing was the
-real problem: plugins' `on_boot()` run concurrently (`asyncio.gather`), so a
-plugin-side check would race other plugins' `add_endpoint()` calls. Solution:
-a **generic** http-tool capability, `register_pre_mount_hook(hook)` — the tool
-invokes registered hooks once from its own `on_boot_complete()` (the first
-point where every plugin has definitely registered), passing the buffered
-endpoints as `{method, path, owner}` (owner = the `domain.ClassName` identity
-the Kernel stamps on every plugin). Duplicate `(method, path)` → warning
-listing both owners; registry metadata `route_collisions`; surfaced in
-`GET /system/lint`. Zero core changes. Runtime backstop for plan rule 1.
-
-**Issue 27 — ✅ Table-ownership linter (2026-07-17 session)**
-Also an architecture linter (its own plugin since the 2026-07-27 split, see
-Issue 15): scans `domains/*/migrations/*.sql` at
-boot, extracts `CREATE TABLE [IF NOT EXISTS]` names, warns when one table is
-declared by more than one domain (the second `IF NOT EXISTS` silently no-ops
-against the wrong schema). Registry metadata `table_ownership_warnings`;
-surfaced in `GET /system/lint`. Runtime backstop for plan rules 2/14 — it
-covers code written outside the plan workflow, which the plan validator
-cannot see.
-
-**Issue 35 — ✅ Plan `contract:` for phase-0 tools & checklist coverage (2026-07-17 session)**
-- **`contract:`** — a NEW tool in `phase_0.tools` now declares its method
-  signatures + return shapes in the plan, so the phase 0 author writes it
-  1:1 ("never inventing a method" — same rule as `columns:` for migrations).
-  It is a handoff, not a second source of truth: after the phase 0 boot,
-  `AI_CONTEXT.md` carries the real interface and is what the wave reads.
-  Replacements declare no contract (the reference tool's header spec is the
-  contract). Documented in `docs/PARALLEL_DEVELOPMENT.md` + `new-tool.md`.
-- **Validity rule 15 (advisory)** — `POST /system/plan/validate` now
-  cross-checks every task path the plan declares against the execution
-  checklist (`plans/active_plan.md`): a task missing from the checklist is
-  never dispatched and the checklist reaches all-`[x]` with the feature
-  silently absent. Path-or-basename matching, and the check skips itself for
-  checklists sharing zero paths with the plan (drafts). Zero new procedures —
-  it rides the validate call the orchestrator already makes.
-
-**Issue 32 — ✅ Plan format v3 (crash points, proofs) & mechanical plan validator (2026-07-12 session)**
-- **Format v3** (`docs/PARALLEL_DEVELOPMENT.md`): per-feature `db:` persistence
-  contract (black-box contract = input + output + storage + events); per-flow
-  `durability` (the "in-flight event dies with the process" crash point —
-  connects the plan to the Issue 31 driver ladder), `sad_path_test` and
-  `rpc_links` (timeout is RPC's one failure mode); per-link `idempotency_test`
-  (the double-delivery proof — "idempotent" was a claim, at-least-once rests
-  on it). Idempotency now mandatory where `retries > 0` OR the flow is durable
-  (durable transports re-deliver after a crash even with zero retries).
-- **Crash-test split**: redelivery is proven once by the transport
-  (kill-and-reboot suite, Issue 31); flows prove only their side — idempotency.
-  No feature ever writes a kill test. Sad-path chains assert via the existing
-  helper: `_dlq.<event>` publishes inside the failing delivery's context, so
-  `assert_chain(tree, ["x", "_dlq.x"])` works with no new machinery.
-- **Validator**: `PlanValidatorPlugin` (devtools domain) —
-  `POST /system/plan/validate` takes the plan (YAML or JSON) and executes all
-  15 validity rules against the plan AND the live system (routes via AST scan,
-  tables via migrations, events via registry metadata + bus subscribers,
-  driver via env). ERRORS = invalid plan; WARNINGS = advisory (e.g. durable
-  flow on `in_process`). "Mechanically checkable" became literal: the
-  orchestrator validates with a tool, not with attention.
-
----
-
-**Issue 33 — ✅ devtools domain & CI lint gate (2026-07-12 session)**
-- **The split**: `domains/system/` was hosting two families — runtime
-  observability (traces, metrics, status, streams: production needs these)
-  and development tooling (both linters, the schema catalog, the plan
-  validator: the AI/orchestrator needs these). The second family moved to
-  `domains/devtools/` — a deployment that wants a smaller surface deletes the
-  folder and nothing else changes (each plugin is one self-contained file).
-  Routes keep their documented `/system/*` paths (the contract is the path,
-  not the folder); registry metadata moved to the `devtools` key.
-- **Advisory at boot, hard gate in CI** — made literal on both halves:
-  the full pytest suite already gates event contracts and now also domain
-  isolation over the real repo (`test_real_repo_has_no_isolation_violations`);
-  the `smoke-boot` CI job now curls `/system/lint` on the booted system and
-  fails the pipeline on any arch violation, tool drift, or event contract
-  warning (drift needs live tools, so the smoke boot is where it can gate).
-  Boot linters stay warn-only by design: a running system is never blocked.
-
----
-
-### Transport & Durability
 
 **Issue 31 — ✅ SQLiteDriver: durable event transport for the single-process monolith (2026-07-11)**
 `tools/event_bus/sqlite_driver.py` — the elastic ladder's missing rung:
