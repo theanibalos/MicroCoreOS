@@ -91,10 +91,18 @@ name that lives in a global namespace, so nothing is left to improvisation:
 
 #### Formal plan format
 
+**One YAML rule, and it bites every real plan:** inside a flow-style mapping
+(`{ ... }`), any value containing `{` or `[` must be quoted — `path:
+"/orders/{order_id}"`, `note: "Optional[str]"`. Unquoted, the brace opens a
+nested mapping and the whole document fails to parse. Every REST plan has
+`{param}` routes, so this is the rule, not the exception.
+
 ```yaml
 plan:
   domain: orders
-  engine: sqlite                            # which db engine this plan's SQL targets (informative — migrations run verbatim, see AGENTS.md rule 8)
+  engine: sqlite                            # REQUIRED when phase_0 declares migrations, OMIT otherwise — its only
+                                            # reader is the phase 0 author, who writes engine-specific SQL from it
+                                            # (migrations run verbatim, see AGENTS.md rule 8)
   phase_0:
     migrations:
       - file: orders/001_create_orders.sql
@@ -118,16 +126,24 @@ plan:
           - "await refund(charge_id: str, order_id: int, note: str) -> {success}"
         infra_errors: true                  # external backend -> connection-error class inherits ToolUnavailableError
 
+  language:                                 # OMIT unless the plan touches the domain's vocabulary
+    - model: OrderEntity                    # the ubiquitous language, NOT a mirror of the table
+      domain: orders
+      op: new                               # new | add_field | rename_field | remove_field
+      table: orders                         # the table that backs it
+      fields: { id: "int?", user_id: int, total: float, status: str }
+      internal: [payment_token]             # columns deliberately NOT in the language
+
   features:
     - plugin: CreateOrderPlugin
       file: domains/orders/plugins/create_order_plugin.py
       function: "Create an order and announce it"
-      route: { method: POST, path: /orders }
+      route: { method: POST, path: /orders }   # a path with {params} MUST be quoted: "/orders/{order_id}"
       db: { writes: [orders], reads: [] }   # persistence contract — only tables this domain owns
       publishes:
         - event: order.created
           model: OrderCreatedPayload        # Pydantic payload model, inline in the plugin
-          payload: { id: int, user_id: int, total: float }
+          payload: { id: int, user_id: int, total: float, note: "Optional[str]" }
       consumes: []
       mocks: [db, event_bus]                # what its test mocks
       test: tests/test_create_order.py
@@ -341,6 +357,28 @@ A plan is valid iff:
     or basename (no coupling to the checklist's format), and the whole check
     skips itself when the on-disk checklist shares zero paths with the plan
     being validated (it belongs to a different plan, e.g. a draft).
+
+16. **The `language:` section holds up** (ROADMAP Issue 38). The entity model
+    is the domain's ubiquitous language, not a mirror of the table, so the two
+    are allowed to differ in TYPE (`roles` is `TEXT` on disk and `list[str]` in
+    the domain) and a column may be absent from the language entirely
+    (`password_hash` never leaves the system — that is what `internal:`
+    records). They may NOT differ in NAME: every declared field must resolve to
+    a real column, in this plan's `phase_0.migrations.columns` or in the live
+    schema. A vocabulary field with nothing behind it is an error, not a style
+    issue. And `rename_field` / `remove_field` without `breaking: true` is an
+    error — they are breaking changes to a public API, and `affects:` writes
+    the blast radius down. When neither the plan nor the live system knows the
+    table, the rule warns that it cannot check rather than inventing an error.
+
+Above the 16 rules sits **rule 0, the shape of the document itself**. The
+schema ignores keys it does not know, and a typo lands in exactly that bucket:
+`feature:` instead of `features:` yields a plan that declares nothing and
+therefore satisfies every rule below. Rule 0 warns on any unknown key (with its
+path, e.g. `plan.flows[0].links[0]`) and on any plan with neither features,
+migrations nor language. Warnings rather than errors, because the validator
+cannot tell a typo from a key deliberately added by a tool upstream — but
+neither passes unseen.
 
 These rules are executable, not aspirational: **`POST /system/plan/validate`**
 takes the plan (YAML or JSON) and returns `errors` (the plan is invalid) and

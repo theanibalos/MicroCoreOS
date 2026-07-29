@@ -25,6 +25,7 @@ def anyio_backend():
 
 VALID_PLAN = {
     "domain": "orders",
+    "engine": "sqlite",          # declared because phase_0 has migrations (rule 2)
     "phase_0": {
         "migrations": [
             {
@@ -486,3 +487,286 @@ async def test_endpoint_reads_active_checklist(tmp_path, monkeypatch):
     plugin._live_snapshot = lambda: LiveSnapshot()
     result = await plugin.validate_plan({"plan": plan_copy()})
     assert any(w["rule"] == 15 for w in result["data"]["warnings"])
+
+
+# --- YAML the plan authors actually copy ------------------------------------
+# Every {param} route and Optional[...] type is a flow-mapping parse error when
+# unquoted. These two tests keep a broken example from ever teaching the pattern
+# again, and keep the parse error pointing at the offending line.
+
+@pytest.mark.anyio
+async def test_endpoint_accepts_yaml_with_param_route_and_optional():
+    yaml_doc = """
+plan:
+  domain: tweets
+  features:
+    - plugin: GetTweetPlugin
+      file: domains/tweets/plugins/get_tweet_plugin.py
+      route: { method: GET, path: "/tweets/{tweet_id}" }
+      publishes:
+        - event: tweet.read
+          model: TweetReadPayload
+          payload: { id: int, avatar_url: "Optional[str]" }
+      test: tests/test_get_tweet.py
+"""
+    plugin = make_plugin()
+    result = await plugin.validate_plan({"plan_yaml": yaml_doc})
+    assert result["success"] is True
+    assert result["data"]["valid"] is True
+
+
+@pytest.mark.anyio
+async def test_endpoint_yaml_error_reports_position():
+    yaml_doc = "plan:\n  domain: tweets\n  x: { path: /tweets/{tweet_id} }\n"
+    plugin = make_plugin()
+    result = await plugin.validate_plan({"plan_yaml": yaml_doc})
+    assert result["success"] is False
+    assert "line 3" in result["error"]
+    assert "column" in result["error"]
+
+
+def test_repo_yaml_examples_parse():
+    """The examples the planner AI copies must themselves be valid YAML."""
+    import re
+    from pathlib import Path
+
+    yaml_mod = pytest.importorskip("yaml")
+    root = Path(__file__).resolve().parent.parent
+    sources = [root / "plans" / "active_plan.yaml"]
+    docs = [root / "docs" / "PARALLEL_DEVELOPMENT.md",
+            *(root / ".agent" / "workflows").glob("*.md")]
+
+    for path in sources:
+        yaml_mod.safe_load(path.read_text(encoding="utf-8"))
+
+    blocks = 0
+    for path in docs:
+        if not path.exists():
+            continue
+        for block in re.findall(r"```yaml\n(.*?)```", path.read_text(encoding="utf-8"),
+                                re.DOTALL):
+            blocks += 1
+            try:
+                yaml_mod.safe_load(block)
+            except Exception as e:
+                pytest.fail(f"{path.name}: invalid YAML example — {e}")
+    assert blocks, "no YAML examples found — the guard would pass vacuously"
+
+
+# --- shape warnings: the plan that validates because it says nothing ---------
+
+@pytest.mark.anyio
+async def test_endpoint_warns_on_unknown_root_key():
+    plugin = make_plugin()
+    result = await plugin.validate_plan({"plan": {"domain": "t", "feature": [
+        {"plugin": "P", "file": "domains/t/plugins/p.py", "test": "tests/p.py"}]}})
+    warnings = result["data"]["warnings"]
+    assert result["data"]["valid"] is True          # advisory, never a blocker
+    assert any(w["rule"] == 0 and "feature" in w["detail"] for w in warnings)
+    assert any(w["rule"] == 0 and "nothing to dispatch" in w["detail"]
+               for w in warnings)
+
+
+@pytest.mark.anyio
+async def test_endpoint_warns_on_unknown_nested_key():
+    plugin = make_plugin()
+    plan = plan_copy()
+    plan["features"][0]["mock"] = ["db"]            # typo for 'mocks'
+    plan["flows"][0]["links"][0]["retry"] = 3       # typo for 'retries'
+    result = await plugin.validate_plan({"plan": plan})
+    warnings = result["data"]["warnings"]
+    assert any(w["where"] == "plan.features[0]" and "'mock'" in w["detail"]
+               for w in warnings)
+    assert any(w["where"] == "plan.flows[0].links[0]" and "'retry'" in w["detail"]
+               for w in warnings)
+
+
+@pytest.mark.anyio
+async def test_valid_plan_has_no_shape_warnings():
+    plugin = make_plugin()
+    result = await plugin.validate_plan({"plan": plan_copy()})
+    assert not [w for w in result["data"]["warnings"] if w["rule"] == 0]
+
+
+# --- rule 16: the language section (ROADMAP Issue 38) -----------------------
+
+ORDERS_MIGRATION = {
+    "file": "orders/001_create_orders.sql",
+    "tables": ["orders"],
+    "columns": {"orders": {"id": "INTEGER PRIMARY KEY", "user_id": "INT NOT NULL",
+                           "total": "FLOAT NOT NULL", "status": "TEXT",
+                           "payment_token": "TEXT"}},
+}
+
+
+def language_plan(*entries, migrations=(ORDERS_MIGRATION,)):
+    return {"domain": "orders", "phase_0": {"migrations": list(migrations)},
+            "language": list(entries)}
+
+
+def test_rule_16_new_entity_matching_columns_is_valid():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "new", "domain": "orders", "table": "orders",
+        "fields": {"id": "int?", "user_id": "int", "total": "float", "status": "str"},
+        "internal": ["payment_token"],
+    }))
+    assert result.valid
+    assert not [w for w in result.warnings if w.rule == 16]
+
+
+def test_rule_16_field_naming_no_column_is_an_error():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "new", "table": "orders",
+        "fields": {"id": "int?", "client_id": "int"},   # column is user_id
+    }))
+    assert not result.valid
+    assert any(e.rule == 16 and "client_id" in e.detail for e in result.errors)
+
+
+def test_rule_16_type_projection_is_free():
+    """roles is TEXT on disk and list[str] in the domain — same NAME, different type."""
+    result = check(language_plan(
+        {"model": "UserEntity", "op": "new", "table": "users",
+         "fields": {"id": "int?", "roles": "list[str]"}},
+        migrations=({"file": "users/001.sql", "tables": ["users"],
+                     "columns": {"users": {"id": "INTEGER PRIMARY KEY", "roles": "TEXT"}}},),
+    ))
+    assert result.valid
+
+
+def test_rule_16_rename_without_breaking_is_an_error():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "rename_field", "from": "client_id",
+        "to": "user_id", "affects": ["GET /orders"], "reason": "the domain says user",
+    }))
+    assert not result.valid
+    assert any(e.rule == 16 and "breaking: true" in e.detail for e in result.errors)
+
+
+def test_rule_16_rename_with_breaking_is_valid():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "rename_field", "from": "client_id",
+        "to": "user_id", "breaking": True, "affects": ["GET /orders", "POST /orders"],
+        "reason": "the domain says user, never client",
+    }))
+    assert result.valid
+
+
+def test_rule_16_breaking_change_without_blast_radius_warns():
+    result = check(language_plan({
+        "model": "UserEntity", "op": "remove_field", "field": "legacy_code",
+        "breaking": True,
+    }))
+    assert result.valid                              # advisory, not a blocker
+    assert any(w.rule == 16 and "affects" in w.detail for w in result.warnings)
+    assert any(w.rule == 16 and "reason" in w.detail for w in result.warnings)
+
+
+def test_rule_16_add_field_must_match_its_column_name():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "add_field", "fields": {"note": "str?"},
+        "backed_by": "orders.notes",                 # column is 'notes', field is 'note'
+    }))
+    assert not result.valid
+    assert any(e.rule == 16 and "must equal its column" in e.detail
+               for e in result.errors)
+
+
+def test_rule_16_add_field_backed_by_unknown_column_is_an_error():
+    result = check(language_plan({
+        "model": "OrderEntity", "op": "add_field", "fields": {"phone": "str?"},
+        "backed_by": "orders.phone",                 # no such column anywhere
+    }))
+    assert not result.valid
+    assert any(e.rule == 16 and "names no existing column" in e.detail
+               for e in result.errors)
+
+
+def test_rule_16_unknown_table_warns_instead_of_inventing_an_error():
+    result = check({"domain": "orders", "language": [{
+        "model": "OrderEntity", "op": "new", "table": "orders",
+        "fields": {"user_id": "int"}}]})             # no migrations, no live schema
+    assert result.valid
+    assert any(w.rule == 16 and "cannot be checked" in w.detail
+               for w in result.warnings)
+
+
+def test_rule_16_resolves_against_the_live_schema():
+    live = LiveSnapshot(tables={"orders": "orders"},
+                        columns={"orders": {"id", "user_id"}})
+    result = check({"domain": "orders", "language": [{
+        "model": "OrderEntity", "op": "new", "table": "orders",
+        "fields": {"user_id": "int", "client_id": "int"}}]}, live=live)
+    assert not result.valid
+    assert any(e.rule == 16 and "client_id" in e.detail for e in result.errors)
+
+
+def test_language_from_alias_is_not_an_unknown_key():
+    """'from' is a Python keyword, so the field is aliased — both spellings are input."""
+    from domains.devtools.plugins.plan_validator_plugin import unknown_plan_keys
+    raw = {"domain": "orders", "language": [
+        {"model": "OrderEntity", "op": "rename_field", "from": "client_id",
+         "to": "user_id", "breaking": True}]}
+    assert unknown_plan_keys(raw) == []
+
+
+def test_column_scanner_reads_real_create_table_bodies():
+    """Rule 16 resolves names against columns, so the SQL parse is load-bearing."""
+    from domains.devtools.plugins.plan_validator_plugin import _columns_of
+    sql = """
+    CREATE TABLE IF NOT EXISTS "orders" (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INT NOT NULL,
+        total DECIMAL(10, 2) NOT NULL,          -- the comma here is not a separator
+        status TEXT DEFAULT 'pending',
+        note TEXT DEFAULT '-- not a comment',   /* nor is this */
+        PRIMARY KEY (id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        UNIQUE (user_id, status),
+        CHECK (total > 0)
+    );
+    CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT);
+    """
+    assert _columns_of(sql, "orders") == {"id", "user_id", "total", "status", "note"}
+    assert _columns_of(sql, "users") == {"id", "email"}
+    assert _columns_of(sql, "ghost") == set()
+    assert _columns_of(sql, "order") == set()      # no prefix confusion with 'orders'
+
+
+# --- engine: required exactly when there is SQL to write --------------------
+
+def test_engine_declared_with_migrations_is_silent():
+    plan = plan_copy()
+    plan["engine"] = "sqlite"
+    result = check(plan)
+    assert result.valid
+    assert not rule_hits(result, 2, "WARNING")
+
+
+def test_migrations_without_engine_warns():
+    plan = plan_copy()                                # VALID_PLAN has migrations
+    plan.pop("engine", None)
+    result = check(plan)
+    assert result.valid                               # advisory, not blocking
+    assert any("engine" in w.detail for w in rule_hits(result, 2, "WARNING"))
+
+
+def test_no_migrations_means_no_engine_warning():
+    """A feature-only plan writes no SQL, so 'engine' has no reader."""
+    result = check({"domain": "orders", "features": [
+        {"plugin": "ListOrdersPlugin",
+         "file": "domains/orders/plugins/list_orders_plugin.py",
+         "test": "tests/test_list_orders.py"}]})
+    assert result.valid
+    assert not rule_hits(result, 2, "WARNING")
+
+
+@pytest.mark.anyio
+async def test_engine_is_no_longer_an_unknown_key():
+    """Every documented example carries `engine:` — the schema must know it."""
+    plugin = make_plugin()
+    plan = plan_copy()
+    plan["engine"] = "sqlite"
+    result = await plugin.validate_plan({"plan": plan})
+    assert not [w for w in result["data"]["warnings"]
+                if w["rule"] == 0 and "engine" in w["detail"]]

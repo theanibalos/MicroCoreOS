@@ -5,9 +5,14 @@
 #            http://localhost:5000/system/plan/validate
 #
 # SIZING RULES (docs/PARALLEL_DEVELOPMENT.md → "Plan sizing"):
-#   - Omit phase_0 entirely if no new tables/tools.
+#   - Omit phase_0 entirely if no new tables/tools — and with it, `engine:`,
+#     whose only reader is the phase 0 author writing engine-specific SQL.
 #   - Omit flows entirely if no plugin publishes or consumes events.
 #   - A domain with 3 CRUDs + one event chain ≈ 80-120 lines, ONE pass.
+#
+# YAML RULE: inside a flow mapping ({ ... }), quote any value containing '{' or
+# '[' — path: "/things/{thing_id}", note: "Optional[str]". Unquoted it is a
+# parse error, and every REST plan has {param} routes.
 
 plan:
   domain: things

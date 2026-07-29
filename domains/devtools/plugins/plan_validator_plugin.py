@@ -16,8 +16,8 @@ the event bus.
 import ast
 import os
 import re
-from typing import Optional, Literal
-from pydantic import BaseModel, ValidationError
+from typing import Optional, Literal, get_args
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from microcoreos import BasePlugin
 
 try:
@@ -104,9 +104,42 @@ class PlanFlow(BaseModel):
     rpc_links: list[PlanRpcLink] = []
 
 
+class PlanLanguage(BaseModel):
+    """One amendment to a domain's ubiquitous language (ROADMAP Issue 38).
+
+    The entity model is VOCABULARY, not a mirror of the table: storage and
+    language are allowed to differ in TYPE (`roles` is TEXT on disk and
+    list[str] in the domain) and a column may be absent from the language
+    entirely (`password_hash` never leaves the system — that is `internal:`).
+    What they may NOT differ in is the NAME, which is what rule 16 enforces.
+    """
+    model: str
+    op: Literal["new", "add_field", "rename_field", "remove_field"]
+    domain: Optional[str] = None
+    table: Optional[str] = None            # op=new: the table backing the entity
+    fields: dict[str, str] = {}            # op=new / add_field: name -> domain type
+    internal: list[str] = []               # columns deliberately NOT in the language
+    backed_by: Optional[str] = None        # op=add_field: "table.column"
+    from_field: Optional[str] = Field(default=None, alias="from")   # op=rename_field
+    to: Optional[str] = None               # op=rename_field
+    field: Optional[str] = None            # op=remove_field
+    breaking: bool = False                 # MANDATORY on rename/remove
+    affects: list[str] = []                # endpoints that speak the old name
+    reason: str = ""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class Plan(BaseModel):
     domain: Optional[str] = None
+    # Which SQL dialect the migrations target. Informative — migrations run
+    # verbatim (AGENTS.md rule 8) — but it is the ONLY thing telling the phase 0
+    # author whether a PK is "INTEGER PRIMARY KEY" or "SERIAL PRIMARY KEY".
+    # Meaningless without migrations, which is why it is optional here and
+    # required by rule 2 exactly when phase_0 declares any.
+    engine: Optional[str] = None
     phase_0: PlanPhase0 = PlanPhase0()
+    language: list[PlanLanguage] = []
     features: list[PlanFeature] = []
     flows: list[PlanFlow] = []
 
@@ -116,6 +149,48 @@ class Plan(BaseModel):
 class ValidatePlanRequest(BaseModel):
     plan: Optional[dict] = None       # the plan as JSON (with or without the "plan:" root key)
     plan_yaml: Optional[str] = None   # or the raw YAML document
+
+
+# Unknown keys are IGNORED by the schema on purpose — a plan may carry the
+# orchestrator's own annotations (budget, owner, priority). But a typo lands in
+# that same bucket: 'feature:' instead of 'features:' validates a plan that
+# declares nothing. Ignored, therefore, but never silently.
+
+def _model_at(annotation):
+    """The BaseModel class inside T, Optional[T] or list[T] — None if there is none."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for arg in get_args(annotation):
+        found = _model_at(arg)
+        if found is not None:
+            return found
+    return None
+
+
+def unknown_plan_keys(raw, model=Plan, where="plan") -> list[tuple[str, str]]:
+    """(where, key) for every key of the raw plan that no schema field claims."""
+    found: list[tuple[str, str]] = []
+    if not isinstance(raw, dict):
+        return found
+    # a field may be reachable by its alias ('from' is a Python keyword, so
+    # PlanLanguage spells it from_field) — both names are legitimate input
+    by_name = dict(model.model_fields)
+    by_name.update({f.alias: f for f in model.model_fields.values() if f.alias})
+    for key, value in raw.items():
+        field = by_name.get(key)
+        if field is None:
+            found.append((where, key))
+            continue
+        nested = _model_at(field.annotation)
+        if nested is None:
+            continue
+        label = f"{where}.{key}"
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                found.extend(unknown_plan_keys(item, nested, f"{label}[{index}]"))
+        else:
+            found.extend(unknown_plan_keys(value, nested, label))
+    return found
 
 
 class PlanViolation(BaseModel):
@@ -150,9 +225,10 @@ class LiveSnapshot:
     """What the running system (and the repo on disk) already occupies."""
 
     def __init__(self, routes=None, tables=None, events=None, subscribers=None,
-                 driver="in_process"):
+                 driver="in_process", columns=None):
         self.routes: dict[str, str] = routes or {}         # "METHOD /path" -> source file
         self.tables: dict[str, str] = tables or {}         # table -> owning domain
+        self.columns: dict[str, set[str]] = columns or {}  # table -> its column names
         self.events: set[str] = events or set()            # events published live
         self.subscribers: dict[str, list] = subscribers or {}  # event -> handler names
         self.driver: str = driver
@@ -215,6 +291,100 @@ def scan_live_tables(domains_dir: str = "domains") -> dict[str, str]:
     return tables
 
 
+# A column definition starts with the column name; everything else in a CREATE
+# TABLE body is a table-level constraint, which owns no name of its own.
+TABLE_CONSTRAINTS = {"primary", "foreign", "unique", "check", "constraint",
+                     "index", "key"}
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Drop -- and /* */ comments, leaving quoted literals alone.
+
+    Quote-aware on purpose: a blind regex would treat DEFAULT '--' as the start
+    of a comment and swallow the rest of the line, losing real columns — and a
+    lost column becomes a false rule 16 error against a name that does exist.
+    """
+    out, index, quote = [], 0, ""
+    while index < len(sql):
+        char = sql[index]
+        if quote:
+            out.append(char)
+            if char == quote:
+                quote = ""
+            index += 1
+        elif char in "'\"`":
+            quote = char
+            out.append(char)
+            index += 1
+        elif sql.startswith("--", index):
+            index = sql.find("\n", index)
+            if index == -1:
+                break
+        elif sql.startswith("/*", index):
+            end = sql.find("*/", index)
+            index = len(sql) if end == -1 else end + 2
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+def _columns_of(sql: str, table: str) -> set[str]:
+    """Column names declared in `table`'s CREATE TABLE body, if it is in `sql`."""
+    sql = _strip_sql_comments(sql)
+    match = re.search(
+        rf"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?{re.escape(table)}"
+        rf"[\"'`]?\s*\(", sql, re.IGNORECASE)
+    if not match:
+        return set()
+    depth, body_start = 0, match.end() - 1
+    for index in range(body_start, len(sql)):
+        if sql[index] == "(":
+            depth += 1
+        elif sql[index] == ")":
+            depth -= 1
+            if depth == 0:
+                body = sql[body_start + 1:index]
+                break
+    else:
+        return set()                      # unbalanced parens — nothing to claim
+
+    columns, depth, current = set(), 0, ""
+    for char in body + ",":               # trailing comma flushes the last part
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char == "," and depth == 0:    # a comma inside DECIMAL(10,2) is not a separator
+            token = current.strip().split()
+            if token and token[0].strip('"\'`').lower() not in TABLE_CONSTRAINTS:
+                columns.add(token[0].strip('"\'`'))
+            current = ""
+        else:
+            current += char
+    return columns
+
+
+def scan_live_columns(tables: dict[str, str], domains_dir: str = "domains") -> dict[str, set[str]]:
+    """table -> its declared column names, read from the owning domain's migrations."""
+    columns: dict[str, set[str]] = {}
+    for table, domain in tables.items():
+        migrations_dir = os.path.join(domains_dir, domain, "migrations")
+        if not os.path.isdir(migrations_dir):
+            continue
+        for filename in sorted(os.listdir(migrations_dir)):
+            if not filename.endswith(".sql"):
+                continue
+            try:
+                with open(os.path.join(migrations_dir, filename), "r", encoding="utf-8") as f:
+                    found = _columns_of(f.read(), table)
+            except Exception:
+                continue
+            if found:
+                columns.setdefault(table, set()).update(found)
+    return columns
+
+
 # ── The validator (pure — no I/O, fully testable) ──────────────────────────
 
 class PlanValidator:
@@ -232,6 +402,7 @@ class PlanValidator:
                 self.plan_payloads.setdefault(pub.event, []).append(pub.payload)
 
     def validate(self) -> ValidatePlanData:
+        self._rule_0_plan_declares_work()
         self._rule_1_namespace_collisions()
         self._rule_2_table_ownership()
         self._rules_3_4_event_contracts()
@@ -243,9 +414,19 @@ class PlanValidator:
         self._rule_13_durability_vs_driver()
         self._rule_14_db_contract_ownership()
         self._rule_15_checklist_coverage()
+        self._rule_16_language()
         return ValidatePlanData(
             valid=not self.errors, errors=self.errors, warnings=self.warnings
         )
+
+    # rule 0 — shape: a plan with nothing to dispatch validates perfectly against
+    #          all 15 rules, which is exactly what a mistyped key looks like
+    def _rule_0_plan_declares_work(self):
+        if not self.plan.features and not self.plan.phase_0.migrations \
+                and not self.plan.language:
+            self._warn(0, "plan",
+                       "declares no features and no migrations — nothing to "
+                       "dispatch (check for a mistyped key, e.g. 'feature:')")
 
     # rule 1 — no two features share file/route/plugin; no live route collision
     def _rule_1_namespace_collisions(self):
@@ -276,6 +457,15 @@ class PlanValidator:
 
     # rule 2 — unique table declarations, in the plan and across live domains
     def _rule_2_table_ownership(self):
+        # Same defect class as a table without columns, one level up: without
+        # columns the phase 0 author invents the fields, without an engine they
+        # invent the dialect. Silent when there are no migrations — there is no
+        # SQL to write, so the field has no reader.
+        if self.plan.phase_0.migrations and not self.plan.engine:
+            self._warn(2, "phase_0",
+                       "migrations are declared without an 'engine' — the SQL "
+                       "dialect (auto-increment PK spelling, types) is left to "
+                       "the phase 0 author to guess")
         declared: dict[str, str] = {}
         for migration in self.plan.phase_0.migrations:
             domain = migration.file.split("/")[0] if "/" in migration.file else None
@@ -474,6 +664,114 @@ class PlanValidator:
                            f"execution checklist — the task would never be "
                            f"dispatched")
 
+    # rule 16 — the language section (ROADMAP Issue 38):
+    #   a) every declared field resolves to a real column — a vocabulary field
+    #      with nothing behind it is an error, not a style issue
+    #   b) a model field's name equals its column's name (projections of TYPE
+    #      are free, projections of NAME are not)
+    #   c) rename_field / remove_field without breaking: true is an error — a
+    #      breaking change to a public API stops being silent
+    def _rule_16_language(self):
+        for entry in self.plan.language:
+            where = f"{entry.model} ({entry.op})"
+            if entry.op == "new":
+                self._language_new(entry, where)
+            elif entry.op == "add_field":
+                self._language_add_field(entry, where)
+            else:                                    # rename_field | remove_field
+                self._language_breaking(entry, where)
+
+    def _known_columns(self, table: str) -> Optional[set[str]]:
+        """Every column of `table`, from this plan's migrations or the live
+        system. None when nothing on either side knows the table — the
+        validator cannot arbitrate what it cannot see, so it says so instead
+        of inventing an error."""
+        declared: set[str] = set()
+        found = False
+        for migration in self.plan.phase_0.migrations:
+            if table in migration.columns:
+                declared.update(migration.columns[table])
+                found = True
+            elif table in migration.tables:
+                found = True                         # declared, columns omitted (rule 2 warns)
+        live = self.live.columns.get(table)
+        if live:
+            declared.update(live)
+            found = True
+        return declared if found else None
+
+    def _language_new(self, entry: PlanLanguage, where: str):
+        if not entry.table:
+            self._error(16, where, "op 'new' must declare the table backing the entity")
+            return
+        columns = self._known_columns(entry.table)
+        if columns is None:
+            self._warn(16, where,
+                       f"table '{entry.table}' is neither live nor declared in this "
+                       f"plan's phase_0 — the vocabulary cannot be checked against it")
+            return
+        if not columns:
+            return                                   # table declared without columns
+        for name in entry.fields:
+            if name not in columns:
+                self._error(16, where,
+                            f"field '{name}' names no column of '{entry.table}' "
+                            f"(a name is not a projection: rename the field or "
+                            f"the column, never both apart)")
+        for column in entry.internal:
+            if column not in columns:
+                self._warn(16, where,
+                           f"internal column '{column}' does not exist in "
+                           f"'{entry.table}' — nothing is being excluded")
+
+    def _language_add_field(self, entry: PlanLanguage, where: str):
+        if not entry.fields:
+            self._error(16, where, "op 'add_field' declares no fields")
+            return
+        if not entry.backed_by:
+            self._error(16, where,
+                        "op 'add_field' must declare backed_by: 'table.column'")
+            return
+        if "." not in entry.backed_by:
+            self._error(16, where,
+                        f"backed_by '{entry.backed_by}' must be 'table.column'")
+            return
+        table, column = entry.backed_by.rsplit(".", 1)
+        if len(entry.fields) > 1:
+            self._error(16, where,
+                        "op 'add_field' declares one field per entry — a single "
+                        "backed_by cannot name the column of several fields")
+            return
+        if column not in entry.fields:
+            self._error(16, where,
+                        f"field '{next(iter(entry.fields))}' is backed by column "
+                        f"'{column}' — a model field's name must equal its column's")
+        known = self._known_columns(table)
+        if known is None:
+            self._warn(16, where,
+                       f"table '{table}' is neither live nor declared in this plan's "
+                       f"phase_0 — backed_by cannot be checked")
+        elif known and column not in known:
+            self._error(16, where,
+                        f"backed_by '{entry.backed_by}' names no existing column — "
+                        f"declare it in this plan's phase_0 migrations or fix the name")
+
+    def _language_breaking(self, entry: PlanLanguage, where: str):
+        if entry.op == "rename_field" and not (entry.from_field and entry.to):
+            self._error(16, where, "op 'rename_field' must declare 'from' and 'to'")
+        if entry.op == "remove_field" and not entry.field:
+            self._error(16, where, "op 'remove_field' must declare 'field'")
+        if not entry.breaking:
+            self._error(16, where,
+                        f"'{entry.op}' is a breaking change to a public API and "
+                        f"must declare breaking: true")
+        if not entry.affects:
+            self._warn(16, where,
+                       f"'{entry.op}' declares no 'affects' — the blast radius of "
+                       f"a breaking change should be written down")
+        if not entry.reason:
+            self._warn(16, where, f"'{entry.op}' declares no 'reason'")
+
     @staticmethod
     def _feature_domain(feature: PlanFeature) -> Optional[str]:
         parts = feature.file.split("/")
@@ -528,6 +826,13 @@ class PlanValidatorPlugin(BasePlugin):
                                  "warnings": []}}
             result = PlanValidator(plan, self._live_snapshot(),
                                    checklist=self._read_checklist()).validate()
+            # prepended: a dropped key explains every downstream violation
+            result.warnings[:0] = [
+                PlanViolation(rule=0, severity="WARNING", where=where,
+                              detail=f"unknown key '{key}' — ignored by the "
+                                     f"schema, so anything under it is not validated")
+                for where, key in unknown_plan_keys(plan_dict)
+            ]
             return {"success": True, "data": result.model_dump()}
         except Exception as e:
             self.logger.error(f"[PlanValidator] Validation crashed: {e}")
@@ -541,8 +846,19 @@ class PlanValidatorPlugin(BasePlugin):
                 return None, "YAML support unavailable — send the plan as JSON in 'plan'"
             try:
                 plan_dict = yaml.safe_load(plan_yaml)
-            except Exception:
-                return None, "plan_yaml is not valid YAML"
+            except Exception as e:
+                # The position belongs to the document the caller just sent, not
+                # to the server — e.problem/e.problem_mark instead of str(e) keeps
+                # it precise without leaking internals (security rule 1).
+                mark = getattr(e, "problem_mark", None)
+                where = (f" at line {mark.line + 1}, column {mark.column + 1}"
+                         if mark is not None else "")
+                problem = getattr(e, "problem", None) or "could not be parsed"
+                hint = ""
+                if "{" in problem or "[" in problem:
+                    hint = (" — inside a flow mapping, quote any value containing"
+                            " '{' or '[', e.g. path: \"/orders/{order_id}\"")
+                return None, f"plan_yaml is not valid YAML: {problem}{where}{hint}"
         if not isinstance(plan_dict, dict):
             return None, "Provide the plan in 'plan' (JSON) or 'plan_yaml' (YAML)"
         # accept both the bare plan and the documented "plan:" root key
@@ -572,9 +888,11 @@ class PlanValidatorPlugin(BasePlugin):
                 events.update(subscribers.keys())
         except Exception as e:
             self.logger.warning(f"[PlanValidator] No event bus snapshot: {e}")
+        tables = scan_live_tables()
         return LiveSnapshot(
             routes=scan_live_routes(),
-            tables=scan_live_tables(),
+            tables=tables,
+            columns=scan_live_columns(tables),
             events=events,
             subscribers=subscribers,
             driver=os.getenv("EVENT_BUS_DRIVER", "in_process"),

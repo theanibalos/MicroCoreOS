@@ -40,7 +40,7 @@ the sqlite/redis driver) and the sad-path checklist per link:
 - `rpc_links` (flow-level) — every `request()` call, with `timeout` and
   `on_timeout`
 
-Then run the 15 validity rules mechanically: `POST /system/plan/validate`
+Then run the 16 validity rules mechanically: `POST /system/plan/validate`
 with the plan (YAML or JSON) against the live system — zero `errors` before
 building anything. An invalid plan is a task-allocation error — fix the plan,
 never patch it in code.

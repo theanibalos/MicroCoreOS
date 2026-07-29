@@ -406,8 +406,6 @@ of these three breaks projects that already installed it.
 
 ## 8. Not debt, but unfinished by choice
 
-- **PyPI publishing** — account, name, token, release workflow. Blocks the
-  README's Quick Start from being literally true.
 - **`domains/users` CRUD half** (list, get-by-id, update, delete, logout, the
   event consumer) stays in the repo and is not materialized. Deliberate: that
   is CRUD you write for your own entities.

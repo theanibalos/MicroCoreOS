@@ -30,7 +30,7 @@ plan:
     - plugin: CancelOrderPlugin
       file: domains/orders/plugins/cancel_order_plugin.py
       function: "Cancel an order and announce it"
-      route: { method: POST, path: /orders/{order_id}/cancel }
+      route: { method: POST, path: "/orders/{order_id}/cancel" }  # quote paths with {params}
       db: { writes: [orders], reads: [] }   # persistence contract — own-domain tables only
       publishes:
         - event: order.cancelled
@@ -60,7 +60,7 @@ plan:
 
 ### 2. Validate before writing code
 
-`POST /system/plan/validate` with the plan (YAML or JSON) — it runs the 14
+`POST /system/plan/validate` with the plan (YAML or JSON) — it runs the 16
 validity rules of `docs/PARALLEL_DEVELOPMENT.md` against this plan AND the
 live system. Zero `errors` before any code; `warnings` are advisory. The main
 things it catches at this level:

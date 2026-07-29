@@ -309,6 +309,13 @@ both visible, neither derived from a hand-written mirror.
 
 ### The chosen answer: a `language:` section in the plan (design, 2026-07-26)
 
+> **Status (2026-07-29): the section and its validity rules are IMPLEMENTED** —
+> `language:` in the plan schema, enforced as rule 16 of `PlanValidatorPlugin`
+> (name-equality against real columns, `breaking: true` mandatory on
+> rename/remove). The **drift linter is NOT** — per the order of implementation
+> below, it waits for the first model field found naming a column that no
+> longer exists.
+
 The entity model is the domain's **ubiquitous language** — not a mirror of the
 table. Storage and vocabulary answer different questions and are allowed to
 differ: `password_hash` is a column and must NEVER be a model field (it never
