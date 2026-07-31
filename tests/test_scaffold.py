@@ -31,6 +31,7 @@ def test_new_materializes_a_bootable_project(tmp_path):
     assert (target / "domains" / "devtools" / "plugins").is_dir()
     assert (target / "main.py").is_file()
     assert (target / "plans").is_dir()
+    assert (target / "tests" / "conftest.py").is_file()
 
     # The framework itself is NOT copied — it comes from the wheel.
     assert not (target / "microcoreos").exists()
@@ -105,13 +106,17 @@ def test_no_ai_kit_skips_the_agent_instructions(tmp_path):
 
 def test_ai_kit_travels_whole(tmp_path):
     """AGENTS.md points at .agent/ and docs/ — copying it alone leaves the
-    agent reading instructions that dangle."""
+    agent reading instructions that dangle. User-facing docs travel, but internal
+    framework maintainer docs (docs/internal) are explicitly omitted."""
     target = tmp_path / "demo"
     cli.main(["new", str(target)])
 
     assert (target / "AGENTS.md").is_file()
+    assert "App Developer & AI Agent Guide" in (target / "AGENTS.md").read_text(encoding="utf-8")
     assert (target / ".agent" / "workflows").is_dir()
     assert (target / "docs").is_dir()
+    assert (target / "docs" / "CLI.md").is_file()
+    assert not (target / "docs" / "internal").exists()
 
 
 def test_nothing_compiled_or_private_is_copied(tmp_path):
@@ -121,6 +126,7 @@ def test_nothing_compiled_or_private_is_copied(tmp_path):
     assert not list(target.rglob("__pycache__"))
     assert not list(target.rglob("*.pyc"))
     assert not list(target.rglob("*.db"))
+    assert not list(target.rglob("internal"))
 
 
 def test_new_without_a_path_reports_usage(capsys):

@@ -146,7 +146,7 @@ def dev(argv: list[str]) -> int:
 # The plan pipeline ships separately now, as `microcoreos-dev`. The commands
 # keep the names they always had: AGENTS.md, four workflows and eight docs spell
 # them this way, and agents read those files as instructions. Renaming them
-# would mean rewriting that corpus for nothing. See docs/DEV_PACKAGE_SPLIT.md.
+# would mean rewriting that corpus for nothing. See docs/internal/DEV_PACKAGE_SPLIT.md.
 PIPELINE_COMMANDS = ("status", "plan", "migrate", "schema")
 
 MISSING_DEV_PACKAGE = """\

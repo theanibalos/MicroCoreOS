@@ -68,7 +68,7 @@ what it would have said: that is the search the manifest exists to replace, and
 it costs an order of magnitude more to arrive at less.
 
 Read on demand, never up front: `INSTRUCTIONS_FOR_AI.md` (building tools,
-testing in depth, kernel internals) · `docs/TECH_DEBT.md` (only when scoping
+testing in depth, kernel internals) · `docs/internal/TECH_DEBT.md` (only when scoping
 work that may overlap an open item) · `domains/{domain}/models/{name}.py` (its
 fields are already in `AI_CONTEXT.md`).
 

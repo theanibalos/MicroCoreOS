@@ -1,6 +1,6 @@
 [project]
 name = "microcoreos"
-version = "0.2.0"
+version = "0.2.1"
 description = "Atomic Microkernel Architecture optimized for AI-Driven Development"
 license = {text = "MIT"}
 readme = "README.md"
@@ -47,7 +47,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-exclude = ["**/__pycache__", "**/*.pyc", "**/*.db", "**/*.db-wal", "**/*.db-shm"]
+exclude = ["**/__pycache__", "**/*.pyc", "**/*.db", "**/*.db-wal", "**/*.db-shm", "**/docs/internal/**"]
 
 [tool.hatch.build.targets.wheel]
 # Two importable packages. `microcoreos` is the framework a booted app depends

@@ -363,7 +363,7 @@ Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
   installed into site-packages: you own them and can edit them, and swapping
   stays what it is today, moving a file. Only the Kernel travels in the
   package, and `microcoreos upgrade` carries later fixes to the files you never
-  touched. Release procedure: [docs/RELEASING.md](docs/RELEASING.md)
+  touched. Release procedure: [docs/internal/RELEASING.md](docs/internal/RELEASING.md)
 
 ---
 

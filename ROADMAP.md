@@ -602,7 +602,7 @@ not an implementation bug):**
 > runs its own `uv add` without `--no-install` and lands asyncpg, and the
 > resulting project boots with 11 tools and 22 plugins.
 >
-> Known gaps and their cost are recorded in [docs/TECH_DEBT.md](docs/TECH_DEBT.md),
+> Known gaps and their cost are recorded in [docs/internal/TECH_DEBT.md](docs/internal/TECH_DEBT.md),
 > where every item is now closed or a standing note.
 >
 > **The free-breaking window is closed.** Three things are compatibility
