@@ -56,6 +56,7 @@ class S3FileSizeError(S3Error):
 
 
 class S3Tool(BaseTool):
+
     """
     AWS S3 Tool for MicroCoreOS.
 

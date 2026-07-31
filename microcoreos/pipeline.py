@@ -552,21 +552,54 @@ class _Recorder:
         if method.startswith("_"):
             raise AttributeError(method)
 
-        async def call(*args, **kwargs):
+        def call(*args, **kwargs):
+            # Recorded HERE, not inside a coroutine body: tools have sync
+            # methods too, and `http.add_endpoint(...)` — the most common call
+            # there is — is one of them. An `async def` wrapper would build a
+            # coroutine nobody awaits, so the append would never run and the
+            # single most important call would be invisible.
             self._log.append((self._name, method, args, kwargs))
             # Handlers are registered by being PASSED to a tool
             # (`bus.subscribe(event, self.on_x)`, `http.add_endpoint(path,
             # method, self.execute)`), so the recording also hands us the
             # entry points — no naming convention to guess.
-            return None
+            return _Ignored()
 
         return call
+
+
+class _Ignored:
+    """A return value that works whether or not the caller awaits it.
+
+    `await tool.thing()` and a bare `tool.thing()` are both legal against a
+    real tool, depending on the method — and an unawaited coroutine would warn
+    on every sync call. This answers both without either complaint.
+    """
+
+    def __await__(self):
+        return iter(())
 
 
 def _synthetic(type_name: str):
     """A value of the type the plan declares. The plan is the only input spec."""
     return {"int": 1, "float": 1.0, "bool": True,
             "str": "x", "list": [], "dict": {}}.get(str(type_name).lower(), "x")
+
+
+def _plan_attr(obj, *names, default=None):
+    """The first attribute that exists, across validator versions.
+
+    `pipeline.py` ships in the wheel; the plan validator is vendored INTO the
+    project and may be older than this command by any number of releases. So a
+    field renamed here (`mocks:` → `tools:`) or added here (`touches:`) is
+    simply absent there. Asking for both names costs one line and turns a
+    traceback the user cannot act on into a probe that still reports the calls.
+    """
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return default
 
 
 def _plan_probe(path: str) -> int:
@@ -593,20 +626,21 @@ def _plan_probe(path: str) -> int:
         return 2
 
     features = validator.Plan(**plan_dict).features
-    # Which tools namespace names a feature invents, asked of the tools
-    # themselves. A hardcoded list of the fixed-surface ones (`http`, `logger`,
-    # …) would be the same list that grows every time someone adds a tool —
-    # the thing this whole design is avoiding.
-    shapes = validator.scan_tool_resource_shapes()
     print(f"\nProbing {len(features)} feature(s) from {path}\n")
 
     findings = 0
     for feature in features:
         observed, why = _drive(feature)
-        if why:
+        if why and not observed:
             print(f"  ⚠️  {feature.plugin}: {why}")
             continue
-        findings += _report(feature, observed, shapes)
+        findings += _report(feature, observed)
+        if why:
+            # Everything up to the failure is real and worth showing: a plugin
+            # that registers its route and then dies still told you what it
+            # registered.
+            print(f"      ⚠️  stopped early: {why}")
+            findings += 1
     print()
     if findings:
         print(f"❌ {findings} mismatch(es) between the code and the plan.\n"
@@ -635,13 +669,13 @@ def _drive(feature):
         return [], f"not importable yet ({e})"
 
     log: list = []
-    tools = {name: _Recorder(name, log) for name in feature.tools}
+    tools = {name: _Recorder(name, log) for name in _plan_attr(feature, 'tools', 'mocks', default=[])}
     try:
         instance = plugin_class(**tools)
     except TypeError as e:
         # The plan's `mocks:` and the constructor disagree — which is itself
         # the finding, and the one an independent test author trips on first.
-        return [], f"`tools: {feature.tools}` does not fit its __init__ ({e})"
+        return [], f"`tools: {_plan_attr(feature, 'tools', 'mocks', default=[])}` does not fit its __init__ ({e})"
 
     async def run():
         if hasattr(instance, "on_boot"):
@@ -672,28 +706,75 @@ async def _deliver(handler, feature):
         await handler(envelope)
 
 
-def _report(feature, observed, shapes) -> int:
-    """Print what the feature touched, and flag what the plan does not declare."""
-    declared = {tool: set(c.reads) | set(c.writes)
-                for tool, c in (feature.touches or {}).items()}
-    if feature.db:
-        declared.setdefault("db", set()).update(feature.db.reads, feature.db.writes)
+def _report(feature, observed) -> int:
+    """Print every call the feature made, and check the ones the PLAN declares.
 
-    used = {}
-    for tool, method, args, kwargs in observed:
-        used.setdefault(tool, set()).add(_signature(method, args, kwargs))
+    The line this draws is the one that keeps the plan a spec. A plan says WHAT
+    a feature is: which tools it may reach, which route it answers, which
+    events it speaks. It does not say `increment('counter', namespace=...)` —
+    that is an implementation, and a plan that carries it has become a golden
+    file that must be rewritten every time the code is.
+
+    So only two things are checked, and both were already spec:
+
+      - the route `route:` declares, and the events `publishes:`/`consumes:` do
+      - `tools:`, which is complete by construction — the kernel injects ONLY
+        the parameters a constructor names, so a feature that reaches
+        `payments` cannot avoid declaring it, and `tools: [payments]` IS the
+        statement that this feature moves money
+
+    Everything else is PRINTED. A recording is worth reading — it is how you
+    see a plugin charging a card or turning on a light — and worth nothing as
+    a gate, because the plan was never the place to freeze it.
+    """
+    expected: dict[str, list[str]] = {}
+    route = _plan_attr(feature, "route")
+    if route:
+        expected.setdefault("http", []).append(
+            f"add_endpoint('{route.path}', '{route.method}'{{rest}})")
+    for pub in _plan_attr(feature, "publishes", default=[]):
+        expected.setdefault("event_bus", []).append(f"publish('{pub.event}'{{rest}})")
+    for con in _plan_attr(feature, "consumes", default=[]):
+        expected.setdefault("event_bus", []).append(f"subscribe('{con.event}'{{rest}})")
 
     print(f"  {feature.plugin}")
-    problems = 0
-    for tool in sorted(used):
-        for call in sorted(used[tool]):
-            print(f"      {tool}.{call}")
-    for tool in sorted(t for t in used if t in shapes and t not in declared):
-        print(f"      ⚠️  `{tool}` is used but the plan declares no `touches.{tool}` "
-              f"— the layout above is whatever the author picked")
+    problems, seen, used = 0, set(), set()
+    for tool, method, args, kwargs in observed:
+        call = _signature(method, args, kwargs)
+        if (tool, call) in seen:
+            continue
+        seen.add((tool, call))
+        used.add(tool)
+        print(f"      {tool}.{call}")
+        if tool in expected and not _covered(call, expected[tool]):
+            print(f"      ⚠️  the plan declares no such {tool} call — it says "
+                  f"{', '.join(expected[tool])}")
+            problems += 1
+
+    # A tool listed and never reached is plan drift: the feature was specified
+    # with a capability it does not use, and a test written from the plan will
+    # build a stand-in for nothing.
+    for tool in sorted(set(_plan_attr(feature, "tools", "mocks", default=[])) - used):
+        print(f"      ⚠️  `{tool}` is declared in `tools:` and never used")
         problems += 1
     return problems
 
+
+def _covered(call: str, expected) -> bool:
+    """Does one expected call describe this one? `{braces}` match any value."""
+    import re
+
+    method = call.split("(", 1)[0]
+    for entry in expected:
+        if entry.split("(", 1)[0] != method:
+            continue
+        pattern = "".join(
+            ".*?" if part.startswith("{") and part.endswith("}") else re.escape(part)
+            for part in re.split(r"(\{[^{}]*\})", entry)
+        )
+        if re.fullmatch(pattern, call):
+            return True
+    return False
 
 
 def _signature(method: str, args, kwargs) -> str:

@@ -65,7 +65,7 @@ the sqlite/redis driver) and the sad-path checklist per link:
 - `rpc_links` (flow-level) — every `request()` call, with `timeout` and
   `on_timeout`
 
-Then run the 19 validity rules mechanically: `microcoreos plan validate`
+Then run the 18 validity rules mechanically: `microcoreos plan validate`
 (offline; `POST /system/plan/validate` is the same rules against a running
 system) — zero `errors` before building anything. An invalid plan is a task-allocation error — fix the plan,
 never patch it in code.

@@ -644,7 +644,7 @@ plan:
       consumes:
         - event: order.placed
           requires: [id, buyer_id]
-      mocks: [event_bus, state]
+      tools: [event_bus, state]
       test: tests/test_counter_plugin.py
 """
 
@@ -666,16 +666,6 @@ def _probe_project(tmp_path, plan=PROBE_PLAN, source=COUNTER_SOURCE, touches="")
     plugins = project / "domains" / "shop" / "plugins"
     plugins.mkdir(parents=True)
     (plugins / "counter_plugin.py").write_text(source, encoding="utf-8")
-    # Which tools need a `touches:` is asked of the tools, never hardcoded —
-    # `state` namespaces keys a feature invents, `event_bus` does not.
-    for name, shape in (("state", '"namespace:key"'), ("event_bus", None)):
-        d = project / "tools" / name
-        d.mkdir(parents=True, exist_ok=True)
-        shape_line = f"    resource_shape = {shape}\n" if shape else ""
-        (d / f"{name}_tool.py").write_text(
-            f"class {name.title()}Tool:\n{shape_line}"
-            f"    @property\n    def name(self):\n        return \"{name}\"\n",
-            encoding="utf-8")
     return project
 
 
@@ -689,23 +679,33 @@ def test_probe_records_the_calls_a_feature_actually_makes(tmp_path, monkeypatch,
     assert "event_bus.subscribe('order.placed')" in out
 
 
-def test_probe_flags_a_resource_tool_the_plan_never_declared(tmp_path, monkeypatch, capsys):
-    """The measured bug: `state` used, no `touches.state`, layout invented."""
+def test_probe_reports_tool_calls_without_gating_on_them(tmp_path, monkeypatch, capsys):
+    """The plan says WHICH tools a feature may reach — `tools:` is complete by
+    construction, since the kernel injects only the parameters a constructor
+    names. It does not say `increment('total', namespace=...)`: that is an
+    implementation, and a plan carrying it is a golden file to rewrite every
+    time the code changes. So the call is printed, never failed on."""
     monkeypatch.chdir(_probe_project(tmp_path))
 
-    assert cli.main(["plan", "probe"]) == 1
-    assert "declares no `touches.state`" in capsys.readouterr().out
-
-
-def test_probe_is_quiet_about_tools_that_declare_no_shape(tmp_path, monkeypatch, capsys):
-    """`event_bus` invents no names, and says so by not declaring a
-    `resource_shape`. Nothing in the pipeline lists which tools those are."""
-    monkeypatch.chdir(_probe_project(tmp_path))
-
-    cli.main(["plan", "probe"])
+    exit_code = cli.main(["plan", "probe"])
     out = capsys.readouterr().out
 
-    assert "touches.event_bus" not in out
+    assert "state.increment('total'" in out
+    assert exit_code == 0
+
+
+def test_probe_flags_a_declared_tool_the_feature_never_uses(tmp_path, monkeypatch, capsys):
+    """Plan drift the other way: the feature was specified with a capability it
+    does not use, and a test written from the plan builds a stand-in for
+    nothing."""
+    plan = PROBE_PLAN.replace("tools: [event_bus, state]",
+                              "tools: [event_bus, state, logger]")
+    source = COUNTER_SOURCE.replace("def __init__(self, event_bus, state):",
+                                    "def __init__(self, event_bus, state, logger):")
+    monkeypatch.chdir(_probe_project(tmp_path, plan=plan, source=source))
+
+    assert cli.main(["plan", "probe"]) == 1
+    assert "`logger` is declared in `tools:` and never used" in capsys.readouterr().out
 
 
 def test_probe_reports_mocks_that_do_not_fit_the_constructor(tmp_path, monkeypatch, capsys):
@@ -721,12 +721,91 @@ def test_probe_reports_mocks_that_do_not_fit_the_constructor(tmp_path, monkeypat
     assert "does not fit its __init__" in capsys.readouterr().out
 
 
-def test_probe_passes_when_the_plan_declares_what_the_code_touches(tmp_path, monkeypatch, capsys):
-    plan = PROBE_PLAN.replace(
-        "      test: tests/test_counter_plugin.py",
-        "      touches:\n        state: { writes: [\"total:{buyer_id}\"] }\n"
-        "      test: tests/test_counter_plugin.py")
-    monkeypatch.chdir(_probe_project(tmp_path, plan=plan))
+def test_probe_survives_a_project_whose_validator_predates_this_command(tmp_path, monkeypatch, capsys):
+    """`pipeline.py` ships in the wheel; the validator is vendored INTO the
+    project and is older by whatever the last upgrade left. Observed for real:
+    a project restored from an earlier commit answered `plan probe` with an
+    AttributeError traceback instead of a report. Reporting the calls is worth
+    more than refusing, so missing fields degrade rather than raise."""
+    project = _probe_project(tmp_path, plan=PROBE_PLAN.replace("tools:", "mocks:"))
+    monkeypatch.chdir(project)
+
+    exit_code = cli.main(["plan", "probe"])
+    out = capsys.readouterr().out
+
+    assert "Traceback" not in out
+    assert "state.increment('total'" in out
+    assert exit_code in (0, 1)
+
+
+ROUTE_PLAN = """\
+plan:
+  domain: shop
+  features:
+    - plugin: ListPlugin
+      file: domains/shop/plugins/list_plugin.py
+      route: { method: GET, path: /orders }
+      publishes:
+        - event: orders.listed
+          model: OrdersListedPayload
+          payload: { count: int }
+      tools: [http, event_bus]
+      test: tests/test_list_plugin.py
+"""
+
+ROUTE_SOURCE = """\
+class ListPlugin:
+    def __init__(self, http, event_bus):
+        self.http, self.bus = http, event_bus
+
+    async def on_boot(self):
+        self.http.add_endpoint("__PATH__", "GET", self.execute)
+        await self.bus.publish("__EVENT__", {"count": 0})
+
+    async def execute(self, data, context=None):
+        return {"success": True, "data": {"count": 0}}
+"""
+
+
+def _route_project(tmp_path, path="/orders", event="orders.listed"):
+    project = _project(tmp_path, plan=ROUTE_PLAN)
+    plugins = project / "domains" / "shop" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "list_plugin.py").write_text(
+        ROUTE_SOURCE.replace("__PATH__", path).replace("__EVENT__", event),
+        encoding="utf-8")
+    return project
+
+
+def test_probe_records_sync_tool_calls_too(tmp_path, monkeypatch, capsys):
+    """`http.add_endpoint(...)` is not awaited — it is a sync method on the
+    real tool. Recording inside an `async def` wrapper built a coroutine nobody
+    awaited, so the single most common call in the codebase was invisible."""
+    monkeypatch.chdir(_route_project(tmp_path))
+
+    cli.main(["plan", "probe"])
+
+    assert "add_endpoint('/orders', 'GET'" in capsys.readouterr().out
+
+
+def test_probe_derives_the_expected_route_from_the_plan(tmp_path, monkeypatch, capsys):
+    """`route:` is not an excuse to skip http — it IS the expected call. An
+    empty exemption would let a plugin register /order for a plan that says
+    /orders."""
+    monkeypatch.chdir(_route_project(tmp_path, path="/order"))
+
+    assert cli.main(["plan", "probe"]) == 1
+    assert "the plan declares no such http call" in capsys.readouterr().out
+
+
+def test_probe_derives_expected_events_from_publishes_and_consumes(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_route_project(tmp_path, event="orders.enumerated"))
+
+    assert cli.main(["plan", "probe"]) == 1
+    assert "the plan declares no such event_bus call" in capsys.readouterr().out
+
+
+def test_probe_accepts_the_route_and_events_the_plan_declares(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_route_project(tmp_path))
 
     assert cli.main(["plan", "probe"]) == 0
-    assert "touches exactly what its plan entry declares" in capsys.readouterr().out

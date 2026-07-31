@@ -12,9 +12,9 @@ the failure finally reproduced and turned out to be a real defect in
 `publish()` rather than the flaky test everyone assumed, and item 3 by
 publishing 0.1.0 and resolving against the real index.
 
-**Every item here is now closed or a note.** 7 is the compatibility surface,
-frozen as of that release; 8 is what is unfinished on purpose. Nothing in this
-file is outstanding work.
+Items 1-6 are closed; 7 is the compatibility surface, frozen as of that
+release; 8 is what is unfinished on purpose. **Item 9 is open** — added
+2026-07-31, and it is structural rather than a defect.
 
 ---
 
@@ -412,3 +412,48 @@ of these three breaks projects that already installed it.
 - **Mocked tests verify against a contract the test itself declares.** If a
   tool's real API drifts, the mock keeps passing. Covered elsewhere by design —
   `ToolDocDriftLinter` and the parity suites — not by the plugin test.
+
+---
+
+## 9. The plan pipeline is development tooling that ships inside the runtime
+
+Every scaffolded project materializes `domains/devtools` and boots it with the
+application. Measured 2026-07-31:
+
+| | lines | needs the app running? |
+|---|---|---|
+| `plan_validator_plugin.py` | 1311 | **no** — `plan validate` and `plan probe` are offline |
+| 6 linters + `lint/` | 1009 | yes, they read the live container |
+| `event_schemas_plugin.py` | 94 | yes |
+| | **2414** | |
+
+Fifty-four percent of it is development-only, and it registers
+`POST /system/plan/validate` in the user's production application: an endpoint
+for validating plans, running next to their business.
+
+**The dependency points the wrong way.** `microcoreos/pipeline.py` ships inside
+the wheel and imports `domains.devtools.plugins.plan_validator_plugin`, which
+is *the user's vendored source*. The framework depends on the project.
+
+That is not theoretical. Restoring a project to an earlier commit made
+`microcoreos plan probe` die with `AttributeError` twice in a row — once for a
+function the vendored copy predated, once for a field renamed since. The fix in
+place is `_plan_attr()`, a version-tolerance shim that **should not need to
+exist**: it patches over a dependency that is inverted.
+
+**The split is almost done already and nobody noticed.** The Kernel imports
+nothing from `devtools` — the only ties are that one import in `pipeline.py`
+and one line in `scaffold.RUNTIME_ENTRIES`. A development package would take
+the validator, the plan schema, the offline scanners, the probe and the four
+pipeline commands. Both halves would then live together, the dependency would
+run one way, and `_plan_attr` would be deleted rather than maintained.
+
+**The linters are a separate decision.** They need the live boot to read the
+registry, so they are not development-only in the same sense. Whether they move
+too is worth deciding on its own, after the first split.
+
+Not started: a package split is the kind of change that wants its own plan, not
+the tail end of a long session. Recorded here so the reasoning is not lost —
+several frictions papered over one at a time (the vendoring shim, the probe
+needing `domains/devtools` present, validator metadata drifting toward the
+tools) are all this one thing.

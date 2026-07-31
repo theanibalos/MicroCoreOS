@@ -73,6 +73,7 @@ class StateConnectionError(StateError, ToolUnavailableError):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class RedisStateTool(BaseTool):
+
     """
     Distributed Key-Value State Tool backed by Redis.
     Drop-in replacement for the in-memory StateTool (same name: "state").

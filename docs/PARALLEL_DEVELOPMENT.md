@@ -374,7 +374,7 @@ A plan is valid iff:
     the blast radius down. When neither the plan nor the live system knows the
     table, the rule warns that it cannot check rather than inventing an error.
 
-Above the 19 rules sits **rule 0, the shape of the document itself**. The
+Above the 18 rules sits **rule 0, the shape of the document itself**. The
 schema ignores keys it does not know, and a typo lands in exactly that bucket:
 `feature:` instead of `features:` yields a plan that declares nothing and
 therefore satisfies every rule below. Rule 0 warns on any unknown key (with its

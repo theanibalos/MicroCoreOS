@@ -97,16 +97,6 @@ plan:
         - event: product.created
           requires: [id, name]
       tools: [event_bus, state]
-      # `tools` says WHICH tool; `touches` says WHICH RESOURCES, in the shape
-      # the tool itself declares (rule 19). Required for every tool that
-      # namespaces names a feature invents — `state` keys here, `db` tables
-      # above. Without it the plugin author and the test author each invent a
-      # different layout and only find out at the assertion.
-      touches:
-        state:
-          writes:
-            - "search-index:{product_id}"    # the entry
-            - "search-index-seen:{event_id}" # the idempotency guard
       test: tests/test_product_search_index_plugin.py
 
   # OMIT this whole section if no plugin publishes or consumes events.

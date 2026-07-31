@@ -11,7 +11,7 @@ microcoreos [run] [--boot-tool <tool>]           Boot the Kernel
 microcoreos dev                                  Boot with auto-reload
 
 microcoreos status                               Active plan, progress, manifest age
-microcoreos plan validate [path]                 The 19 plan rules, offline
+microcoreos plan validate [path]                 The 18 plan rules, offline
 microcoreos plan probe [path]                    What each feature actually touches
 microcoreos migrate                              Migrations + regenerate AI_CONTEXT.md
 microcoreos schema                               The live tables and columns
@@ -218,32 +218,41 @@ scratch file left behind. Reported, never deleted.
 
 **`plan probe`** — the other half of the question. `validate` asks whether the
 PLAN is well formed; this drives every feature with recording stand-ins for its
-tools and writes down each call, so you can see what the CODE does and compare
-it with the entry it was written from.
-
-It exists because `tools:` says WHICH tool and never WHICH resources, and those
-are invented per feature. Measured on a real wave: the plugin author wrote
-`increment("counter", namespace=author_id)` while the test author asserted on
-`namespace="counter-{author_id}"`. Both reasonable, the plan did not say, and
-nothing failed until the assertion — and with one agent writing both files the
-divergence never surfaces, because it agrees with itself.
+tools and prints every call it makes.
 
 ```
-  NoteCounterPlugin
-      event_bus.subscribe('note.created', backoff=0.5, retries=2)
-      state.has('probe-1', namespace='note-count-seen')
-      state.increment('counter', namespace=1)
-      ⚠️  `state` is used but the plan declares no `touches.state`
+  CheckoutPlugin
+      llm.complete('summarise this cart', max_tokens=200)
+      payments.charge(4999, customer=1)
+      ha.call_service('light.turn_on', entity_id='light.warehouse')
 ```
 
-The recorder knows nothing about any tool — it records `tool.method(args)` —
-so an s3 or redis tool dropped into `tools/` is covered the day it arrives.
-Tools whose surface is fixed by the framework (`http`, `logger`, `event_bus`,
-`config`, `telemetry`) invent no names, so their absence from `touches:` is
-never reported. It also catches a `tools:` list that does not fit the
-constructor, which is what a test written from the plan alone trips on first.
+**Most of that is printed, not judged** — and the line matters, because a plan
+is a spec. A spec says what a feature IS: which tools it may reach, which route
+it answers, which events it speaks. It does not say
+`increment('counter', namespace=author_id)`. A plan carrying that has become a
+golden file to rewrite every time the code changes, and stops being readable as
+an intention.
 
-**`plan validate`** — the 19 rules with no server running. The rules were
+What IS checked was already spec before this command existed:
+
+| Checked | Because the plan already said it |
+|---|---|
+| the route registered | `route: { method, path }` |
+| the events published and subscribed | `publishes:` / `consumes:` |
+| the constructor fits | `tools:` |
+| a declared tool that is never used | `tools:` — drift the other way |
+
+`tools:` is complete by construction: the Kernel injects only the parameters a
+constructor names (`_resolve_plugin_dependencies`), so a feature that reaches
+`payments` cannot avoid declaring it. **`tools: [payments]` IS the statement
+that this feature moves money** — nothing finer belongs in the plan.
+
+The recorder knows nothing about any tool: it records `tool.method(args)`, so a
+Mongo, an LLM or a home-automation bridge added tomorrow is covered the day it
+arrives, with no entry anywhere in this codebase.
+
+**`plan validate`** — the 18 rules with no server running. The rules were
 always pure; only the live snapshot needed a booted system, and everything in
 it except live *subscribers* can be read off the disk. Errors carry the YAML
 that fixes them. Exit code 1 on errors, 0 on valid.
