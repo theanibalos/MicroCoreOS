@@ -189,3 +189,35 @@ def test_every_entry_the_wheel_will_carry_exists():
         if not (root / e).exists()
     ]
     assert not missing, f"entries naming nothing on disk: {missing}"
+
+
+def test_new_ships_the_test_helpers_the_guide_tells_executors_to_import(tmp_path):
+    """The Plugin Authoring Guide names `tests.helpers.*` seven times — it is
+    the prescribed import of the flow-test template and the mocking rules. The
+    scaffold shipped no `tests/` at all, so those imports pointed at nothing
+    while `testpaths = ["tests"]` pointed at a directory that did not exist.
+    Measured consequence: an executor went looking for them in the framework's
+    own checkout and copied two of the four out of it."""
+    target = tmp_path / "proj"
+    scaffold.new([str(target)])
+
+    helpers = target / "tests" / "helpers"
+    assert helpers.is_dir()
+    for name in ("mock_db.py", "async_wait.py", "trace_chains.py", "active_db.py"):
+        assert (helpers / name).is_file(), f"{name} missing — the guide imports it"
+
+
+def test_shipped_helpers_cover_every_tests_helpers_import_in_the_guide(tmp_path):
+    """Whatever the guide tells executors to import must exist in a new project.
+    This fails the moment the guide gains an import the scaffold does not ship."""
+    import re
+
+    guide = Path("tools/context/authoring_guide.md").read_text(encoding="utf-8")
+    modules = set(re.findall(r"tests[./]helpers[./](\w+)", guide))
+    assert modules, "guide no longer references tests.helpers — update this test"
+
+    target = tmp_path / "proj"
+    scaffold.new([str(target)])
+
+    shipped = {p.stem for p in (target / "tests" / "helpers").glob("*.py")}
+    assert modules <= shipped, f"guide imports {modules - shipped}, scaffold ships none"

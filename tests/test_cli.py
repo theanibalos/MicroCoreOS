@@ -9,6 +9,7 @@ import io
 import os
 import pickle
 import sys
+import textwrap
 import types
 
 from microcoreos import cli
@@ -139,8 +140,6 @@ def test_dev_hands_watchfiles_only_picklable_things(tmp_path, monkeypatch):
 # that never regenerates the manifest, `sqlite3` that is not installed, a
 # jq|curl pipeline against a server that was not running, and a plan sitting
 # under a filename nothing reads.
-
-import textwrap
 
 
 def _project(tmp_path, plan: str = "", checklist: str = ""):

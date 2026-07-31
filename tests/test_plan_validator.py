@@ -6,6 +6,7 @@ The validator core is pure (PlanValidator + LiveSnapshot), so rule tests run
 without infrastructure; endpoint tests mock the live snapshot.
 """
 import copy
+import pathlib
 
 import pytest
 from unittest.mock import MagicMock
@@ -872,7 +873,7 @@ def test_rule8_fix_names_an_e2e_test_path():
 def test_empty_route_error_explains_that_a_consumer_omits_the_key():
     """`route: {}` is not "no route" — it is a route missing method and path."""
     from domains.devtools.plugins.plan_validator_plugin import (
-        offline_snapshot, run_validation,
+        run_validation,
     )
     plan = plan_copy()
     plan["features"][1]["route"] = {}
@@ -987,8 +988,6 @@ def test_offline_and_endpoint_agree_on_the_same_plan():
 # reading path exists to prevent. Every defect came from a shape the plan
 # template did not show; each one is now answered with the YAML that fixes it.
 
-import pathlib
-
 CORPUS = pathlib.Path(__file__).parent / "corpus" / "qwen_twitter_plan.yaml"
 
 
@@ -1011,8 +1010,8 @@ def test_corpus_round1_names_the_constraint_written_as_a_column():
 def test_corpus_round2_names_the_unquoted_path_param():
     from domains.devtools.plugins.plan_validator_plugin import validate_yaml
 
-    text = "\n".join(l for l in _corpus().splitlines()
-                     if "UNIQUE(follower_id" not in l)
+    text = "\n".join(line for line in _corpus().splitlines()
+                     if "UNIQUE(follower_id" not in line)
     _, error = validate_yaml(text)
     assert "quote any value containing" in error
     assert '"/orders/{order_id}"' in error
@@ -1022,8 +1021,8 @@ def _corpus_parsable() -> str:
     """The corpus past both YAML errors — where the RULES start applying."""
     import re
 
-    text = "\n".join(l for l in _corpus().splitlines()
-                     if "UNIQUE(follower_id" not in l)
+    text = "\n".join(line for line in _corpus().splitlines()
+                     if "UNIQUE(follower_id" not in line)
     return re.sub(r"path: (/[^ }]*\{[^ }]*\})", r'path: "\1"', text)
 
 

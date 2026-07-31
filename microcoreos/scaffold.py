@@ -55,6 +55,15 @@ RUNTIME_ENTRIES = [
     *EXTRAS_ENTRIES,
     "plans",
     "dev_infra",
+    # The test helpers the Plugin Authoring Guide tells every executor to
+    # import — `tests.helpers.mock_db`, `.async_wait`, `.trace_chains`. They
+    # were not shipped, so a fresh project's `tests/` did not exist while the
+    # guide referenced it seven times and `testpaths = ["tests"]` pointed at
+    # it. Executors went looking for them in whatever checkout they could
+    # reach: on a measured wave, one read them straight out of the framework's
+    # own repo. An instruction that names a file the project does not have is
+    # an instruction to go wandering.
+    "tests/helpers",
     "main.py",
     "Dockerfile",
     ".dockerignore",
