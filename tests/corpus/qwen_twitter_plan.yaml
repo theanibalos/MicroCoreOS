@@ -1,0 +1,136 @@
+# Active Plan — Twitter (Microblogging Platform)
+# Schema: docs/PARALLEL_DEVELOPMENT.md "Formal plan format"
+
+plan:
+  domain: twitter
+  engine: sqlite
+
+  phase_0:
+    migrations:
+      - file: twitter/001_create_twitter_tables.sql
+        tables: [posts, followers]
+        columns:
+          posts:
+            id: "INTEGER PRIMARY KEY"
+            author_id: "INTEGER NOT NULL REFERENCES users(id)"
+            content: "TEXT NOT NULL"
+            created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            updated_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            deleted: "BOOLEAN DEFAULT FALSE"
+          followers:
+            id: "INTEGER PRIMARY KEY"
+            follower_id: "INTEGER NOT NULL REFERENCES users(id)"
+            following_id: "INTEGER NOT NULL REFERENCES users(id)"
+            created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            UNIQUE(follower_id, following_id)
+    models:
+      - domains/twitter/models/post.py
+      - domains/twitter/models/follower.py
+    tools: []
+
+  features:
+    # ── POSTS ──────────────────────────────────────────────────────────────
+    - plugin: CreatePostPlugin
+      file: domains/twitter/plugins/create_post_plugin.py
+      function: "Create a new post/tweet"
+      route: { method: POST, path: /twitter/posts }
+      db: { writes: [posts], reads: [] }
+      publishes:
+        - event: post.created
+          model: PostCreatedPayload
+          payload: { id: int, author_id: int, content: str }
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_create_post_plugin.py
+
+    - plugin: GetPostsPlugin
+      file: domains/twitter/plugins/get_posts_plugin.py
+      function: "List recent posts (feed)"
+      route: { method: GET, path: /twitter/posts }
+      db: { writes: [], reads: [posts] }
+      publishes: []
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_get_posts_plugin.py
+
+    - plugin: GetPostPlugin
+      file: domains/twitter/plugins/get_post_plugin.py
+      function: "Get a single post by ID"
+      route: { method: GET, path: /twitter/posts/{post_id} }
+      db: { writes: [], reads: [posts] }
+      publishes: []
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_get_post_plugin.py
+
+    - plugin: DeletePostPlugin
+      file: domains/twitter/plugins/delete_post_plugin.py
+      function: "Soft-delete a post"
+      route: { method: DELETE, path: /twitter/posts/{post_id} }
+      db: { writes: [posts], reads: [] }
+      publishes:
+        - event: post.deleted
+          model: PostDeletedPayload
+          payload: { id: int, author_id: int }
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_delete_post_plugin.py
+
+    # ── FOLLOWERS ──────────────────────────────────────────────────────────
+    - plugin: FollowUserPlugin
+      file: domains/twitter/plugins/follow_user_plugin.py
+      function: "Follow another user"
+      route: { method: POST, path: /twitter/follow }
+      db: { writes: [followers], reads: [] }
+      publishes:
+        - event: follow.created
+          model: FollowCreatedPayload
+          payload: { follower_id: int, following_id: int }
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_follow_user_plugin.py
+
+    - plugin: UnfollowUserPlugin
+      file: domains/twitter/plugins/unfollow_user_plugin.py
+      function: "Unfollow a user"
+      route: { method: DELETE, path: /twitter/follow/{following_id} }
+      db: { writes: [followers], reads: [] }
+      publishes:
+        - event: follow.deleted
+          model: FollowDeletedPayload
+          payload: { follower_id: int, following_id: int }
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_unfollow_user_plugin.py
+
+    - plugin: GetFollowersPlugin
+      file: domains/twitter/plugins/get_followers_plugin.py
+      function: "Get followers/following for a user"
+      route: { method: GET, path: /twitter/followers/{user_id} }
+      db: { writes: [], reads: [followers] }
+      publishes: []
+      consumes: []
+      mocks: [db, event_bus]
+      test: tests/test_get_followers_plugin.py
+
+    # ── NOTIFICATIONS (consumes events) ────────────────────────────────────
+    - plugin: NotificationPlugin
+      file: domains/twitter/plugins/notification_plugin.py
+      function: "Notify followers when a new post is created"
+      route: {}
+      db: { writes: [], reads: [] }
+      publishes: []
+      consumes:
+        - event: post.created
+          model: PostCreatedPayload
+          payload: { id: int, author_id: int, content: str }
+      mocks: [event_bus]
+      test: tests/test_notification_plugin.py
+
+  flows:
+    - name: "Post creation → notification"
+      steps:
+        - plugin: CreatePostPlugin
+          event: post.created
+        - plugin: NotificationPlugin
+          consumes: post.created

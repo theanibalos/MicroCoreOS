@@ -14,6 +14,10 @@ The root `main.py` and `cli.py` are thin shims over this module, so
     microcoreos run                 idem, explicit
     microcoreos run --boot-tool db  boot ONE tool in isolation and exit
     microcoreos dev                 boot with auto-reload on .py changes
+    microcoreos status              preflight: active plan, progress, manifest age
+    microcoreos plan validate       run the plan rules offline
+    microcoreos migrate             apply migrations + regenerate AI_CONTEXT.md
+    microcoreos schema              print the live tables and columns
 """
 
 import os
@@ -27,6 +31,7 @@ from microcoreos.kernel import Kernel
 from microcoreos.catalog import add
 from microcoreos.scaffold import new
 from microcoreos.upgrade import upgrade
+from microcoreos.pipeline import migrate, plan, schema, status
 
 USAGE = """MicroCoreOS
 
@@ -36,6 +41,12 @@ Usage:
   microcoreos upgrade [--apply]                   Report/apply upstream changes
   microcoreos [run] [--boot-tool <tool_name>]     Boot the Kernel in this directory
   microcoreos dev                                 Boot with auto-reload on .py changes
+
+The plan pipeline (docs/PARALLEL_DEVELOPMENT.md):
+  microcoreos status                              Active plan, progress, manifest age
+  microcoreos plan validate [path]                Validate the plan offline (no server)
+  microcoreos migrate                             Apply migrations + regenerate AI_CONTEXT.md
+  microcoreos schema                              Print the live tables and columns
 
 Except for `new`, run these from the root of a MicroCoreOS project (the
 directory holding tools/, domains/ and plans/).
@@ -100,18 +111,29 @@ def _looks_like_a_project(root: str) -> bool:
     return any(os.path.isdir(os.path.join(root, d)) for d in ("tools", "domains"))
 
 
+def _require_project(root: str) -> bool:
+    """Same guard as `run`, shared with the pipeline commands.
+
+    Being in the wrong directory must never look like an empty project: the
+    Kernel would discover nothing and report "System Ready", and `status`
+    would report a pristine plan that is really someone else's directory.
+    """
+    if _looks_like_a_project(root):
+        return True
+    print(
+        f"[MicroCoreOS] No tools/ or domains/ directory in {root}.\n"
+        "              Run this from the root of a MicroCoreOS project."
+    )
+    return False
+
+
 def run(argv: list[str]) -> int:
     """Boot the Kernel. With --boot-tool, boot ONE tool in isolation and exit."""
     _stdio_speaks_unicode()  # Reached without `main` as the reload child of `dev`.
     root = _ensure_project_on_path()
-    if not _looks_like_a_project(root):
-        # The Kernel would otherwise discover nothing and announce "System
-        # Ready" — the most confusing possible answer to being in the wrong
-        # directory.
-        print(
-            f"[MicroCoreOS] No tools/ or domains/ directory in {root}.\n"
-            "              Run this from the root of a MicroCoreOS project."
-        )
+    # The Kernel would otherwise discover nothing and announce "System Ready" —
+    # the most confusing possible answer to being in the wrong directory.
+    if not _require_project(root):
         return 2
 
     if "--boot-tool" in argv:
@@ -169,7 +191,10 @@ def dev(argv: list[str]) -> int:
     return 0
 
 
-COMMANDS = {"new": new, "add": add, "upgrade": upgrade, "run": run, "dev": dev}
+COMMANDS = {
+    "new": new, "add": add, "upgrade": upgrade, "run": run, "dev": dev,
+    "status": status, "plan": plan, "migrate": migrate, "schema": schema,
+}
 
 
 def _stdio_speaks_unicode() -> None:

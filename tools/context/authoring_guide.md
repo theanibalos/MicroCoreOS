@@ -19,8 +19,10 @@ Your task line names either a **feature** or a **flow's tests**:
 - Flow-tests task → 1. the flow's `e2e_test` (trigger the happy path, assert
   the causal chain with `tests/helpers/trace_chains.py`:
   `assert_chain(build_tree(bus.get_trace_history()), [...])`) and 2. its
-  `sad_path_test` (force the consumer to fail with a mock that raises, assert
-  `_dlq.<event>` appears as a child of the failed event in the same tree).
+  `sad_path_test` (force the consumer to fail — the mock must raise on the
+  FIRST tool call the handler makes, since an idempotency guard runs before
+  the effect — and assert `_dlq.<event>` appears as a child of the failed
+  event in the same tree).
 
 Nothing else: no migrations, no entity models, no edits to `main.py`, no
 touching other domains or other tasks' files. When both files are written,
@@ -72,6 +74,23 @@ follow-ups.
     Every executor in a wave reads this same table, which is what keeps the API
     coherent without any of you coordinating: your feature is written in
     isolation, but its vocabulary is shared.
+
+11. **Idempotent consumer** — when the plan's flow link says
+    `idempotent: true`, guard on `event.id` (the envelope is frozen, so a
+    redelivery carries the same one) and mark it **after** the effect:
+
+    ```python
+    if await self.state.has(event.id, namespace="thing-seen"):
+        return                                    # duplicate: already applied
+    await self.state.increment(...)               # the effect
+    await self.state.set(event.id, True, namespace="thing-seen", ttl=3600)
+    ```
+
+    Marking first drops the event: the effect raises, the retry hits the guard,
+    returns "already seen" — no work, no error, no DLQ. Write the
+    double-delivery test under the exact name `idempotency_test` gives, with a
+    real `StateTool()`: an `AsyncMock` returns truthy from `has()`, so the guard
+    swallows everything and the test proves nothing.
 
 ### Templates — one per deliverable type, copy the one your task matches
 

@@ -5,20 +5,30 @@ description: Ensures adherence to MicroCoreOS "Atomic Microkernel" architecture.
 
 # MicroCoreOS Architecture Skill
 
-## Reading Path
+**Read `AGENTS.md` and follow the route for your role.** That table names the
+one or two files your role needs and, just as importantly, the ones it must not
+open — a Planner that also loads the plugin templates spends ~3,000 tokens on
+code it will never write.
 
-**To write a plugin**: Read `AI_CONTEXT.md` + entity model in `domains/{domain}/models/`. Nothing else.
-**To create a full domain**: Use the `/new-domain` workflow.
-**Templates + anti-patterns + detailed rules**: `INSTRUCTIONS_FOR_AI.md`.
+This file deliberately holds no rules, no reading path and no checklist of its
+own. It used to hold all three, and all three had drifted: its reading path
+sent plugin authors to `INSTRUCTIONS_FOR_AI.md` for templates that live in the
+generated manifest, and its checklist was a fifth partial copy of the 13
+Non-Negotiable Rules — one that never mentioned typed event payloads.
 
-## Pre-commit Checklist
+| You need | It is in |
+|---|---|
+| The rules | `AGENTS.md` § Non-Negotiable Rules (13, canonical) |
+| Kernel/tool/event-bus laws | `AGENTS.md` § Core Architectural Laws |
+| The plugin template | `AI_CONTEXT.md` § Plugin Authoring Guide (regenerated every boot) |
+| What exists right now | `AI_CONTEXT.md` § Available Tools / § Domains |
+| The plan format and its 18 rules | `docs/PARALLEL_DEVELOPMENT.md` § Phase 1 |
+| Anti-patterns, testing, building a tool | `INSTRUCTIONS_FOR_AI.md` |
 
-- [ ] `main.py` untouched
-- [ ] No cross-domain imports (use `event_bus`)
-- [ ] Entity in `models/` mirrors DB only — schemas inline in plugin
-- [ ] All request fields use `pydantic.Field` with constraints
-- [ ] `response_model=` passed to `add_endpoint`
-- [ ] Plugin is a single self-contained file
-- [ ] `async def` for I/O, `def` for CPU
-- [ ] Test file exists at `tests/test_{name}_plugin.py`
-- [ ] `uv run main.py` runs without errors (or `microcoreos` / `microcoreos run` if installed)
+Before you finish, the gates are commands, not a checklist to eyeball:
+
+```bash
+microcoreos plan validate     # the plan is a contract — zero errors
+uv run -m pytest              # green
+microcoreos status            # manifest still describes the code on disk
+```

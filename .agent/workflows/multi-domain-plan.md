@@ -13,6 +13,31 @@ tool, plugin, route, event (with its payload model), and every chain with its
 happy path and sad paths. Code-time conflicts are structurally impossible;
 what remains is getting the plan right.
 
+## Before you plan — read these two, in this order
+
+1. **`plans/active_plan.yaml`** — the file you are about to overwrite. It ships
+   as a worked example of all three feature shapes. It **is** the format, not a
+   description of one, and it is the cheapest way to have it.
+2. **`AI_CONTEXT.md`**, down to `## 🧩 Plugin Authoring Guide` — the tables,
+   models, routes and events that already exist. Inherit their names exactly.
+
+Then write to **`plans/active_plan.yaml`** — that exact path, overwriting it —
+and run `microcoreos plan validate` until it reports zero errors. Errors carry
+the YAML that fixes them: paste it.
+
+**Write the file before you ask anything.** Checking in is fine — planning
+often is a conversation — but never *instead of* writing: a plan that exists
+only as prose in your reply is a plan the next phase cannot read, and the run
+may not be interactive at all. So write the YAML, validate it, and then raise
+whatever you wanted to raise; the operator answers against a real file instead
+of a description. Where a detail is genuinely undecidable, take what the
+existing vocabulary implies, put it in the YAML, and flag it in a comment.
+
+`docs/PARALLEL_DEVELOPMENT.md` § Phase 1 holds the rules behind the format.
+Read it when a validator error is unclear, not before — and never reach for
+plugin source under `domains/`, `tools/` or `extras/` to infer the shape. A
+planner that did produced a plan with every field renamed.
+
 ## Phase 1 — The full plan (the contract, authored FIRST)
 
 Write the complete YAML plan of `docs/PARALLEL_DEVELOPMENT.md` ("Formal plan
@@ -40,57 +65,24 @@ the sqlite/redis driver) and the sad-path checklist per link:
 - `rpc_links` (flow-level) — every `request()` call, with `timeout` and
   `on_timeout`
 
-Then run the 16 validity rules mechanically: `POST /system/plan/validate`
-with the plan (YAML or JSON) against the live system — zero `errors` before
-building anything. An invalid plan is a task-allocation error — fix the plan,
+Then run the 18 validity rules mechanically: `microcoreos plan validate`
+(offline; `POST /system/plan/validate` is the same rules against a running
+system) — zero `errors` before building anything. An invalid plan is a task-allocation error — fix the plan,
 never patch it in code.
 
-## Phase 0 — Foundation (built FROM the plan; serial, one author)
+## Phases 0, 2 and 3
 
-1. New **tools** only if the spec demands infrastructure that does not exist
-   → follow [new-tool.md](new-tool.md), parity suite included. Written 1:1
-   from the plan's `contract:` (signatures + return shape), never inventing
-   a method — same rule as `columns:` for migrations.
-2. All **migrations** (`domains/*/migrations/*.sql`) with their **models**,
-   written 1:1 from the plan's `columns:`, sequential numbering, `-- depends:`
-   for cross-domain ordering.
+Identical to any other plan — `docs/PARALLEL_DEVELOPMENT.md` owns them, and
+restating them here is how this file once kept prescribing a boot command that
+had stopped regenerating the manifest.
 
-(1 and 2 are independent at write time — disjoint files; two agents in any
-order or in parallel is fine. Migrations keep one author for numbering.)
+Two things are specific to multi-domain work and are the only reason this
+section exists:
 
-3. Boot once (`uv run main.py`, or `microcoreos` if you installed the
-   package), only after everything is written →
-   regenerated `AI_CONTEXT.md` is the ground truth every agent receives
-   (it must include the new tools' interfaces). Freeze phase 0.
-
-## Phase 2 — Execution (parallel)
-
-Dispatch one agent per feature with the **canonical executor prompt**
-(`docs/PARALLEL_DEVELOPMENT.md` § Phase 2): a byte-identical shared prefix —
-`AI_CONTEXT.md` (which embeds the executor rules and templates as its
-"Plugin Authoring Guide" section) → full plan — plus one final per-agent line
-naming its feature. Dispatch executors **write-only, scoped to the two paths
-their plan entry declares** (`file:` + `test:` for a feature, the flow's two
-test paths for flow tests — no read/search/shell tools): the prefix is self-sufficient
-by construction, with one complete template per deliverable type embedded in
-`AI_CONTEXT.md` § Authoring Templates. Agents never open the plan or `AI_CONTEXT.md` themselves;
-the identical prefix lets any prefix-caching engine process the shared block
-once for the whole wave. Each agent produces exactly two files: its plugin
-and its unit test. Event payload schemas go inline in each publisher plugin
-(`XxxPayload(...).model_dump()`). Never assign two agents to the same feature.
-
-## Phase 3 — Integration boot (the safety net)
-
-```bash
-// turbo
-uv run main.py   # or: microcoreos (if you installed the package)
-```
-
-1. `GET /system/lint` → zero warnings (arch, drift, event contracts) and no
-   `UNTYPED_PAYLOAD` for the plan's events.
-2. `GET /system/events/schemas` → every planned event appears with its model.
-3. Full suite: `uv run -m pytest` — includes one chain e2e per flow
-   (`tests/helpers/trace_chains.py`: `assert_chain(build_tree(...), [...])`),
-   the sad-path tests (`_dlq.<event>` chains) and the double-delivery
-   idempotency tests the plan declared.
-4. Regenerated `AI_CONTEXT.md` == plan. **The spec is done when they match.**
+- **Migration ordering across domains.** One author for the numbering, and
+  `-- depends: other_domain/001_file.sql` wherever a table in one domain must
+  exist before another's. The db tool resolves the order and prints each file
+  as it applies it.
+- **Never assign two agents to the same feature**, and never let one agent
+  touch two domains. The wave is safe precisely because the write sets are
+  disjoint.

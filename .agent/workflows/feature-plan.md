@@ -8,11 +8,36 @@ The smallest planning level: new plugins on a domain that already exists. No
 migrations, no new tools — if you need either, escalate to
 [new-domain.md](new-domain.md) or [multi-domain-plan.md](multi-domain-plan.md).
 
+## Before you plan — read these two, in this order
+
+1. **`plans/active_plan.yaml`** — the file you are about to overwrite. It ships
+   as a worked example of all three feature shapes. It **is** the format, not a
+   description of one, and it is the cheapest way to have it.
+2. **`AI_CONTEXT.md`**, down to `## 🧩 Plugin Authoring Guide` — the tables,
+   models, routes and events that already exist. Inherit their names exactly.
+
+Then write to **`plans/active_plan.yaml`** — that exact path, overwriting it —
+and run `microcoreos plan validate` until it reports zero errors. Errors carry
+the YAML that fixes them: paste it.
+
+**Write the file before you ask anything.** Checking in is fine — planning
+often is a conversation — but never *instead of* writing: a plan that exists
+only as prose in your reply is a plan the next phase cannot read, and the run
+may not be interactive at all. So write the YAML, validate it, and then raise
+whatever you wanted to raise; the operator answers against a real file instead
+of a description. Where a detail is genuinely undecidable, take what the
+existing vocabulary implies, put it in the YAML, and flag it in a comment.
+
+`docs/PARALLEL_DEVELOPMENT.md` § Phase 1 holds the rules behind the format.
+Read it when a validator error is unclear, not before — and never reach for
+plugin source under `domains/`, `tools/` or `extras/` to infer the shape. A
+planner that did produced a plan with every field renamed.
+
 ## Prerequisites
 
-- Read `AI_CONTEXT.md` — the live inventory (tools, domains, events, routes).
-- Check `GET /system/events/schemas` (or the "Events emitted" lines in
-  `AI_CONTEXT.md`) for the payload contracts of any event you will consume.
+Both files above. For an event you will consume, its payload contract is the
+"Events emitted" line of the publishing domain in `AI_CONTEXT.md` (or
+`GET /system/events/schemas` on a running system).
 
 ## Steps
 
@@ -60,9 +85,10 @@ plan:
 
 ### 2. Validate before writing code
 
-`POST /system/plan/validate` with the plan (YAML or JSON) — it runs the 16
-validity rules of `docs/PARALLEL_DEVELOPMENT.md` against this plan AND the
-live system. Zero `errors` before any code; `warnings` are advisory. The main
+`microcoreos plan validate` — it runs the 18 validity rules of
+`docs/PARALLEL_DEVELOPMENT.md` against this plan AND what the repo already
+occupies, with no server running. (`POST /system/plan/validate` is the same
+rules against a booted system, and adds live subscribers.) Zero `errors` before any code; `warnings` are advisory. The main
 things it catches at this level:
 
 - The `route` and `file` collide with nothing live.

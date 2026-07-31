@@ -1,7 +1,7 @@
 # The `microcoreos` command
 
-Installed by the package. Five commands: create a project, install an extra,
-see what changed upstream, boot, boot with reload.
+Installed by the package. Five commands for the project lifecycle, four for the
+plan pipeline.
 
 ```
 microcoreos new <path> [--force] [--no-ai-kit]   Materialize a new project
@@ -9,6 +9,11 @@ microcoreos add <extra> [--no-install]           Install an extra completely
 microcoreos upgrade [--apply]                    Report/apply upstream changes
 microcoreos [run] [--boot-tool <tool>]           Boot the Kernel
 microcoreos dev                                  Boot with auto-reload
+
+microcoreos status                               Active plan, progress, manifest age
+microcoreos plan validate [path]                 The 16 plan rules, offline
+microcoreos migrate                              Migrations + regenerate AI_CONTEXT.md
+microcoreos schema                               The live tables and columns
 ```
 
 **Every example below needs a `uv run` prefix** (or an activated venv): the
@@ -178,9 +183,64 @@ microcoreos run --boot-tool db       # boot ONE tool in isolation, then exit
 microcoreos dev                      # boot, reload on .py changes
 ```
 
-`--boot-tool` is the migrations pipeline entry point:
+`--boot-tool` is the **deployment** migrations entry point:
 `DB_AUTO_MIGRATE=true microcoreos run --boot-tool db` — see
-[ELASTIC_DEPLOYMENT.md](ELASTIC_DEPLOYMENT.md).
+[ELASTIC_DEPLOYMENT.md](ELASTIC_DEPLOYMENT.md). It boots that tool and nothing
+else, which is exactly right for a pipeline that wants migrations applied and
+no side effects — and exactly wrong for phase 0 of a plan, where the point is
+also to refresh `AI_CONTEXT.md`. Use `microcoreos migrate` there.
+
+---
+
+## The plan pipeline
+
+Four commands covering the plan workflow in
+[PARALLEL_DEVELOPMENT.md](PARALLEL_DEVELOPMENT.md). Each replaces a sequence
+agents previously had to improvise, and each of those improvisations was
+observed failing.
+
+```bash
+microcoreos status                   # before anything else
+microcoreos plan validate            # defaults to plans/active_plan.yaml
+microcoreos plan validate draft.yaml # or any path
+microcoreos migrate                  # after writing phase 0
+microcoreos schema                   # verify what landed in the database
+```
+
+**`status`** — the preflight. Which plan is active (and whether it is still the
+shipped template), how many checklist tasks remain, and whether `AI_CONTEXT.md`
+is older than the newest file under `domains/` or `tools/`. It also names any
+other `plans/*.yaml` sitting there, because those are plans nothing executes,
+and any loose `.py` in the project root — every deliverable has a declared home
+under `domains/`, `tools/` or `tests/`, so one at the root is an agent's
+scratch file left behind. Reported, never deleted.
+
+**`plan validate`** — the 18 rules with no server running. The rules were
+always pure; only the live snapshot needed a booted system, and everything in
+it except live *subscribers* can be read off the disk. Errors carry the YAML
+that fixes them. Exit code 1 on errors, 0 on valid.
+`POST /system/plan/validate` runs the identical rules against a booted system
+and adds those live subscribers — use it when a `dlq_watcher` or a compensation
+consumer only exists at runtime.
+
+**`migrate`** — the boot with an ending. `uv run main.py` regenerates the
+manifest too, but never returns: in the foreground it hangs the agent's
+session, in the background it gives no signal that the manifest is written and
+leaves the process behind. That gap is why the docs used to prescribe
+`--boot-tool db` here, which exits but never reaches the context tool.
+
+It boots FULLY (with `DB_AUTO_MIGRATE=true`) and shuts down. Full, because the
+manifest is generated from the live container: a partial boot would rewrite
+`AI_CONTEXT.md` as a system with no tools and no plugins. If the port is
+already held it says so and stops, rather than letting uvicorn kill the
+process with `sys.exit(1)` from inside its startup — phase 0 expects nothing
+booted, so that is a wrong-state message, not a missing capability.
+
+**`schema`** — the live tables and columns, read through the db tool's
+`describe_schema()`. Through the tool, not around it: the types come back in
+the closed vocabulary every engine shares, so this is what an engine swap has
+to preserve. A raw `sqlite3` probe answers a different question, and is usually
+not installed anyway.
 
 `dev` needs `watchfiles` (`uv add --dev watchfiles`); it says so if missing.
 

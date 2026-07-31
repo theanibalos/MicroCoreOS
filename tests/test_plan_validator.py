@@ -770,3 +770,498 @@ async def test_engine_is_no_longer_an_unknown_key():
     result = await plugin.validate_plan({"plan": plan})
     assert not [w for w in result["data"]["warnings"]
                 if w["rule"] == 0 and "engine" in w["detail"]]
+
+
+# ── Rule 0: the shipped template is not a plan ──────────────────────────────
+#
+# The template is a VALID plan — that is what makes it a useful example, and
+# exactly why nothing else can tell it apart from a real one. Two consecutive
+# sessions read the untouched `plans/active_plan.yaml`, found a well-formed
+# plan for the example domain, and built THAT; the second did so after being
+# told in its prompt to build something else.
+
+def test_template_flag_is_an_error():
+    plan = plan_copy()
+    plan["template"] = True
+    result = check(plan)
+    assert not result.valid
+    assert rule_hits(result, 0)
+    assert "template" in result.errors[0].detail
+
+
+def test_template_flag_short_circuits_every_other_rule():
+    """One unambiguous error, not a wall of findings about someone else's domain."""
+    plan = plan_copy()
+    plan["template"] = True
+    plan["features"][0]["test"] = ""          # would be a rule 5 error
+    result = check(plan)
+    assert [e.rule for e in result.errors] == [0]
+
+
+def test_a_real_plan_needs_no_template_key():
+    assert check(plan_copy()).valid           # VALID_PLAN never sets it
+
+
+def test_template_checklist_is_an_error():
+    """An all-[x] template checklist proves nothing: its paths are placeholders."""
+    result = PlanValidator(
+        Plan(**plan_copy()), LiveSnapshot(),
+        checklist="<!-- template: true -->\n- [ ] Task D1: ...",
+    ).validate()
+    assert not result.valid
+    assert rule_hits(result, 0)
+    assert "checklist" in result.errors[0].detail
+
+
+def test_the_shipped_template_files_are_actually_marked():
+    """The rule is only worth having if the files it targets carry the marker."""
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    with open("plans/active_plan.yaml", encoding="utf-8") as f:
+        plan_yaml = f.read()
+    with open("plans/active_plan.md", encoding="utf-8") as f:
+        checklist = f.read()
+
+    result, error = validate_yaml(plan_yaml, checklist=checklist)
+    assert error is None
+    assert not result.valid and rule_hits(result, 0)
+
+    # ...and the example it teaches must itself be a valid plan, or the
+    # template is teaching a plan that would be rejected.
+    edited = "\n".join(
+        line for line in plan_yaml.splitlines()
+        if not line.strip().startswith("template: true")
+    )
+    result, error = validate_yaml(edited, checklist=checklist.replace(
+        "<!-- template: true -->", ""))
+    assert error is None
+    assert result.valid, result.errors
+
+
+# ── `fix:` — the corrected YAML, not a description of it ────────────────────
+
+def test_rule5_fix_names_the_missing_test_file():
+    plan = plan_copy()
+    plan["features"][0]["test"] = ""
+    fix = rule_hits(check(plan), 5)[0].fix
+    assert "tests/test_create_order.py" in fix
+
+
+def test_rule6_fix_spells_the_payload_model():
+    plan = plan_copy()
+    plan["features"][0]["publishes"][0]["model"] = ""
+    fix = rule_hits(check(plan), 6)[0].fix
+    assert "model: OrderCreatedPayload" in fix
+
+
+def test_rule7_fix_is_a_pasteable_flow_link():
+    plan = plan_copy()
+    plan["flows"] = []
+    fix = rule_hits(check(plan), 7)[0].fix
+    assert "links:" in fix
+    assert "consumes: order.created" in fix
+    assert "consumer: OrderNotifierPlugin" in fix
+
+
+def test_rule8_fix_names_an_e2e_test_path():
+    plan = plan_copy()
+    plan["flows"][0]["e2e_test"] = ""
+    assert "e2e_test: tests/" in rule_hits(check(plan), 8)[0].fix
+
+
+def test_empty_route_error_explains_that_a_consumer_omits_the_key():
+    """`route: {}` is not "no route" — it is a route missing method and path."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        offline_snapshot, run_validation,
+    )
+    plan = plan_copy()
+    plan["features"][1]["route"] = {}
+    result = run_validation(plan, LiveSnapshot())
+    assert not result.valid
+    assert any("OMIT the key" in (e.fix or "") for e in result.errors)
+
+
+def test_unknown_consumes_keys_carry_the_requires_form():
+    """`model:`/`payload:` under consumes: is the publisher's shape, copied."""
+    from domains.devtools.plugins.plan_validator_plugin import run_validation
+
+    plan = plan_copy()
+    plan["features"][1]["consumes"][0]["model"] = "OrderCreatedPayload"
+    result = run_validation(plan, LiveSnapshot())
+    fixes = [w.fix for w in result.warnings if w.rule == 0 and w.fix]
+    assert any("requires: [id, total]" in f for f in fixes)
+
+
+def test_unknown_flow_steps_key_carries_the_links_form():
+    from domains.devtools.plugins.plan_validator_plugin import run_validation
+
+    plan = plan_copy()
+    plan["flows"][0]["steps"] = []
+    result = run_validation(plan, LiveSnapshot())
+    assert any("links:" in (w.fix or "") for w in result.warnings if w.rule == 0)
+
+
+# ── Offline validation: same rules, no running system ───────────────────────
+
+def test_validate_yaml_reports_a_parse_error_with_its_position():
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    result, error = validate_yaml("plan:\n  features:\n   - a\n  - b\n")
+    assert result is None
+    assert "not valid YAML" in error
+
+
+def test_validate_yaml_accepts_the_documented_plan_root_key():
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    result, error = validate_yaml(
+        "plan:\n  domain: orders\n  features:\n"
+        "    - plugin: ListOrdersPlugin\n"
+        "      file: domains/orders/plugins/list_orders_plugin.py\n"
+        "      test: tests/test_list_orders.py\n",
+        live=LiveSnapshot(),
+    )
+    assert error is None and result.valid
+
+
+def test_scan_live_events_reads_publishers_and_subscribers(tmp_path):
+    """Offline stand-in for the live bus — without it rule 3 flags every event
+    the existing domains already publish."""
+    from domains.devtools.plugins.plan_validator_plugin import scan_live_events
+
+    plugins = tmp_path / "domains" / "shop" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "a_plugin.py").write_text(
+        "class ShipPlugin:\n"
+        "    async def on_boot(self):\n"
+        "        await self.bus.subscribe('order.paid', self.on_paid)\n"
+        "    async def on_paid(self, event):\n"
+        "        await self.bus.publish('order.shipped', {})\n"
+    )
+    published, subscribers = scan_live_events(str(tmp_path / "domains"))
+    assert published == {"order.shipped"}
+    assert subscribers == {"order.paid": ["ShipPlugin.on_paid"]}
+
+
+def test_offline_snapshot_sees_tables_and_routes(tmp_path, monkeypatch):
+    from domains.devtools.plugins.plan_validator_plugin import offline_snapshot
+
+    domain = tmp_path / "domains" / "shop"
+    (domain / "migrations").mkdir(parents=True)
+    (domain / "plugins").mkdir(parents=True)
+    (domain / "migrations" / "001.sql").write_text(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER);")
+    (domain / "plugins" / "list_plugin.py").write_text(
+        "class ListPlugin:\n"
+        "    async def on_boot(self):\n"
+        "        self.http.add_endpoint('/orders', 'GET', self.execute)\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    snapshot = offline_snapshot()
+    assert snapshot.tables == {"orders": "shop"}
+    assert snapshot.columns["orders"] == {"id", "total"}
+    assert "GET /orders" in snapshot.routes
+
+
+def test_offline_and_endpoint_agree_on_the_same_plan():
+    """The CLI must not be a second, drifting implementation of the rules."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        run_validation, validate_yaml,
+    )
+    import yaml as yaml_module
+
+    plan = plan_copy()
+    text = yaml_module.safe_dump({"plan": plan})
+    offline, error = validate_yaml(text, live=LiveSnapshot())
+    direct = run_validation(plan, LiveSnapshot())
+    assert error is None
+    assert offline.model_dump() == direct.model_dump()
+
+
+# ── Regression corpus: a plan a real model actually wrote ───────────────────
+#
+# tests/corpus/qwen_twitter_plan.yaml is byte-exact output from
+# Qwen3.6-35B-A3B (IQ2_XXS, thinking off), recovered from its session log.
+# Getting it to validate took that session four rounds, and the model resolved
+# the schema by reading ~500 lines of this file's source — the one thing the
+# reading path exists to prevent. Every defect came from a shape the plan
+# template did not show; each one is now answered with the YAML that fixes it.
+
+import pathlib
+
+CORPUS = pathlib.Path(__file__).parent / "corpus" / "qwen_twitter_plan.yaml"
+
+
+def _corpus() -> str:
+    return CORPUS.read_text(encoding="utf-8")
+
+
+def test_corpus_round1_names_the_constraint_written_as_a_column():
+    """YAML reports the line AFTER the keyless one, so the bare scanner error
+    pointed at `models:` while the mistake was `UNIQUE(...)` above it."""
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    result, error = validate_yaml(_corpus())
+    assert result is None
+    assert "UNIQUE(follower_id, following_id)" in error
+    assert "table-level constraint" in error
+    assert "line 25" in error          # not the reported 26
+
+
+def test_corpus_round2_names_the_unquoted_path_param():
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    text = "\n".join(l for l in _corpus().splitlines()
+                     if "UNIQUE(follower_id" not in l)
+    _, error = validate_yaml(text)
+    assert "quote any value containing" in error
+    assert '"/orders/{order_id}"' in error
+
+
+def _corpus_parsable() -> str:
+    """The corpus past both YAML errors — where the RULES start applying."""
+    import re
+
+    text = "\n".join(l for l in _corpus().splitlines()
+                     if "UNIQUE(follower_id" not in l)
+    return re.sub(r"path: (/[^ }]*\{[^ }]*\})", r'path: "\1"', text)
+
+
+def test_corpus_round3_explains_that_a_consumer_omits_route():
+    """`route: {}` was the model's way of saying "no route". It is a route
+    missing its required method and path."""
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    result, error = validate_yaml(_corpus_parsable())
+    assert error is None
+    assert not result.valid
+    assert any(e.where.endswith(("route.method", "route.path")) for e in result.errors)
+    assert any("OMIT the key" in (e.fix or "") for e in result.errors)
+
+
+def test_corpus_round4_catches_both_shapes_copied_from_publishes():
+    """`consumes:` with `model:`/`payload:`, and `flows:` with `steps:` — both
+    land in the unknown-key bucket, so the plan validates while declaring
+    nothing. Each now carries the form that replaces it."""
+    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+
+    result, _ = validate_yaml(_corpus_parsable().replace("      route: {}\n", ""))
+    fixes = [w.fix for w in result.warnings if w.rule == 0 and w.fix]
+    assert any("requires: [id, total]" in f for f in fixes)      # consumes
+    assert any("links:" in f for f in fixes)                     # flows
+    # ...and the consumption with no link is a hard error, with a pasteable link
+    rule7 = rule_hits(result, 7)
+    assert rule7 and "consumer: NotificationPlugin" in rule7[0].fix
+
+
+def test_the_corpus_is_the_real_thing_not_a_rewrite():
+    """If someone 'tidies' the fixture, it stops being evidence."""
+    text = _corpus()
+    assert "domain: twitter" in text
+    assert "UNIQUE(follower_id, following_id)" in text
+    assert "route: {}" in text
+    assert "steps:" in text
+    assert "model: PostCreatedPayload" in text   # under consumes:, wrongly
+
+
+# ── Rule 17: the plan must be proportional to its request ───────────────────
+
+def test_rule17_is_silent_at_the_documented_calibration():
+    """3 CRUDs plus an event chain is the reference, not a ceiling to approach."""
+    plan = plan_copy()
+    assert not rule_hits(check(plan), 17, "WARNING")
+
+
+def test_rule17_warns_when_one_domain_swallows_the_wave():
+    plan = plan_copy()
+    template = plan["features"][0]
+    for n in range(7):
+        extra = copy.deepcopy(template)
+        extra.update(plugin=f"Extra{n}Plugin",
+                     file=f"domains/orders/plugins/extra{n}_plugin.py",
+                     route={"method": "GET", "path": f"/extra{n}"},
+                     publishes=[], test=f"tests/test_extra{n}.py")
+        plan["features"].append(extra)
+
+    warnings = rule_hits(check(plan), 17, "WARNING")
+
+    assert warnings and "9 features in one domain" in warnings[0].detail
+    assert "9 executors" in warnings[0].detail        # the cost, not a scolding
+    assert "split it" in warnings[0].fix
+
+
+def test_rule17_never_blocks():
+    """Advisory: an oversized plan may still be the right plan."""
+    plan = plan_copy()
+    for n in range(9):
+        extra = copy.deepcopy(plan["features"][0])
+        extra.update(plugin=f"Extra{n}Plugin",
+                     file=f"domains/orders/plugins/extra{n}_plugin.py",
+                     route={"method": "GET", "path": f"/extra{n}"},
+                     publishes=[], test=f"tests/test_extra{n}.py")
+        plan["features"].append(extra)
+    assert check(plan).valid
+
+
+def test_rule17_counts_per_domain_not_per_plan():
+    """A cross-domain plan spreads its features; that is not over-planning."""
+    plan = plan_copy()
+    for n in range(6):
+        extra = copy.deepcopy(plan["features"][0])
+        extra.update(plugin=f"Extra{n}Plugin",
+                     file=f"domains/billing/plugins/extra{n}_plugin.py",
+                     route={"method": "GET", "path": f"/extra{n}"},
+                     publishes=[], db=None, test=f"tests/test_extra{n}.py")
+        plan["features"].append(extra)
+    assert not rule_hits(check(plan), 17, "WARNING")
+
+
+# ── The three keys a real planner invented ─────────────────────────────────
+#
+# Observed, not imagined: a Qwen3.6 run against this very schema produced
+# `constraints:` under a migration, and `params:`/`protected:` on features.
+# All three name something real; none of them is a plan field, so each landed
+# in the unknown-key bucket and was silently not validated.
+
+@pytest.mark.parametrize("where, key, expected", [
+    ("plan.phase_0.migrations[0]", "constraints", "write them in the .sql file"),
+    ("plan.features[2]", "params", "part of `path:`"),
+    ("plan.features[3]", "protected", "auth_validator=self.auth.validate_token"),
+])
+def test_invented_keys_carry_the_real_form(where, key, expected):
+    from domains.devtools.plugins.plan_validator_plugin import _unknown_key_fix
+
+    fix = _unknown_key_fix(where, key)
+    assert fix and expected in fix
+
+
+def test_an_unrecognised_key_simply_has_no_fix():
+    """The map answers what it has seen; it must not invent guidance."""
+    from domains.devtools.plugins.plan_validator_plugin import _unknown_key_fix
+
+    assert _unknown_key_fix("plan.features[0]", "budget") is None
+
+
+# ── Wholesale schema failure: a different format, not mistakes in this one ───
+
+def test_a_handful_of_schema_errors_stays_field_by_field():
+    """Few errors means the author is inside the format and slipped."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan = plan_copy()
+    plan["features"][0].pop("plugin")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert not result.valid
+    assert not any("not the plan format" in e.detail for e in result.errors)
+
+
+def test_a_wholesale_mismatch_names_the_worked_example_first():
+    """Observed: a planner emitted `name/description/version` at the root with
+    `phase_0` as a list. Twenty field errors invite twenty patches; the format
+    was simply a different one."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    invented = {
+        "name": "Twitter Domain",
+        "phase_0": [{"file": "domains/x/migrations/001.sql",
+                     "tables": [{"name": "tweets", "columns": []}]}],
+        "features": [{"name": f"p{n}", "db": "tweets"} for n in range(9)],
+    }
+
+    result = run_validation(invented, LiveSnapshot())
+
+    assert not result.valid
+    first = result.errors[0]
+    assert "not the plan format" in first.detail
+    assert "plans/active_plan.yaml" in first.fix
+    assert "Do not patch them one by one" in first.detail
+
+
+# ── rule 18 — a declared `::node` must exist once its file does ────────────
+#
+# The hole this closes was found by building a whole plan end to end: the plan
+# declared `tests/test_note_counter_plugin.py::test_double_delivery_created`,
+# the executor wrote the file without that function, and `plan validate`,
+# `pytest` and `GET /system/lint` were ALL green while the idempotency the plan
+# promised was neither implemented nor tested.
+
+def _plan_with_idempotency_test(nodeid):
+    plan = plan_copy()
+    plan["flows"] = [{
+        "name": "chain",
+        "e2e_test": "tests/test_chain.py",
+        "sad_path_test": "tests/test_chain_dlq.py",
+        "links": [{
+            "consumes": plan["features"][0]["publishes"][0]["event"],
+            "consumer": plan["features"][-1]["plugin"],
+            "retries": 2,
+            "idempotent": True,
+            "idempotency_test": nodeid,
+        }],
+    }]
+    return plan
+
+
+def test_rule_18_silent_while_the_test_file_does_not_exist(tmp_path, monkeypatch):
+    """Phase 2 has not run yet — that is not a defect."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    monkeypatch.chdir(tmp_path)
+    plan = _plan_with_idempotency_test("tests/nope.py::test_double_delivery")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert not any(e.rule == 18 for e in result.errors)
+
+
+def test_rule_18_flags_a_file_that_exists_without_the_declared_node(tmp_path, monkeypatch):
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "t.py").write_text("def test_something_else():\n    pass\n")
+    plan = _plan_with_idempotency_test("tests/t.py::test_double_delivery")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    err = next(e for e in result.errors if e.rule == 18)
+    assert "test_double_delivery" in err.detail
+    assert "pytest silently selects nothing" in err.detail
+    assert "async def test_double_delivery():" in err.fix
+
+
+def test_rule_18_accepts_the_node_once_it_is_written(tmp_path, monkeypatch):
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "t.py").write_text(
+        "async def test_double_delivery():\n    pass\n"
+    )
+    plan = _plan_with_idempotency_test("tests/t.py::test_double_delivery")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert not any(e.rule == 18 for e in result.errors)
+
+
+def test_rule_18_ignores_a_plain_path_with_no_node(tmp_path, monkeypatch):
+    """`tests/x.py` with no `::` makes no claim about a specific function."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "t.py").write_text("def test_x():\n    pass\n")
+    plan = _plan_with_idempotency_test("tests/t.py")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert not any(e.rule == 18 for e in result.errors)

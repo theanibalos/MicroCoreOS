@@ -93,8 +93,14 @@ class ContextTool(BaseTool):
             if domain:
                 plugins_by_domain.setdefault(domain, []).append((plugin_name, info))
 
-        for domain in sorted(plugins_by_domain.keys()):
-            plugins = plugins_by_domain[domain]
+        # The union, not just the plugin list. A domain that owns a table but
+        # has no plugin yet is exactly what phase 0 produces, and listing only
+        # registered plugins made that domain invisible in the one document
+        # phase 0 is verified against: the migration applied, the manifest
+        # regenerated, and the new table appeared nowhere. The table is the
+        # deliverable — it belongs here the moment it exists.
+        for domain in sorted(set(plugins_by_domain) | set(owned_tables)):
+            plugins = plugins_by_domain.get(domain, [])
             plugin_names = [p[0] for p in plugins]
 
             all_deps: set[str] = set()
@@ -150,7 +156,13 @@ class ContextTool(BaseTool):
 
             manifest += f"- **Events consumed**: {', '.join(sorted(consumed)) if consumed else 'none'}\n"
             manifest += f"- **Dependencies**: {', '.join(sorted(all_deps)) if all_deps else 'none'}\n"
-            manifest += f"- **Plugins**: {', '.join(sorted(plugin_names))}\n\n"
+            if plugin_names:
+                manifest += f"- **Plugins**: {', '.join(sorted(plugin_names))}\n\n"
+            else:
+                # Says which phase the domain is in, not merely that a list is
+                # empty: this is the line a phase 0 author is looking for.
+                manifest += ("- **Plugins**: none — phase 0 only (tables and "
+                             "models exist, no feature implements them yet)\n\n")
 
         manifest += renderers._load_authoring_guide()
 

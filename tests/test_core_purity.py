@@ -29,7 +29,10 @@ KERNEL_MODULES = [
     "registry.py",
 ]
 
-DISTRIBUTION_MODULES = ["cli.py", "catalog.py", "scaffold.py", "upgrade.py"]
+# `pipeline.py` is distribution: the plan-pipeline commands are things you run
+# AT a project (validate, migrate, inspect), never code a booted app imports.
+DISTRIBUTION_MODULES = ["cli.py", "catalog.py", "scaffold.py", "upgrade.py",
+                        "pipeline.py"]
 
 
 def _imported_roots(path: Path) -> set[str]:

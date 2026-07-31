@@ -10,9 +10,36 @@ Creates a full domain from scratch: entity model, SQL migration, and one plugin 
 > one new domain → this workflow · several domains / cross-domain chains →
 > [multi-domain-plan.md](multi-domain-plan.md) · new infrastructure → [new-tool.md](new-tool.md).
 
+## Before you plan — read these two, in this order
+
+1. **`plans/active_plan.yaml`** — the file you are about to overwrite. It ships
+   as a worked example of all three feature shapes. It **is** the format, not a
+   description of one, and it is the cheapest way to have it.
+2. **`AI_CONTEXT.md`**, down to `## 🧩 Plugin Authoring Guide` — the tables,
+   models, routes and events that already exist. Inherit their names exactly.
+
+Then write to **`plans/active_plan.yaml`** — that exact path, overwriting it —
+and run `microcoreos plan validate` until it reports zero errors. Errors carry
+the YAML that fixes them: paste it.
+
+**Write the file before you ask anything.** Checking in is fine — planning
+often is a conversation — but never *instead of* writing: a plan that exists
+only as prose in your reply is a plan the next phase cannot read, and the run
+may not be interactive at all. So write the YAML, validate it, and then raise
+whatever you wanted to raise; the operator answers against a real file instead
+of a description. Where a detail is genuinely undecidable, take what the
+existing vocabulary implies, put it in the YAML, and flag it in a comment.
+
+`docs/PARALLEL_DEVELOPMENT.md` § Phase 1 holds the rules behind the format.
+Read it when a validator error is unclear, not before — and never reach for
+plugin source under `domains/`, `tools/` or `extras/` to infer the shape. A
+planner that did produced a plan with every field renamed.
+
 ## Prerequisites
-- Read `AI_CONTEXT.md` for available tools.
-- Read `INSTRUCTIONS_FOR_AI.md` for rules and templates.
+
+Both files above. Nothing else: the plugin template lives in `AI_CONTEXT.md`
+§ Plugin Authoring Guide, generated on every boot, and the rules are the 13
+Non-Negotiable Rules in `AGENTS.md`.
 
 ## Steps
 
@@ -28,7 +55,8 @@ persistence contract), and — ONLY if any plugin publishes or consumes events �
 the `atomic_with_db` outbox question — and the declared `idempotency_test` /
 `sad_path_test` files). A pure-CRUD domain has no `flows` section at all; a
 domain whose delete cascades through one event has exactly one flow.
-Validate with `POST /system/plan/validate` before writing code. Build in that
+Validate with `microcoreos plan validate` before writing code (offline — the
+endpoint form is the same rules against a running system). Build in that
 order — tools first if any, then migrations + models, then plugins with their
 events. Nothing below this line should require a decision the plan did not
 already make. Expected size for a CRUD domain with one event chain: ~80-120
@@ -77,75 +105,14 @@ CREATE TABLE IF NOT EXISTS {name}s (
 
 ### 4. Create plugins (1 file = 1 use case)
 
-For each operation (create, get_all, get_by_id, update, delete), create a separate plugin file in `domains/{name}/plugins/`.
+One plugin file per operation in `domains/{name}/plugins/`. The template — with
+request, response and event-payload schemas inline, and the rules that go with
+them — is `AI_CONTEXT.md` § **Plugin Authoring Guide**, regenerated on every
+boot and already inside every executor prompt. A fourth copy lived here.
 
-**Critical rules**:
-- Define the **request schema** (what the HTTP client sends) at the **top of the plugin file**, NOT in the models folder.
-- Define the **response schema** (what the HTTP client receives) at the **top of the plugin file** too — never import the Entity for this; only expose the fields you actually return.
-- Define the **event payload schema** for every event this plugin publishes, also at the top of the file: `{Name}CreatedPayload(BaseModel)`. Publish with `.model_dump()` (bare call, no arguments). The publisher owns the event contract — consumers in other domains never import it; they declare their own model with only the fields they need (tolerant reader).
-- Always pass `response_model=` to `add_endpoint` — this generates complete OpenAPI docs.
-
-Example for create:
-
-File: `domains/{name}/plugins/create_{name}_plugin.py`
-
-```python
-from typing import Optional
-from pydantic import BaseModel
-from microcoreos import BasePlugin
-
-# ── Request schema lives HERE ──────────────────────
-class Create{Name}Request(BaseModel):
-    # Only input fields — no id, no internal fields
-    field1: str
-    field2: int
-
-# ── Response schema lives HERE ─────────────────────
-class {Name}Data(BaseModel):
-    id: int
-    field1: str
-    field2: int
-
-class Create{Name}Response(BaseModel):
-    success: bool
-    data: Optional[{Name}Data] = None
-    error: Optional[str] = None
-
-# ── Event payload schema lives HERE (publisher owns the contract) ──
-class {Name}CreatedPayload(BaseModel):
-    id: int
-
-class Create{Name}Plugin(BasePlugin):
-    def __init__(self, http, db, event_bus, logger):
-        self.http = http
-        self.db = db
-        self.bus = event_bus
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint(
-            "/{name}s", "POST", self.execute,
-            tags=["{Name}s"], request_model=Create{Name}Request,
-            response_model=Create{Name}Response,
-        )
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = Create{Name}Request(**data)
-            new_id = await self.db.execute(
-                "INSERT INTO {name}s (field1, field2) VALUES ($1, $2) RETURNING id",
-                [req.field1, req.field2]
-            )
-            self.logger.info(f"{Name} created with ID {new_id}")
-            await self.bus.publish("{name}.created", {Name}CreatedPayload(id=new_id).model_dump())
-            return {"success": True, "data": {"id": new_id, "field1": req.field1, "field2": req.field2}}
-        except Exception as e:
-            # Safe Error Reporting: log technically, respond safely (never str(e)).
-            self.logger.error(f"Failed to create {name}: {e}")
-            return {"success": False, "error": "Database operation failed"}
-```
-
-Repeat for: `get_{name}s_plugin.py`, `get_{name}_by_id_plugin.py`, `update_{name}_plugin.py`, `delete_{name}_plugin.py`.
+The one thing that is this workflow's own decision: which operations exist.
+A CRUD domain is create / get_all / get_by_id / update / delete, one file each,
+each declared in the plan before any of them is written.
 
 ### 5. Verify
 
@@ -160,6 +127,7 @@ Check that:
 - `GET /system/lint` has no warnings and no `UNTYPED_PAYLOAD` for your events
 - `GET /system/events/schemas` lists every event the plan declared
 - `AI_CONTEXT.md` was regenerated with the new domain — **done when it matches the plan**
+- `microcoreos schema` shows the new tables with the columns the plan declared
 
 ### 6. Generate tests
 

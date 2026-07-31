@@ -1,9 +1,19 @@
+<!-- template: true -->
+<!-- DELETE the marker line above once this checklist names your real tasks.
+     Until it is gone, validation fails: a template checklist can reach
+     all-[x] while every real feature is still missing, and rule 15 has
+     nothing to cross-check the plan against. -->
+
 # Active Integration Plan — Execution Checklist
 
 > This file is ONLY the checklist / state machine for orchestrating subagents.
 > The formal contract (routes, columns, events, flows) lives in `plans/active_plan.yaml`.
 > The coordinator agent (Main Agent) updates the task status as features are verified.
 > Include ONLY the phases the plan actually has (no new tool → no Phase 0 tools section, etc.).
+>
+> Every `file:` and `test:` path in the plan must appear here verbatim — rule 15
+> cross-checks them, because a task missing from the checklist is never
+> dispatched and never noticed.
 
 ## 🛠️ Phase 0: Foundation (Serial — built 1:1 from the plan's `phase_0`)
 - [ ] Task T1: Custom Tool / Replacement Driver (`tools/{name}/{name}_tool.py`)
@@ -12,6 +22,9 @@
   * **Tables owned**: `[table_name]` (columns come from the plan's `columns:`)
 - [ ] Task D2: Pydantic Entity Model (`domains/{domain}/models/{name}.py`)
   * **Entity name**: `NameEntity`
+- [ ] Task D3: `microcoreos migrate` — applies the SQL and regenerates `AI_CONTEXT.md`
+  * **Verify**: `microcoreos schema` lists the new table; the domain appears
+    under `## 📦 Domains` in `AI_CONTEXT.md` (marked *phase 0 only*)
 
 ## 💻 Phase 2: Plugins & Features (Parallel)
 - [ ] Task P1: Feature Plugin (`domains/{domain}/plugins/{feature}_plugin.py`)

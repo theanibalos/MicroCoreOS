@@ -4,21 +4,79 @@ This file is the single, absolute entry point for any AI agent (Gemini, Claude, 
 
 ---
 
-## 📖 Reading Path (minimize token usage)
+## 🚦 Start here: `microcoreos status`
 
-1. **`plans/active_plan.md`** — The checklist for your assigned task (the formal contract lives in `plans/active_plan.yaml`).
-2. **`AI_CONTEXT.md`** — Contains the live inventory of active tools (with exact signatures) and domain tables/endpoints. **Read only the tools and tables you need.**
-3. **`domains/{domain}/models/{name}.py`** — Entity model (DB mirror). *Advisory: Table structures are already mirrored in AI_CONTEXT.md.*
-4. **`INSTRUCTIONS_FOR_AI.md`** — Read ONLY for advanced tasks (building new tools, testing in-depth, or changing kernel internals).
-5. **`docs/TECH_DEBT.md`** — What is knowingly unfinished and what it would cost to finish. Read ONLY when scoping work that might overlap an open item.
+One command, before anything else. It answers the three questions that
+silently derail a session: **which plan is actually active** (and whether it is
+still the shipped template), **how much of it is done**, and **whether
+`AI_CONTEXT.md` still describes the code on disk**.
+
+There is exactly one plan path: **`plans/active_plan.yaml`**. The workflows,
+the executor prompts and the checklist cross-check read that path and no other.
+A plan written to `plans/my_feature.yaml` is a plan nothing will ever execute —
+and because the shipped template is itself a valid plan, an agent that opens
+`active_plan.yaml` and finds it untouched will build the *example* domain and
+report success. That is why the template carries `template: true` and fails
+validation until you delete the line.
 
 ---
 
-## 🧭 Pick the Right Workflow (scale ladder)
+## 📖 Your reading route — find your role, read those files, stop
 
-Match the request to its workflow BEFORE planning. Over-planning a small
-request is a failure mode: **a plan must be proportional to its request**
-(see "Plan sizing" in `docs/PARALLEL_DEVELOPMENT.md`).
+Four roles do the work, and **each needs a different slice**. Reading outside
+your slice is not thoroughness, it is budget: the Planner that also loads the
+plugin templates spends ~3,000 tokens on code it will never write.
+
+| You are… | Read exactly this | **Write exactly this** | Not this |
+|---|---|---|---|
+| **Planner** — turning a request into a plan | **1.** `plans/active_plan.yaml` — the file you are about to overwrite. It ships as a worked example of all three feature shapes, and it is the cheapest, densest statement of the format there is. **2.** `AI_CONTEXT.md` **down to `## 🧩 Plugin Authoring Guide`** (existing tools, tables, models, routes, events). **3.** `docs/PARALLEL_DEVELOPMENT.md` **§ Phase 1** for the rules behind it | **`plans/active_plan.yaml` + `plans/active_plan.md`, overwriting them.** Never a new filename — `plans/twitter_plan.yaml` is a plan nothing will execute | The Authoring Guide, Phases 2-3, `domains/`, `tools/`, `tests/`, `extras/` |
+| **Phase 0 Builder** — migrations, models, tools | `plans/active_plan.yaml` **§ phase_0** only | Exactly the files `phase_0` names: its migrations, its models, its tools | Everything else. The plan already decided every column |
+| **Executor** — one plugin + its test | **Nothing.** Your prompt already contains `AI_CONTEXT.md` + the plan + your one task line | Exactly two files: the `file:` and `test:` your task declares | Any file at all — opening one only invites guessed paths |
+| **Coordinator** — dispatch, verify, reconstruct | `plans/active_plan.md` (the checklist/state machine) + `docs/PARALLEL_DEVELOPMENT.md` **§ Phases 2-3** | Only the checkboxes in `plans/active_plan.md` | The plan's internals; the checklist is the state |
+
+If you are the Planner, the first thing you write is `plans/active_plan.yaml`
+itself — not a draft under another name that someone copies later. The copy
+step is where the plan gets lost: a validated plan sat in `plans/twitter_plan.yaml`
+while two sessions in a row built the template's example domain instead.
+
+And write it **before you ask anything**. Planning is usually a conversation,
+and checking in is welcome — but never *instead of* writing. A plan that ends
+as prose in your reply and a *"shall I proceed?"* produced nothing: the next
+phase reads files, not answers, and the session may not be interactive at all.
+Write the YAML, run `microcoreos plan validate`, and then ask — the operator
+reviews a real file rather than a description of one.
+
+**And the commands your role may run — nothing else boots the system:**
+
+| Role | May run |
+|---|---|
+| Planner | `microcoreos status`, `microcoreos plan validate` |
+| Phase 0 Builder | `microcoreos migrate`, `microcoreos schema` |
+| Executor | none — write your two files and stop |
+| Coordinator | `uv run -m pytest`, `microcoreos status`, and `microcoreos` (the real boot) for the final lint |
+
+**Never `microcoreos run` / `uv run main.py` outside that last row.** It serves
+forever: in the foreground it hangs your session, in the background it leaves a
+process holding the port that makes the next `microcoreos migrate` refuse to
+run. `migrate` is the boot that ends; `status` and `schema` answer everything
+you would have booted to find out.
+
+**No `AI_CONTEXT.md` in the project?** It is generated, not shipped — a freshly
+scaffolded project has none until something boots. Run `microcoreos migrate`
+once and it appears. Do not go exploring `domains/` and `tools/` to reconstruct
+what it would have said: that is the search the manifest exists to replace, and
+it costs an order of magnitude more to arrive at less.
+
+Read on demand, never up front: `INSTRUCTIONS_FOR_AI.md` (building tools,
+testing in depth, kernel internals) · `docs/TECH_DEBT.md` (only when scoping
+work that may overlap an open item) · `domains/{domain}/models/{name}.py` (its
+fields are already in `AI_CONTEXT.md`).
+
+**Size the plan to the request** — over-planning a small one is a failure mode.
+Every workflow below opens with the **same** two-file route as the Planner row
+above, so following the ladder and following the table land in the same place;
+each then adds only what is specific to its size. The phases themselves are in
+`docs/PARALLEL_DEVELOPMENT.md` and are not repeated in any of them.
 
 | Request | Workflow | Expected plan size |
 |---|---|---|
@@ -41,6 +99,21 @@ uv run -m pytest                                        # Run all tests (always 
 uv run -m pytest tests/test_file.py                     # Run a single test
 docker compose -f dev_infra/docker-compose.yml up -d    # Start dev infrastructure (PostgreSQL)
 ```
+
+The plan pipeline — prefix with `uv run` if the package is installed in a venv:
+
+```bash
+microcoreos status                  # Active plan, progress, manifest freshness
+microcoreos plan validate           # The 16 plan rules, OFFLINE (no server, no jq, no curl)
+microcoreos migrate                 # Apply migrations AND regenerate AI_CONTEXT.md
+microcoreos schema                  # The live tables and columns, read by the db tool itself
+```
+
+`microcoreos schema` is how you verify a migration. Do not reach for `sqlite3`
+(not installed) or `import aiosqlite` from the system interpreter (it lives in
+`.venv`) — and do not read the DB file directly: `describe_schema()` normalizes
+types to the closed vocabulary every engine shares, so it reports what a swap
+must preserve.
 
 ---
 
@@ -81,63 +154,29 @@ The Kernel (ToolProxy & Container) is infrastructure-blind:
 
 ---
 
-## 🔄 Batch Parallel Execution Workflow (Coordinator Guidelines)
+## 🔄 The pipeline, in five lines
 
-The canonical methodology (and its phase numbering) is `docs/PARALLEL_DEVELOPMENT.md`.
-This is the coordinator's operational summary:
+The methodology, the phase numbering and the executor-prompt mechanics live in
+`docs/PARALLEL_DEVELOPMENT.md` — **canonically, and only there**. This used to
+be a second copy of it, which is precisely how the copy drifted: it prescribed
+`--boot-tool db` for phase 0 long after that stopped regenerating the manifest,
+and no one compares two documents to notice.
 
-1. **Phase 1 — The Plan (contract)**: The formal YAML plan lives in `plans/active_plan.yaml`; the execution checklist (all tasks `[ ]`) in `plans/active_plan.md`. Validate with `POST /system/plan/validate` — **zero `errors` before anything else runs**. An invalid plan is fixed in the plan, never patched in code.
-2. **Phase 0 — Foundation (Serial)**: Write the tools (if any), then all domain models and SQL migrations sequentially, exactly as the plan's `columns:` declare them. Run `uv run main.py --boot-tool db` (or `microcoreos run --boot-tool db` if installed) to migrate and regenerate `AI_CONTEXT.md`.
-3. **Phase 2 — Parallel Write Wave**: Spawn N subagents (one per plugin), each with the **canonical executor prompt**: a byte-identical shared prefix (`AI_CONTEXT.md` → `plans/active_plan.yaml`, in that order — the manifest embeds the executor rules and templates as its "Plugin Authoring Guide" section) followed by ONE per-agent line at the end ("Implement feature `<PluginName>` from the plan above"). Subagents never open the plan or `AI_CONTEXT.md` themselves — dispatch them **write-only, scoped to their two files** (write capability restricted to the exact paths the plan declares for the task — `file:` + `test:`, or the flow's two test paths; no read/search/shell tools): the prefix is self-sufficient by construction (one complete template per deliverable type in `AI_CONTEXT.md` § Authoring Templates), so reading capability only invites redundant verification and guessed paths. The identical prefix lets any engine with prefix caching (local KV cache, hosted prompt caching) process the shared block once and reuse it for the whole wave — dispatch the first agent, let it start responding, then fire the rest. Each agent writes exactly two files: its plugin and its unit test.
-4. **Phase 3 — Bulk Verification**: Once all subagents finish writing, run the entire test suite in a single execution (`uv run -m pytest`), then boot and check `GET /system/lint`.
-5. **Cleanup & Reconstruct**:
-   * For passing plugins: Mark their checkbox as `[x]` in `plans/active_plan.md`.
-   * For failing plugins: **Delete** the created plugin and unit test files, keep their checkbox as `[ ]`, and spawn a new wave of clean agents to rewrite them from scratch.
-   * Repeat until all checkboxes are `[x]`.
+| Phase | Command | Gate |
+|---|---|---|
+| 1 — Plan | *(the Planner writes `plans/active_plan.yaml` + `.md`)* | `microcoreos plan validate` → **zero errors** |
+| 0 — Foundation | *(migrations + models, 1:1 from `phase_0`)* | `microcoreos migrate` then `microcoreos schema` |
+| 2 — Wave | *(N executors, one plugin + one test each)* | every declared file exists |
+| 3 — Verify | `uv run -m pytest` | green, then `GET /system/lint` clean |
+| — Reconstruct | delete the failures, respawn fresh executors | all `[x]` in `plans/active_plan.md` |
 
----
+Two rules the phases do not state on their own:
 
-## ⚡ Minimal Plugin Template
-
-```python
-from typing import Optional
-from pydantic import BaseModel, Field
-from microcoreos import BasePlugin
-
-class CreateThingRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-
-class ThingData(BaseModel):
-    id: int
-    name: str
-
-class CreateThingResponse(BaseModel):
-    success: bool
-    data: Optional[ThingData] = None
-    error: Optional[str] = None
-
-class CreateThingPlugin(BasePlugin):
-    def __init__(self, http, db, logger):
-        self.http = http
-        self.db = db
-        self.logger = logger
-
-    async def on_boot(self):
-        self.http.add_endpoint("/things", "POST", self.execute,
-                               tags=["Things"], request_model=CreateThingRequest,
-                               response_model=CreateThingResponse)
-
-    async def execute(self, data: dict, context=None):
-        try:
-            req = CreateThingRequest(**data)
-            new_id = await self.db.execute(
-                "INSERT INTO things (name) VALUES ($1) RETURNING id", [req.name]
-            )
-            return {"success": True, "data": {"id": new_id, "name": req.name}}
-        except Exception as e:
-            self.logger.error(f"Failed to create thing: {e}")
-            return {"success": False, "error": "Database error"}
-```
+- **An invalid plan is fixed in the plan, never patched in code.** Errors carry
+  the YAML that fixes them — paste it, do not re-derive it.
+- **A plan is only ever `plans/active_plan.yaml`.** Any other filename is a plan
+  nothing will execute, and the shipped template is itself valid, so nothing but
+  its `template: true` marker can tell it apart from yours.
 
 ---
 

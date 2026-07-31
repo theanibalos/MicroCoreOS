@@ -13,7 +13,7 @@
 |----------|---------------|
 | [TECH_DEBT.md](TECH_DEBT.md) | What is knowingly unfinished and what it would cost to finish — verified, not suspected |
 | [CLI.md](CLI.md) | The `microcoreos` command: `new`, `add`, `upgrade`, `run`, `dev` — flags, what each one writes, and why |
-| [PARALLEL_DEVELOPMENT.md](PARALLEL_DEVELOPMENT.md) | N agents building in parallel without collisions: phases, formal plan format v3 (crash points, failure planes), the 16 validity rules and `POST /system/plan/validate` |
+| [PARALLEL_DEVELOPMENT.md](PARALLEL_DEVELOPMENT.md) | N agents building in parallel without collisions: phases, formal plan format v3 (crash points, failure planes), the 18 validity rules and `POST /system/plan/validate` |
 | [EVENT_BUS.md](EVENT_BUS.md) | Full event bus reference, causality tracking, failure handling, anti-patterns for event hell |
 | [HTTP_SERVER.md](HTTP_SERVER.md) | All HTTP capabilities: REST, SSE, WebSocket, auth, CORS, security headers, X-Request-ID |
 | [CORE_INFRASTRUCTURE.md](CORE_INFRASTRUCTURE.md) | Kernel, Container, ToolProxy, metrics, ContextVars, Registry, undocumented tool behaviors |

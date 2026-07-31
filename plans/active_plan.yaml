@@ -1,8 +1,19 @@
 # Active Plan — the formal contract (schema: docs/PARALLEL_DEVELOPMENT.md "Formal plan format")
-# The Planner AI replaces this template with the real plan.
-# Validate:  jq -Rs '{plan_yaml: .}' plans/active_plan.yaml | \
-#            curl -s -X POST -H "Content-Type: application/json" -d @- \
-#            http://localhost:5000/system/plan/validate
+#
+# THIS FILE IS A TEMPLATE. The Planner AI replaces it with the real plan and
+# DELETES the `template: true` line below. Until that line is gone, validation
+# fails on purpose: the template is a valid plan, so nothing else could tell it
+# apart from yours, and an agent told to build X will otherwise happily build
+# the example domain instead and report success.
+#
+# THIS PATH IS THE ONLY ONE THAT EXECUTES. Write the plan here — not in
+# plans/my_feature.yaml. The workflows, the executor prompts and the checklist
+# cross-check all read `plans/active_plan.yaml` and nothing else. A plan under
+# any other name is a plan nothing will ever run.
+#
+#   microcoreos plan validate      # offline, no server, zero errors before anything runs
+#   microcoreos migrate            # after phase 0: applies migrations + regenerates AI_CONTEXT.md
+#   microcoreos schema             # what the database actually has now
 #
 # SIZING RULES (docs/PARALLEL_DEVELOPMENT.md → "Plan sizing"):
 #   - Omit phase_0 entirely if no new tables/tools — and with it, `engine:`,
@@ -10,39 +21,94 @@
 #   - Omit flows entirely if no plugin publishes or consumes events.
 #   - A domain with 3 CRUDs + one event chain ≈ 80-120 lines, ONE pass.
 #
-# YAML RULE: inside a flow mapping ({ ... }), quote any value containing '{' or
-# '[' — path: "/things/{thing_id}", note: "Optional[str]". Unquoted it is a
-# parse error, and every REST plan has {param} routes.
+# YAML RULE: quote any value containing '{' or '[' —
+# path: "/orders/{order_id}", note: "Optional[str]". Unquoted it is a parse
+# error, and every REST plan has {param} routes.
 
 plan:
-  domain: things
+  template: true                            # DELETE THIS LINE — see the header
+  domain: catalog
   engine: sqlite                            # which db engine this plan's SQL targets (informative — migrations run verbatim)
 
   phase_0:                                  # OMIT if no new tables/tools
     migrations:
-      - file: things/001_create_things.sql
-        tables: [things]
+      - file: catalog/001_create_catalog.sql
+        tables: [products]
         columns:                            # full schema — phase 0 is built from this
-          things:
+          products:
             id: "INTEGER PRIMARY KEY"       # auto-increment PK spelling is engine-specific — match the declared engine
             name: "TEXT NOT NULL"
+            price_cents: "INTEGER NOT NULL"
             created_at: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            # Table-level constraints (UNIQUE(a, b), FOREIGN KEY, CHECK) do NOT
+            # go here — `columns:` maps a column NAME to its SQL. Write them in
+            # the .sql file; the validator reads them back from there.
     models:
-      - domains/things/models/thing.py      # entity mirrors columns 1:1
+      - domains/catalog/models/product.py   # the domain's vocabulary, not a blind mirror
     tools: []                               # new infra tools, only if needed
 
+  # Three feature shapes exist. All three are below, because the ones that were
+  # missing are the ones planners got wrong.
   features:
-    - plugin: CreateThingPlugin
-      file: domains/things/plugins/create_thing_plugin.py
-      function: "Create a thing and announce it"
-      route: { method: POST, path: /things }
-      db: { writes: [things], reads: [] }
+
+    # 1. PUBLISHER — an endpoint that writes and announces.
+    - plugin: CreateProductPlugin
+      file: domains/catalog/plugins/create_product_plugin.py
+      function: "Create a product and announce it"
+      route: { method: POST, path: /products }
+      db: { writes: [products], reads: [] }
       publishes:
-        - event: thing.created
-          model: ThingCreatedPayload
-          payload: { id: int, name: str }
+        - event: product.created
+          model: ProductCreatedPayload      # rule 6: a published event names its model
+          payload: { id: int, name: str, price_cents: int }
       consumes: []
       mocks: [db, event_bus]
-      test: tests/test_create_thing_plugin.py
+      test: tests/test_create_product_plugin.py
 
-  flows: []                                 # OMIT if no events cross plugins
+    # 2. READER — a plain endpoint. No events, so no flow.
+    #    Note the quotes: an unquoted {product_id} is a YAML parse error.
+    - plugin: GetProductPlugin
+      file: domains/catalog/plugins/get_product_plugin.py
+      function: "Fetch one product by id"
+      route: { method: GET, path: "/products/{product_id}" }
+      db: { writes: [], reads: [products] }
+      publishes: []
+      consumes: []
+      mocks: [db]
+      test: tests/test_get_product_plugin.py
+
+    # 3. PURE CONSUMER — reacts to an event, serves no HTTP.
+    #    OMIT `route:` entirely. `route: {}` is not "no route": it is a route
+    #    missing its required method and path, and it fails validation.
+    #    `consumes:` takes `requires:` — the keys this feature reads. It never
+    #    takes `model:`/`payload:` (those belong to publishes:): a consumer is a
+    #    TOLERANT READER and must not import the publisher's model.
+    - plugin: ProductSearchIndexPlugin
+      file: domains/catalog/plugins/product_search_index_plugin.py
+      function: "Keep the search index in step with the catalog"
+      db: { writes: [], reads: [] }
+      publishes: []
+      consumes:
+        - event: product.created
+          requires: [id, name]
+      mocks: [event_bus, state]
+      test: tests/test_product_search_index_plugin.py
+
+  # OMIT this whole section if no plugin publishes or consumes events.
+  # A flow is `links:`, never `steps:`. Every consumption declared above must
+  # appear as a link here (rule 7) — a link is where the sad path gets decided,
+  # so an unlinked consumer is a feature whose failure behaviour nobody chose.
+  flows:
+    - name: "Product created → search index"
+      durability: ephemeral                 # `durable` needs a durable transport (rule 13)
+      happy_path: "POST /products → product.created → index updated"
+      e2e_test: tests/test_catalog_index_chain.py     # rule 8: mandatory
+      sad_path_test: tests/test_catalog_index_dlq.py  # rule 12: mandatory once retries/DLQ/compensation appear
+      links:
+        - consumes: product.created
+          consumer: ProductSearchIndexPlugin
+          retries: 2                        # >0 ⇒ redelivery ⇒ idempotent is mandatory (rule 9)
+          idempotent: true
+          idempotency_test: tests/test_product_search_index_plugin.py::test_double_delivery
+          # dlq_watcher: DlqAlertPlugin     # only if some plugin consumes _dlq.product.created (rule 10)
+          # compensation: product.unindexed # only if the event is BOTH published and consumed (rule 11)

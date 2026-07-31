@@ -101,6 +101,9 @@ NEXT_STEPS = """
 
    Next:
      cd {target}
+     uv run microcoreos migrate      # generates AI_CONTEXT.md — do this first,
+                                     # it is what an AI agent reads to know
+                                     # what exists here
      uv run microcoreos              # boot
 
    Add auth, a database, a broker — dependency, source and .env in one step:

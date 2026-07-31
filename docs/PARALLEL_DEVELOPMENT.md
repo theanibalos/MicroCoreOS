@@ -371,7 +371,7 @@ A plan is valid iff:
     the blast radius down. When neither the plan nor the live system knows the
     table, the rule warns that it cannot check rather than inventing an error.
 
-Above the 16 rules sits **rule 0, the shape of the document itself**. The
+Above the 18 rules sits **rule 0, the shape of the document itself**. The
 schema ignores keys it does not know, and a typo lands in exactly that bucket:
 `feature:` instead of `features:` yields a plan that declares nothing and
 therefore satisfies every rule below. Rule 0 warns on any unknown key (with its
@@ -380,9 +380,12 @@ migrations nor language. Warnings rather than errors, because the validator
 cannot tell a typo from a key deliberately added by a tool upstream — but
 neither passes unseen.
 
-These rules are executable, not aspirational: **`POST /system/plan/validate`**
-takes the plan (YAML or JSON) and returns `errors` (the plan is invalid) and
-`warnings` (advisory, e.g. rule 13). The orchestrator runs it before
+These rules are executable, not aspirational: **`microcoreos plan validate`**
+runs them offline and returns `errors` (the plan is invalid) and `warnings`
+(advisory, e.g. rule 13); where a rule knows the shape that fixes it, the
+error carries that YAML. **`POST /system/plan/validate`** is the same rules
+against a booted system, taking the plan as YAML or JSON, and sees the one
+thing a disk scan cannot: live subscribers. The orchestrator runs it before
 dispatching any agent; an invalid plan is a task-allocation error — fix the
 plan, never patch it in code.
 
@@ -390,7 +393,8 @@ plan, never patch it in code.
 
 The **orchestrator agent** receives two artifacts: the **full plan** and the
 freshly regenerated **`AI_CONTEXT.md`**. It validates the plan
-(`POST /system/plan/validate` against the system booted in phase 0)
+(`microcoreos plan validate`, or the endpoint against the system booted in
+phase 0)
 and dispatches ALL features in a single wave — one agent per feature, each
 producing exactly two files: its plugin and its test.
 

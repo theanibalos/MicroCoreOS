@@ -25,19 +25,14 @@ These are the most frequent errors. Check these first before writing any code.
 
 ---
 
-## ⚠️ CRITICAL RULES (DO NOT IGNORE)
+## ⚠️ The rules
 
-1. **`main.py` is sacred** — Never modify. It only boots the Kernel.
-2. **Event Contract** — Subscribers receive `EventEnvelope`. Access data via `event.payload`.
-3. **No Hidden Magic** — The Kernel does NOT retry failed tool calls. Idempotency is your responsibility.
-4. **Safe Errors** — NEVER return `str(e)` to the client. Return safe, generic messages only.
-5. **Event Bus Power** — Leverage `ttl`, `retries`, and `backoff` in `subscribe()` and `publish()`.
-6. **DLQ Monitoring** — Final failures go to `_dlq.<event>`. Subscribe to it for error handling.
-7. **No framework patterns** — No Routers, Controllers, or Services. Only Tools (infrastructure) and Plugins (business logic).
-8. **No cross-domain imports** — Domains communicate exclusively via `event_bus`.
-9. **CSRF Guard** — HTTP mutations (POST/PUT/DELETE) via cookie auth REQUIRE `X-Requested-With` header.
-10. **Secure Cookies** — `context.set_cookie` defaults to `Secure=True`, `HttpOnly=True`, `SameSite=Lax`.
-11. **Return format**: Always `{"success": bool, "data": ..., "error": ...}`.
+The 13 **Non-Negotiable Rules** in `AGENTS.md`, there and nowhere else. This
+section held a rival list of eleven that had never heard of "schemas inline" or
+typed event payloads — an agent's constitution depended on which file it opened.
+
+Event bus capabilities (`ttl`, `retries`, `backoff`, DLQ) are in `AI_CONTEXT.md`
+§ Tool: `event_bus`, generated from the tool itself so they cannot drift.
 
 ---
 
@@ -66,47 +61,11 @@ domains/{name}/
 
 ## ⚡ New Plugin
 
-**Location**: `domains/{domain}/plugins/{feature}_plugin.py`
-**Rule**: 1 File = 1 Feature. Schema defined inline.
+`AI_CONTEXT.md` § **Plugin Authoring Guide** — one complete template per
+deliverable type, regenerated on every boot from `tools/context/authoring_guide.md` and
+already inside every executor prompt. A third copy lived here and had drifted.
 
-```python
-from typing import Optional
-from pydantic import BaseModel, Field
-from microcoreos import BasePlugin
-
-class CreateProductPlugin(BasePlugin):
-    def __init__(self, logger, event_bus, http, db):
-        self.logger = logger
-        self.bus = event_bus
-        self.http = http
-        self.db = db
-
-    async def on_boot(self):
-        self.http.add_endpoint(
-            path="/products", method="POST",
-            handler=self.execute,
-            tags=["Products"]
-        )
-        # Leverage built-in retries for event subscribers
-        await self.bus.subscribe("order.created", self.on_order_created, retries=3, backoff=1.0)
-
-    async def execute(self, data: dict, context=None):
-        try:
-            # Action Phase
-            # publish is fire-and-forget. Use ttl for expiring messages.
-            await self.bus.publish("product.created", {"id": 123}, ttl=3600)
-            return {"success": True, "data": {"id": 123}}
-        except Exception as e:
-            # Kernel won't retry db.execute! Handle idempotency here.
-            self.logger.error(f"Failed to create product: {e}")
-            return {"success": False, "error": "Could not create product"}
-
-    async def on_order_created(self, event) -> None:
-        # event is an EventEnvelope
-        self.logger.info(f"Order received: {event.payload}")
-        # To participate in request() RPC, return a dict
-        return {"processed": True}
-```
+If you are writing a plugin you are an executor: nothing in this file is for you.
 
 ---
 

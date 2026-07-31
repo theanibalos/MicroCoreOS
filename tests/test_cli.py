@@ -130,3 +130,497 @@ def test_dev_hands_watchfiles_only_picklable_things(tmp_path, monkeypatch):
     # And the filter still filters: sources reload, bytecode does not.
     assert captured["watch_filter"](None, "domains/orders/plugins/x_plugin.py")
     assert not captured["watch_filter"](None, "domains/orders/__pycache__/x.pyc")
+
+
+# ── The plan pipeline commands ──────────────────────────────────────────────
+#
+# Each of these replaces a sequence an agent had to improvise, and every one of
+# those improvisations was observed failing in a real session: `--boot-tool db`
+# that never regenerates the manifest, `sqlite3` that is not installed, a
+# jq|curl pipeline against a server that was not running, and a plan sitting
+# under a filename nothing reads.
+
+import textwrap
+
+
+def _project(tmp_path, plan: str = "", checklist: str = ""):
+    (tmp_path / "domains").mkdir()
+    (tmp_path / "tools").mkdir()
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    if plan:
+        (plans / "active_plan.yaml").write_text(textwrap.dedent(plan), encoding="utf-8")
+    if checklist:
+        (plans / "active_plan.md").write_text(textwrap.dedent(checklist), encoding="utf-8")
+    return tmp_path
+
+
+REAL_PLAN = """\
+plan:
+  domain: shop
+  features:
+    - plugin: ListOrdersPlugin
+      file: domains/shop/plugins/list_orders_plugin.py
+      route: { method: GET, path: /orders }
+      test: tests/test_list_orders_plugin.py
+"""
+
+TEMPLATE_PLAN = "plan:\n  template: true\n" + REAL_PLAN.split("\n", 1)[1]
+
+
+def _free_port() -> str:
+    """A port nothing holds. `migrate` refuses to boot onto a taken one, and
+    the developer's own 5000 is frequently taken — by the very dev server this
+    check exists to notice."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return str(probe.getsockname()[1])
+
+
+def test_the_pipeline_commands_are_registered():
+    for name in ("status", "plan", "migrate", "schema"):
+        assert name in cli.COMMANDS
+
+
+def test_help_mentions_every_pipeline_command(capsys):
+    cli.main(["--help"])
+    out = capsys.readouterr().out
+    for name in ("status", "plan validate", "migrate", "schema"):
+        assert name in out
+
+
+def test_pipeline_commands_refuse_to_run_outside_a_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    for argv in (["status"], ["migrate"], ["schema"], ["plan", "validate"]):
+        assert cli.main(list(argv)) == 2, argv
+    assert "No tools/ or domains/" in capsys.readouterr().out
+
+
+def test_plan_without_a_subcommand_prints_usage(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path))
+    assert cli.main(["plan"]) == 2
+    assert "plan validate" in capsys.readouterr().out
+
+
+def test_plan_validate_rejects_the_untouched_template(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path, plan=TEMPLATE_PLAN))
+    assert cli.main(["plan", "validate"]) == 1
+    assert "still the shipped template" in capsys.readouterr().out
+
+
+def test_plan_validate_accepts_a_real_plan_with_nothing_running(tmp_path, monkeypatch, capsys):
+    """The whole point: the gate does not need the thing it gates."""
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    assert cli.main(["plan", "validate"]) == 0
+    assert "is valid" in capsys.readouterr().out
+
+
+def test_plan_validate_prints_the_fix_yaml_with_the_error(tmp_path, monkeypatch, capsys):
+    broken = """\
+    plan:
+      domain: shop
+      features:
+        - plugin: NotifyPlugin
+          file: domains/shop/plugins/notify_plugin.py
+          consumes:
+            - event: order.paid
+              requires: [id]
+          publishes:
+            - event: order.paid
+              model: OrderPaidPayload
+              payload: { id: int }
+          test: tests/test_notify_plugin.py
+    """
+    monkeypatch.chdir(_project(tmp_path, plan=broken))
+    assert cli.main(["plan", "validate"]) == 1
+    out = capsys.readouterr().out
+    assert "rule 7" in out
+    assert "consumer: NotifyPlugin" in out       # the pasteable link, not a description
+
+
+def test_plan_validate_takes_an_explicit_path(tmp_path, monkeypatch, capsys):
+    project = _project(tmp_path, plan=TEMPLATE_PLAN)
+    (project / "plans" / "draft.yaml").write_text(REAL_PLAN, encoding="utf-8")
+    monkeypatch.chdir(project)
+    assert cli.main(["plan", "validate", "plans/draft.yaml"]) == 0
+
+
+def test_plan_validate_on_a_missing_file_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path))
+    assert cli.main(["plan", "validate"]) == 2
+    assert "No plan at" in capsys.readouterr().out
+
+
+def test_status_flags_the_untouched_template(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(
+        tmp_path, plan=TEMPLATE_PLAN, checklist="<!-- template: true -->\n- [ ] x\n"))
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "STILL THE SHIPPED TEMPLATE" in out
+
+
+def test_status_reports_the_domain_and_checklist_progress(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(
+        tmp_path, plan=REAL_PLAN, checklist="- [x] one\n- [x] two\n- [ ] three\n"))
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "domain `shop`" in out
+    assert "2/3 tasks done" in out
+
+
+def test_status_names_plans_that_nothing_will_execute(tmp_path, monkeypatch, capsys):
+    """A validated plan under the wrong filename is the failure that cost the
+    most: two sessions built the template's example domain while
+    `plans/twitter_plan.yaml` sat there, correct and unread."""
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "plans" / "twitter_plan.yaml").write_text("plan:\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "executed by nothing" in out
+    assert "twitter_plan.yaml" in out
+
+
+def test_status_calls_a_manifest_older_than_the_code_stale(tmp_path, monkeypatch, capsys):
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "AI_CONTEXT.md").write_text("# manifest\n", encoding="utf-8")
+    os.utime(project / "AI_CONTEXT.md", (1_000_000, 1_000_000))
+    (project / "domains" / "later.sql").write_text("CREATE TABLE t (id INT);", encoding="utf-8")
+    monkeypatch.chdir(project)
+    cli.main(["status"])
+    out = capsys.readouterr().out
+    assert "STALE" in out and "microcoreos migrate" in out
+
+
+def test_status_missing_manifest_points_at_migrate(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    cli.main(["status"])
+    assert "microcoreos migrate" in capsys.readouterr().out
+
+
+def test_migrate_boots_once_migrates_and_shuts_down(tmp_path, monkeypatch, capsys):
+    """
+    `uv run main.py` regenerates the manifest but never returns: in the
+    foreground it hangs the agent's session, in the background it gives no
+    signal that the manifest is written and leaves the process behind. This is
+    that boot with an ending — and DB_AUTO_MIGRATE is the command's definition,
+    not a default it inherits.
+    """
+    seen = {}
+
+    class FakeKernel:
+        async def boot(self):
+            seen["DB_AUTO_MIGRATE"] = os.environ.get("DB_AUTO_MIGRATE")
+            (tmp_path / "AI_CONTEXT.md").write_text("# regenerated\n", encoding="utf-8")
+
+        async def shutdown(self):
+            seen["shutdown"] = True
+
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+    monkeypatch.setenv("HTTP_PORT", _free_port())
+
+    assert cli.main(["migrate"]) == 0
+    assert seen["DB_AUTO_MIGRATE"] == "true"
+    assert seen["shutdown"]
+    assert "AI_CONTEXT.md regenerated" in capsys.readouterr().out
+
+
+def test_migrate_says_what_to_do_when_the_port_is_taken(tmp_path, monkeypatch, capsys):
+    """
+    A full boot binds the port, and uvicorn answers a taken one with
+    `sys.exit(1)` from inside its own startup — measured: the migrate process
+    dies with a traceback about sockets that says nothing about what to do.
+    The check is here, in the CLI, rather than as a switch in the http tool:
+    phase 0 expects nothing booted, so this is a wrong-state message, not a
+    capability the framework was missing.
+    """
+    import socket
+
+    class FakeKernel:
+        async def boot(self):
+            raise AssertionError("must not boot while the port is held")
+
+        async def shutdown(self):
+            pass
+
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    monkeypatch.setenv("HTTP_PORT", str(holder.getsockname()[1]))
+    try:
+        assert cli.main(["migrate"]) == 2
+    finally:
+        holder.close()
+
+    out = capsys.readouterr().out
+    assert "already in use" in out
+    assert "Stop it and run `microcoreos migrate` again" in out
+
+
+def test_migrate_proceeds_when_the_port_is_free(tmp_path, monkeypatch):
+    class FakeKernel:
+        async def boot(self):
+            (tmp_path / "AI_CONTEXT.md").write_text("# regenerated\n", encoding="utf-8")
+
+        async def shutdown(self):
+            pass
+
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+    monkeypatch.setenv("HTTP_PORT", _free_port())
+
+    assert cli.main(["migrate"]) == 0
+
+
+def test_migrate_reports_a_manifest_that_did_not_regenerate(tmp_path, monkeypatch, capsys):
+    """The exact silent failure of `--boot-tool db`: migrations applied, the
+    manifest untouched, and nothing said so."""
+    class FakeKernel:
+        async def boot(self):
+            pass
+
+        async def shutdown(self):
+            pass
+
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "AI_CONTEXT.md").write_text("# stale\n", encoding="utf-8")
+    os.utime(project / "AI_CONTEXT.md", (1_000_000, 1_000_000))
+    monkeypatch.chdir(project)
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+    monkeypatch.setenv("HTTP_PORT", _free_port())
+
+    assert cli.main(["migrate"]) == 1
+    assert "did not regenerate" in capsys.readouterr().out
+
+
+class FakeDbTool:
+    """A `db` tool the CLI can find and boot on its own — no Kernel anywhere.
+
+    Which class `db` resolves to is the entire point of the swap story, so the
+    CLI cannot hardcode one; discovery answers that, and the tool answers the
+    rest. Booting it is setup → describe → shutdown, and nothing else.
+    """
+
+    name = "db"
+    schema: dict = {}
+    calls: list = []
+
+    async def setup(self):
+        type(self).calls.append("setup")
+
+    async def describe_schema(self):
+        type(self).calls.append("describe_schema")
+        return type(self).schema
+
+    async def shutdown(self):
+        type(self).calls.append("shutdown")
+
+
+def _stub_db(monkeypatch, schema=None, tool=FakeDbTool):
+    FakeDbTool.calls = []
+    FakeDbTool.schema = schema if schema is not None else {}
+    monkeypatch.setattr("microcoreos.pipeline._open_tool",
+                        lambda name: tool() if tool and name == "db" else None)
+
+
+def test_schema_boots_the_tool_alone_and_closes_it(tmp_path, monkeypatch):
+    """A tool is self-contained: its own setup() is the whole of its startup."""
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch)
+
+    assert cli.main(["schema"]) == 0
+    assert FakeDbTool.calls == ["setup", "describe_schema", "shutdown"]
+
+
+def test_schema_closes_the_tool_even_when_reading_fails(tmp_path, monkeypatch, capsys):
+    class Exploding(FakeDbTool):
+        async def describe_schema(self):
+            type(self).calls.append("describe_schema")
+            raise RuntimeError("connection lost")
+
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch, tool=Exploding)
+
+    assert cli.main(["schema"]) == 1
+    assert FakeDbTool.calls == ["setup", "describe_schema", "shutdown"]
+    assert "Could not read the schema" in capsys.readouterr().out
+
+
+def test_schema_prints_columns_constraints_and_relations(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch, schema={
+        "orders": {
+            "internal": False,
+            "columns": [
+                {"name": "id", "type": "int", "nullable": False,
+                 "default": None, "primary_key": True},
+                {"name": "user_id", "type": "int", "nullable": False,
+                 "default": None, "primary_key": False},
+            ],
+            "unique": [["user_id"]],
+            "foreign_keys": [{"column": "user_id",
+                              "references_table": "users",
+                              "references_column": "id"}],
+        }
+    })
+
+    assert cli.main(["schema"]) == 0
+    out = capsys.readouterr().out
+    assert "orders" in out
+    assert "id: int  [PK, NOT NULL]" in out
+    assert "UNIQUE(user_id)" in out
+    assert "user_id \u2192 users.id" in out
+
+
+def test_schema_on_an_unmigrated_project_says_nothing_is_there(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch)
+    assert cli.main(["schema"]) == 0
+    assert "Nothing has been migrated" in capsys.readouterr().out
+
+
+def test_schema_reports_a_project_without_a_db_tool(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch, tool=None)
+    assert cli.main(["schema"]) == 1
+    assert "No tool named 'db'" in capsys.readouterr().out
+
+
+def test_open_tool_finds_the_project_db_driver_by_name(tmp_path, monkeypatch):
+    """The real discovery path: `db` is a NAME, and only discovery knows which
+    class in tools/ claims it."""
+    from microcoreos import pipeline
+
+    driver = tmp_path / "tools" / "fakedb"
+    driver.mkdir(parents=True)
+    (driver / "fakedb_tool.py").write_text(
+        "from microcoreos import BaseTool\n"
+        "class FakeDbTool(BaseTool):\n"
+        "    @property\n"
+        "    def name(self): return 'db'\n"
+        "    async def setup(self): pass\n"
+        "    def get_interface_description(self): return 'Fake'\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert type(pipeline._open_tool("db")).__name__ == "FakeDbTool"
+    assert pipeline._open_tool("nonexistent") is None
+
+
+def test_the_pipeline_commands_leave_the_environment_as_they_found_it(tmp_path, monkeypatch):
+    """
+    A command that leaves env vars set is a command whose effect outlives it.
+    The process usually exits right after, which is what hides it — until
+    something else runs in the same interpreter and silently inherits
+    `DB_AUTO_MIGRATE=false` from a `schema` call that only meant it for itself.
+    (The suite caught exactly that: three migration tests started skipping
+    their migrations.)
+    """
+    class FakeKernel:
+        async def boot(self):
+            (tmp_path / "AI_CONTEXT.md").write_text("# x\n", encoding="utf-8")
+
+        async def shutdown(self):
+            pass
+
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+    _stub_db(monkeypatch)
+    monkeypatch.setenv("HTTP_PORT", _free_port())
+    monkeypatch.delenv("DB_AUTO_MIGRATE", raising=False)
+
+    cli.main(["migrate"])
+    cli.main(["schema"])
+
+    assert "DB_AUTO_MIGRATE" not in os.environ
+
+
+def test_an_existing_env_value_is_restored_not_dropped(tmp_path, monkeypatch):
+    monkeypatch.chdir(_project(tmp_path))
+    _stub_db(monkeypatch)
+    monkeypatch.setenv("DB_AUTO_MIGRATE", "true")
+
+    cli.main(["schema"])
+
+    assert os.environ["DB_AUTO_MIGRATE"] == "true"
+
+
+
+def test_migrate_refuses_an_argument_instead_of_ignoring_it(tmp_path, monkeypatch, capsys):
+    """
+    `migrate` writes — to the schema and to the manifest. A flag it does not
+    understand must not fall through into a real migration: `--dry-run` existed
+    briefly and was removed, so a doc or a habit can still produce it.
+    """
+    class FakeKernel:
+        async def boot(self):
+            raise AssertionError("must not boot on an unknown option")
+
+        async def shutdown(self):
+            pass
+
+    monkeypatch.chdir(_project(tmp_path, plan=REAL_PLAN))
+    monkeypatch.setattr("microcoreos.kernel.Kernel", FakeKernel)
+
+    assert cli.main(["migrate", "--dry-run"]) == 2
+    assert "takes no options" in capsys.readouterr().out
+
+
+def _write_baseline(project, files):
+    """The `.microcoreos/` scaffold baseline, as `microcoreos new` writes it."""
+    import json
+    d = project / ".microcoreos"
+    d.mkdir(exist_ok=True)
+    (d / "manifest.json").write_text(
+        json.dumps({"version": "0", "files": {f: "x" for f in files}}),
+        encoding="utf-8",
+    )
+
+
+def test_status_names_loose_python_files_in_the_root(tmp_path, monkeypatch, capsys):
+    """Observed on a real wave: an executor wrote debug_test.py, debug_test2.py
+    and debug_test3.py while working out an import and left them behind. No
+    plan declares them, and the next agent reads them as project source."""
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "debug_test.py").write_text("print(1)\n", encoding="utf-8")
+    (project / "debug_test2.py").write_text("print(2)\n", encoding="utf-8")
+    _write_baseline(project, ["main.py"])
+    monkeypatch.chdir(project)
+
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+
+    assert "debug_test.py, debug_test2.py" in out
+    assert "no plan declares them" in out
+
+
+def test_status_never_calls_a_scaffolded_file_stray(tmp_path, monkeypatch, capsys):
+    """main.py is in the baseline, so it is the scaffold's, not an agent's."""
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "main.py").write_text("# entry point\n", encoding="utf-8")
+    _write_baseline(project, ["main.py"])
+    monkeypatch.chdir(project)
+
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+
+    assert "stray" not in out
+
+
+def test_status_stays_quiet_without_a_scaffold_baseline(tmp_path, monkeypatch, capsys):
+    """No .microcoreos/ means this is the framework's own checkout, whose root
+    legitimately holds cli.py and hatch_build.py. Reporting those was a real
+    false positive before the check was anchored to the baseline."""
+    project = _project(tmp_path, plan=REAL_PLAN)
+    (project / "hatch_build.py").write_text("# build hook\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+
+    assert cli.main(["status"]) == 0
+    assert "stray" not in capsys.readouterr().out

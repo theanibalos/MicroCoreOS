@@ -1,5 +1,5 @@
 """
-POST /system/plan/validate — the executable form of the 15 plan validity
+POST /system/plan/validate — the executable form of the 18 plan validity
 rules in docs/PARALLEL_DEVELOPMENT.md ("Formal plan format").
 
 The orchestrator sends the formal plan (YAML or JSON) BEFORE dispatching any
@@ -131,6 +131,14 @@ class PlanLanguage(BaseModel):
 
 
 class Plan(BaseModel):
+    # The shipped plans/active_plan.yaml carries `template: true`, and rule 0
+    # refuses to validate a plan that still does. It is a schema field rather
+    # than a comment because a comment cannot fail: two sessions in a row read
+    # the untouched template, found a syntactically perfect plan for the
+    # example `catalog` domain, and built THAT — one of them after being told
+    # in the prompt to build something else. Deleting this line is the act of
+    # saying "this plan is mine".
+    template: bool = False
     domain: Optional[str] = None
     # Which SQL dialect the migrations target. Informative — migrations run
     # verbatim (AGENTS.md rule 8) — but it is the ONLY thing telling the phase 0
@@ -198,6 +206,12 @@ class PlanViolation(BaseModel):
     severity: str                     # ERROR | WARNING
     where: str = ""
     detail: str
+    # The YAML that fixes it, when the rule knows. Prose describing a shape is
+    # not the same affordance as the shape: the validator already knows exactly
+    # what is missing, and a reader that can copy does not have to derive.
+    # Every avoidable round in the observed planning session was a shape the
+    # author had to infer — `requires:` vs `payload:`, `links:` vs `steps:`.
+    fix: Optional[str] = None
 
 
 class ValidatePlanData(BaseModel):
@@ -385,6 +399,26 @@ def scan_live_columns(tables: dict[str, str], domains_dir: str = "domains") -> d
     return columns
 
 
+# ── Naming, for the `fix:` snippets ────────────────────────────────────────
+#
+# A suggestion the author has to rename before using is a suggestion they have
+# to think about, which is the cost the snippet exists to remove. These
+# reproduce the repo's own conventions so the emitted YAML is paste-ready.
+
+def _snake(name: str) -> str:
+    """'CreateOrderPlugin' / 'Order paid → invoice' -> 'create_order'."""
+    name = re.sub(r"Plugin$", "", name.strip())
+    name = re.sub(r"[^0-9A-Za-z]+", "_", name)
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+    return re.sub(r"_+", "_", name).strip("_").lower() or "feature"
+
+
+def _payload_model_name(event: str) -> str:
+    """'order.paid' -> 'OrderPaidPayload' (AGENTS.md rule 10's spelling)."""
+    parts = [p for p in re.split(r"[^0-9A-Za-z]+", event) if p]
+    return "".join(p[:1].upper() + p[1:] for p in parts) + "Payload"
+
+
 # ── The validator (pure — no I/O, fully testable) ──────────────────────────
 
 class PlanValidator:
@@ -402,6 +436,12 @@ class PlanValidator:
                 self.plan_payloads.setdefault(pub.event, []).append(pub.payload)
 
     def validate(self) -> ValidatePlanData:
+        if self._rule_0_still_the_template():
+            # Stop here on purpose. Every other rule would now report on the
+            # example domain, and a wall of green against a plan that is not
+            # yours is worse than no answer: it is a confident wrong one.
+            return ValidatePlanData(valid=False, errors=self.errors,
+                                    warnings=self.warnings)
         self._rule_0_plan_declares_work()
         self._rule_1_namespace_collisions()
         self._rule_2_table_ownership()
@@ -415,9 +455,42 @@ class PlanValidator:
         self._rule_14_db_contract_ownership()
         self._rule_15_checklist_coverage()
         self._rule_16_language()
+        self._rule_17_plan_sizing()
+        self._rule_18_declared_test_nodes()
         return ValidatePlanData(
             valid=not self.errors, errors=self.errors, warnings=self.warnings
         )
+
+    # rule 0 — the plan is still the shipped template. The template is a VALID
+    #          plan (that is what makes it a useful example), so nothing else
+    #          here can tell it apart from a real one — and an agent asked for
+    #          feature X will happily build the template's example domain
+    #          instead, reporting success, because the file it was told to read
+    #          said to.
+    TEMPLATE_CHECKLIST_MARKER = "<!-- template: true -->"
+
+    def _rule_0_still_the_template(self) -> bool:
+        if self.plan.template:
+            self._error(
+                0, "plan",
+                "this is still the shipped template (`template: true`). Write "
+                "the real plan at plans/active_plan.yaml — that exact path is "
+                "the only one the pipeline executes.",
+                fix="plan:\n  # delete the `template: true` line\n  domain: <your-domain>",
+            )
+            return True
+        if self.checklist and self.TEMPLATE_CHECKLIST_MARKER in self.checklist:
+            self._error(
+                0, "plans/active_plan.md",
+                "the execution checklist is still the shipped template — its "
+                "tasks name placeholder paths, so it can reach all-[x] while "
+                "every real feature is missing.",
+                fix="Replace the checklist with one task per `file:` and "
+                    "`test:` the plan declares,\nthen delete the "
+                    f"`{self.TEMPLATE_CHECKLIST_MARKER}` marker line.",
+            )
+            return True
+        return False
 
     # rule 0 — shape: a plan with nothing to dispatch validates perfectly against
     #          all 15 rules, which is exactly what a mistyped key looks like
@@ -510,15 +583,24 @@ class PlanValidator:
     def _rule_5_feature_tests(self):
         for feature in self.plan.features:
             if not feature.test:
-                self._error(5, feature.plugin, "feature has no 'test' file declared")
+                self._error(
+                    5, feature.plugin, "feature has no 'test' file declared",
+                    fix=f"- plugin: {feature.plugin}\n"
+                        f"  test: tests/test_{_snake(feature.plugin)}.py",
+                )
 
     # rule 6 — every publish names its payload model
     def _rule_6_payload_models(self):
         for feature in self.plan.features:
             for pub in feature.publishes:
                 if not pub.model:
-                    self._error(6, feature.plugin,
-                                f"published event '{pub.event}' names no payload model")
+                    self._error(
+                        6, feature.plugin,
+                        f"published event '{pub.event}' names no payload model",
+                        fix=f"publishes:\n  - event: {pub.event}\n"
+                            f"    model: {_payload_model_name(pub.event)}\n"
+                            f"    payload: {{ id: int }}   # the keys the event carries",
+                    )
 
     # rule 7 — every (event, consumer) consumption appears as a flow link,
     #          and every declared rpc_link answers timeout + on_timeout
@@ -528,9 +610,20 @@ class PlanValidator:
         for feature in self.plan.features:
             for consume in feature.consumes:
                 if (consume.event, feature.plugin) not in linked:
-                    self._error(7, feature.plugin,
-                                f"consumption of '{consume.event}' appears in no "
-                                f"flow's links — its sad path is undecided")
+                    self._error(
+                        7, feature.plugin,
+                        f"consumption of '{consume.event}' appears in no "
+                        f"flow's links — its sad path is undecided",
+                        fix="flows:\n"
+                            f"  - name: \"{consume.event} → {feature.plugin}\"\n"
+                            "    durability: ephemeral\n"
+                            f"    e2e_test: tests/test_{_snake(feature.plugin)}_chain.py\n"
+                            "    links:\n"
+                            f"      - consumes: {consume.event}\n"
+                            f"        consumer: {feature.plugin}\n"
+                            "        retries: 0            # >0 also requires "
+                            "idempotent + idempotency_test + sad_path_test",
+                    )
         for flow in self.plan.flows:
             for rpc in flow.rpc_links:
                 if rpc.timeout is None or not rpc.on_timeout:
@@ -542,7 +635,11 @@ class PlanValidator:
     def _rule_8_e2e_tests(self):
         for flow in self.plan.flows:
             if not flow.e2e_test:
-                self._error(8, flow.name, "flow has no 'e2e_test' declared")
+                self._error(
+                    8, flow.name, "flow has no 'e2e_test' declared",
+                    fix=f"- name: \"{flow.name}\"\n"
+                        f"  e2e_test: tests/test_{_snake(flow.name)}_chain.py",
+                )
 
     # rule 9  — idempotent where retries > 0 or the flow is durable, with proof
     # rule 10 — a named dlq_watcher must consume _dlq.<event> somewhere
@@ -772,6 +869,100 @@ class PlanValidator:
         if not entry.reason:
             self._warn(16, where, f"'{entry.op}' declares no 'reason'")
 
+    # rule 17 — advisory: a plan must be proportional to its request
+    #   (docs/PARALLEL_DEVELOPMENT.md → "Plan sizing"). The calibration there is
+    #   explicit: a domain with 3 CRUD plugins and one event chain is one pass.
+    #   Every feature is one executor — a fresh conversation, and on a local
+    #   engine the wave runs sequentially — so an oversized plan is not a style
+    #   problem, it is the whole budget. A vague request ("build me a twitter")
+    #   is exactly what produces one, and the planner is the only one who can
+    #   still cut it: past this point the cost is paid per feature, by everyone.
+    CALIBRATION_FEATURES = 6          # comfortably above the documented 3 + 1
+
+    def _rule_17_plan_sizing(self):
+        by_domain: dict[str, int] = {}
+        for feature in self.plan.features:
+            domain = self._feature_domain(feature)
+            if domain:
+                by_domain[domain] = by_domain.get(domain, 0) + 1
+        for domain, count in sorted(by_domain.items()):
+            if count > self.CALIBRATION_FEATURES:
+                self._warn(
+                    17, domain,
+                    f"{count} features in one domain — the calibration is 3 CRUDs "
+                    f"plus one event chain in a single pass. This dispatches "
+                    f"{count} executors, each a fresh conversation (sequential on "
+                    f"a local engine).",
+                    fix="Cut it to the features the request actually named, or "
+                        "split it:\nship the first wave, run it green, then plan "
+                        "the next one against the\nmanifest it produced — which "
+                        "is a smaller and better-informed plan.",
+                )
+
+    # rule 18 — a declared test that names a `::node` must contain that node
+    #
+    # Rules 5, 8 and 9 check only that a test is DECLARED, which is all they
+    # can do while the plan is fresh and nothing is built. That leaves a hole
+    # at the other end: once the wave has run, a plan may declare
+    # `tests/x.py::test_double_delivery` while the executor wrote x.py without
+    # that function. Then `plan validate` is green, `pytest` is green — it
+    # never selects a node that does not exist — and the property the plan
+    # promised is neither implemented nor tested. Three checks pass and the
+    # contract is unmet. Found by building a whole plan end to end.
+    #
+    # Silent while the file is absent: that is phase 2 not having run yet, not
+    # a defect. Only a file that EXISTS without its declared node is an error.
+    def _rule_18_declared_test_nodes(self):
+        for path, where, why in self._declared_test_nodes():
+            file_part, _, node = path.partition("::")
+            if not node or not os.path.isfile(file_part):
+                continue
+            found = self._test_nodes_in(file_part)
+            if found is None:  # unparseable — not this rule's business
+                continue
+            if node.split("::")[-1] not in found:
+                self._error(
+                    18, where,
+                    f"{why} declares '{path}' but {file_part} defines no "
+                    f"'{node}' — pytest silently selects nothing, so this "
+                    f"property is unproven",
+                    fix=f"Add it to {file_part}:\n\n"
+                        f"async def {node.split('::')[-1]}():\n"
+                        f"    ...  # deliver the same event twice, assert the "
+                        f"effect happened once",
+                )
+
+    def _declared_test_nodes(self):
+        """(declared path, where, what declared it) for every test in the plan."""
+        for flow in self.plan.flows:
+            for attr, label in (("e2e_test", "e2e_test"),
+                                ("sad_path_test", "sad_path_test")):
+                if getattr(flow, attr, None):
+                    yield getattr(flow, attr), flow.name, label
+            for link in flow.links:
+                if link.idempotency_test:
+                    yield (link.idempotency_test, flow.name,
+                           f"link '{link.consumes}' → {link.consumer} "
+                           f"idempotency_test")
+        for feature in self.plan.features:
+            if feature.test:
+                yield feature.test, feature.plugin, "test"
+
+    @staticmethod
+    def _test_nodes_in(path: str) -> Optional[set[str]]:
+        """Every function and class name defined in a test file, or None."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+        except (OSError, SyntaxError):
+            return None
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                names.add(node.name)
+        return names
+
     @staticmethod
     def _feature_domain(feature: PlanFeature) -> Optional[str]:
         parts = feature.file.split("/")
@@ -779,13 +970,245 @@ class PlanValidator:
             return parts[1]
         return None
 
-    def _error(self, rule: int, where: str, detail: str):
+    def _error(self, rule: int, where: str, detail: str, fix: Optional[str] = None):
         self.errors.append(PlanViolation(rule=rule, severity="ERROR",
-                                         where=where, detail=detail))
+                                         where=where, detail=detail, fix=fix))
 
-    def _warn(self, rule: int, where: str, detail: str):
+    def _warn(self, rule: int, where: str, detail: str, fix: Optional[str] = None):
         self.warnings.append(PlanViolation(rule=rule, severity="WARNING",
-                                           where=where, detail=detail))
+                                           where=where, detail=detail, fix=fix))
+
+
+# ── Entry points shared by the endpoint and the CLI ────────────────────────
+#
+# The rules were always pure; only the LiveSnapshot needed the running system,
+# and everything in it except live SUBSCRIBERS can be read off the disk. So the
+# gate the whole pipeline hangs on does not need the thing it gates: an agent
+# can run `microcoreos plan validate` before anything boots, which is when a
+# plan is actually being written.
+
+# The two shapes the observed planning session guessed wrong, both of which
+# land in the "unknown key" bucket — ignored by the schema, so the plan
+# validates while declaring nothing.
+UNKNOWN_KEY_FIXES = {
+    "consumes.model": "consumes:\n  - event: order.paid\n    requires: [id, total]"
+                      "\n# `model:`/`payload:` belong to publishes:. A consumer "
+                      "is a tolerant reader —\n# it names only the keys it reads.",
+    "consumes.payload": "consumes:\n  - event: order.paid\n    requires: [id, total]"
+                        "\n# `payload:` belongs to publishes:. A consumer names "
+                        "only the keys it reads.",
+    "flows.steps": "flows:\n  - name: \"…\"\n    e2e_test: tests/test_….py\n"
+                   "    links:\n      - consumes: order.paid\n"
+                   "        consumer: SendInvoicePlugin\n"
+                   "# A flow is `links:`, not `steps:` — a link is where the sad "
+                   "path is decided.",
+    # The next three were invented by a real planner run against this schema.
+    # Each names something real; none of them is a plan field.
+    "migrations.constraints": "columns:\n  follows:\n    follower_id: \"INTEGER NOT NULL\"\n"
+                              "# Table-level constraints (UNIQUE, FOREIGN KEY, CHECK) are not\n"
+                              "# plan fields at all — write them in the .sql file. The validator\n"
+                              "# reads them back from there.",
+    "features.params": "route: { method: GET, path: \"/users/{user_id}/posts\" }\n"
+                       "# Path parameters are part of `path:` — quoted, because of the braces.\n"
+                       "# There is no separate `params:` key.",
+    "features.protected": "# Auth is not a plan field. The plugin passes\n"
+                          "#   auth_validator=self.auth.validate_token\n"
+                          "# to add_endpoint, and declares `auth` among its mocks:\n"
+                          "mocks: [db, auth]",
+}
+
+
+def _unknown_key_fix(where: str, key: str) -> Optional[str]:
+    """`plan.features[7].consumes[0]` + `model` -> the consumes fix."""
+    section = re.sub(r"\[\d+\]", "", where).split(".")[-1]
+    return UNKNOWN_KEY_FIXES.get(f"{section}.{key}")
+
+
+ROUTE_FIX = (
+    "# A pure event consumer has no route. OMIT the key entirely:\n"
+    "- plugin: RecordAuditEntryPlugin\n"
+    "  file: domains/audit/plugins/record_audit_entry_plugin.py\n"
+    "  consumes:\n    - event: user.created\n      requires: [id]\n"
+    "# `route: {}` is not \"no route\" — it is a route missing method and path."
+)
+
+
+# Above this many schema errors, the format itself is wrong — not fields in it.
+# Set well clear of a plan with a few genuine mistakes: the observed wholesale
+# case produced 19.
+WHOLESALE_SCHEMA_ERRORS = 8
+
+
+def run_validation(plan_dict: dict, live: LiveSnapshot,
+                   checklist: Optional[str] = None) -> ValidatePlanData:
+    """Schema check, then the rules, then the unknown-key report."""
+    try:
+        plan = Plan(**plan_dict)
+    except ValidationError as e:
+        errors = [
+            PlanViolation(
+                rule=0, severity="ERROR",
+                where=".".join(str(loc) for loc in err["loc"]),
+                detail=err["msg"],
+                fix=ROUTE_FIX if "route" in [str(x) for x in err["loc"]] else None,
+            )
+            for err in e.errors()
+        ]
+        # Many schema errors at once is a different failure from a few: the
+        # author is not making mistakes inside the format, they are writing a
+        # different format. Answering that with a list of twenty field errors
+        # invites twenty patches; naming the worked example ends it in one. A
+        # real planner run produced `name/description/version` at the root with
+        # `phase_0` as a list — every field wrong, and nothing saying so.
+        if len(errors) >= WHOLESALE_SCHEMA_ERRORS:
+            errors.insert(0, PlanViolation(
+                rule=0, severity="ERROR", where="plan",
+                detail=f"{len(errors)} schema errors — this is not the plan "
+                       f"format. Do not patch them one by one.",
+                fix="Read plans/active_plan.yaml as it ships: a worked example "
+                    "of all three\nfeature shapes, with the rules behind it in "
+                    "docs/PARALLEL_DEVELOPMENT.md § Phase 1.\nStart from that "
+                    "shape and fill it with your domain.",
+            ))
+        return ValidatePlanData(valid=False, errors=errors)
+
+    result = PlanValidator(plan, live, checklist=checklist).validate()
+    # prepended: a dropped key explains every downstream violation
+    result.warnings[:0] = [
+        PlanViolation(rule=0, severity="WARNING", where=where,
+                      detail=f"unknown key '{key}' — ignored by the schema, so "
+                             f"anything under it is not validated",
+                      fix=_unknown_key_fix(where, key))
+        for where, key in unknown_plan_keys(plan_dict)
+    ]
+    return result
+
+
+def _constraint_line_hint(text: str, mark) -> str:
+    """`UNIQUE(a, b)` under `columns:` — a SQL constraint written as a column.
+
+    `columns:` maps a column NAME to its SQL, so a table-level constraint has
+    no key and YAML fails with a bare "could not find expected ':'" — accurate
+    about the syntax, silent about the mistake. Naming it costs one line and
+    saves the round that was spent staring at the file. Driven by what the
+    offending line actually says, never a guess.
+
+    Searched BACKWARDS from the mark: the scanner reports where it noticed the
+    problem, which is the token AFTER the keyless line. On the plan that
+    prompted this, the error read "line 26" and the constraint was on line 25.
+    """
+    if mark is None:
+        return ""
+    lines = text.splitlines()
+    keywords = {"UNIQUE", "PRIMARY", "FOREIGN", "CHECK", "CONSTRAINT",
+                "INDEX", "KEY"}
+    seen = 0
+    for index in range(min(mark.line, len(lines) - 1), -1, -1):
+        line = lines[index].strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.split("(")[0].split()[0].strip().upper() in keywords and ":" not in line:
+            return (f" — line {index + 1}, `{line}`, is a table-level "
+                    "constraint, and `columns:` maps a column NAME to its SQL. "
+                    "Write constraints in the .sql file; the validator reads "
+                    "them back from there")
+        seen += 1
+        if seen > 3:        # the culprit is adjacent, or this is another bug
+            return ""
+    return ""
+
+
+def parse_plan_yaml(text: str):
+    """(plan_dict, error). The error names a position in the CALLER's document."""
+    if yaml is None:
+        return None, "YAML support unavailable — send the plan as JSON in 'plan'"
+    try:
+        loaded = yaml.safe_load(text)
+    except Exception as e:
+        # e.problem/e.problem_mark instead of str(e): precise about the caller's
+        # document without leaking anything of ours (security rule 1).
+        mark = getattr(e, "problem_mark", None)
+        where = (f" at line {mark.line + 1}, column {mark.column + 1}"
+                 if mark is not None else "")
+        problem = getattr(e, "problem", None) or "could not be parsed"
+        hint = ""
+        if "{" in problem or "[" in problem:
+            hint = (" — inside a flow mapping, quote any value containing '{' or"
+                    " '[', e.g. path: \"/orders/{order_id}\"")
+        else:
+            hint = _constraint_line_hint(text, mark)
+        return None, f"plan_yaml is not valid YAML: {problem}{where}{hint}"
+    if not isinstance(loaded, dict):
+        return None, "plan_yaml does not parse to a mapping"
+    if set(loaded.keys()) == {"plan"} and isinstance(loaded["plan"], dict):
+        loaded = loaded["plan"]
+    return loaded, None
+
+
+def scan_live_events(domains_dir: str = "domains") -> tuple[set[str], dict[str, list[str]]]:
+    """(published events, event -> ["Class.method"]) by AST, for offline use.
+
+    The endpoint reads both from the live bus, which is strictly better —
+    it sees what actually registered. This is the offline stand-in, and it is
+    the difference between rule 3 being useful before boot and rule 3 flagging
+    every event the existing domains already publish.
+    """
+    published: set[str] = set()
+    subscribers: dict[str, list[str]] = {}
+    if not os.path.isdir(domains_dir):
+        return published, subscribers
+    for domain in sorted(os.listdir(domains_dir)):
+        plugins_dir = os.path.join(domains_dir, domain, "plugins")
+        if not os.path.isdir(plugins_dir):
+            continue
+        for filename in sorted(os.listdir(plugins_dir)):
+            if not filename.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(plugins_dir, filename), "r", encoding="utf-8") as f:
+                    tree = ast.parse(f.read())
+            except Exception:
+                continue
+            for klass in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+                for node in ast.walk(klass):
+                    if not (isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Attribute)
+                            and node.args
+                            and isinstance(node.args[0], ast.Constant)
+                            and isinstance(node.args[0].value, str)):
+                        continue
+                    event = node.args[0].value
+                    if node.func.attr == "publish":
+                        published.add(event)
+                    elif node.func.attr == "subscribe":
+                        handler = "handler"
+                        if len(node.args) > 1 and isinstance(node.args[1], ast.Attribute):
+                            handler = node.args[1].attr
+                        subscribers.setdefault(event, []).append(f"{klass.name}.{handler}")
+    return published, subscribers
+
+
+def offline_snapshot(domains_dir: str = "domains") -> LiveSnapshot:
+    """What the repo on disk already occupies, with no system running."""
+    tables = scan_live_tables(domains_dir)
+    published, subscribers = scan_live_events(domains_dir)
+    return LiveSnapshot(
+        routes=scan_live_routes(domains_dir),
+        tables=tables,
+        columns=scan_live_columns(tables, domains_dir),
+        events=published | set(subscribers),
+        subscribers=subscribers,
+        driver=os.getenv("EVENT_BUS_DRIVER", "in_process"),
+    )
+
+
+def validate_yaml(text: str, checklist: Optional[str] = None,
+                  live: Optional[LiveSnapshot] = None):
+    """(ValidatePlanData, None) or (None, parse error). The CLI's entry point."""
+    plan_dict, error = parse_plan_yaml(text)
+    if error:
+        return None, error
+    return run_validation(plan_dict, live or offline_snapshot(), checklist), None
 
 
 # ── The plugin ─────────────────────────────────────────────────────────────
@@ -810,29 +1233,8 @@ class PlanValidatorPlugin(BasePlugin):
             plan_dict, parse_error = self._parse_plan_input(data)
             if parse_error:
                 return {"success": False, "error": parse_error}
-            try:
-                plan = Plan(**plan_dict)
-            except ValidationError as e:
-                schema_errors = [
-                    PlanViolation(
-                        rule=0, severity="ERROR",
-                        where=".".join(str(loc) for loc in err["loc"]),
-                        detail=err["msg"],
-                    ).model_dump()
-                    for err in e.errors()
-                ]
-                return {"success": True,
-                        "data": {"valid": False, "errors": schema_errors,
-                                 "warnings": []}}
-            result = PlanValidator(plan, self._live_snapshot(),
-                                   checklist=self._read_checklist()).validate()
-            # prepended: a dropped key explains every downstream violation
-            result.warnings[:0] = [
-                PlanViolation(rule=0, severity="WARNING", where=where,
-                              detail=f"unknown key '{key}' — ignored by the "
-                                     f"schema, so anything under it is not validated")
-                for where, key in unknown_plan_keys(plan_dict)
-            ]
+            result = run_validation(plan_dict, self._live_snapshot(),
+                                    checklist=self._read_checklist())
             return {"success": True, "data": result.model_dump()}
         except Exception as e:
             self.logger.error(f"[PlanValidator] Validation crashed: {e}")

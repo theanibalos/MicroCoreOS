@@ -65,3 +65,60 @@ def test_get_domain_endpoints_users(tmp_path, monkeypatch):
     login_users = [e for e in endpoints if e.startswith("POST /auth/login")]
     assert len(login_users) == 1
     assert "req: email: EmailStr, password: str" in login_users[0]
+
+
+def test_phase_0_domain_appears_in_the_manifest(tmp_path, monkeypatch):
+    """
+    A domain that owns a table but has no plugin yet is exactly what phase 0
+    produces. The manifest used to iterate registered PLUGINS only, so that
+    domain was structurally invisible in the one document phase 0 is verified
+    against: the migration applied, the manifest regenerated, and the new
+    table appeared nowhere. Six turns of an observed session went into
+    grepping for a section that could not exist.
+    """
+    from unittest.mock import MagicMock
+    from tools.context.context_tool import ContextTool
+
+    migrations = tmp_path / "domains" / "catalog" / "migrations"
+    migrations.mkdir(parents=True)
+    (migrations / "001_create_catalog.sql").write_text(
+        "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL);")
+    monkeypatch.chdir(tmp_path)
+
+    container = MagicMock()
+    container.list_tools.return_value = []
+    container.registry.get_system_dump.return_value = {"plugins": {}}
+
+    ContextTool()._generate_global_manifest(container, {
+        "products": {"internal": False, "columns": [
+            {"name": "id", "type": "int", "nullable": False,
+             "default": None, "primary_key": True}], "unique": [],
+            "foreign_keys": []},
+    })
+
+    manifest = (tmp_path / "AI_CONTEXT.md").read_text(encoding="utf-8")
+    assert "### `catalog`" in manifest
+    assert "**Table `products`**" in manifest
+    # And it says which phase it is in, rather than only that a list is empty.
+    assert "phase 0 only" in manifest
+
+
+def test_a_domain_with_plugins_still_lists_them(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    from tools.context.context_tool import ContextTool
+
+    (tmp_path / "domains" / "shop" / "plugins").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    container = MagicMock()
+    container.list_tools.return_value = []
+    container.registry.get_system_dump.return_value = {
+        "plugins": {"shop.ListPlugin": {"domain": "shop", "dependencies": ["db"]}}
+    }
+    container.get.return_value.get_subscribers.return_value = {}
+
+    ContextTool()._generate_global_manifest(container, {})
+
+    manifest = (tmp_path / "AI_CONTEXT.md").read_text(encoding="utf-8")
+    assert "**Plugins**: shop.ListPlugin" in manifest
+    assert "phase 0 only" not in manifest
