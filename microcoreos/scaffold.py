@@ -97,6 +97,16 @@ dependencies = [
     "microcoreos",
 ]
 
+# Every plugin ships with a test — the executor contract makes it one of the
+# two files — and the flow templates mark them `@pytest.mark.anyio`. Without
+# these, `uv run -m pytest` on a fresh project is "No module named pytest"
+# while the section below configures a runner that is not installed.
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "anyio>=4.0.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -173,6 +183,23 @@ def materialize(target: str, ai_kit: bool = True) -> list[str]:
     return copied
 
 
+# Printed when the pyproject is the user's, because then none of the config
+# above reached them. `pythonpath` is the load-bearing line: without it a test
+# cannot `from domains.<x>.plugins...` — pytest puts `tests/` on sys.path, not
+# the project root — so every generated test fails on import, on a project that
+# otherwise looks correctly set up.
+PYPROJECT_IS_YOURS = """
+   ⚠️  Your pyproject.toml was left untouched (it is yours). It is missing what
+       the generated tests need — add it, or `uv run -m pytest` will fail:
+
+         uv add --dev pytest anyio
+
+         [tool.pytest.ini_options]
+         testpaths = ["tests"]
+         pythonpath = ["."]      # without this: ModuleNotFoundError: domains
+"""
+
+
 def new(argv: list[str]) -> int:
     """`microcoreos new <path> [--force] [--no-ai-kit]`"""
     force = "--force" in argv
@@ -207,9 +234,11 @@ def new(argv: list[str]) -> int:
     # microcoreos && microcoreos new .` is a supported flow and its pyproject
     # belongs to the user.
     pyproject = os.path.join(target, "pyproject.toml")
+    wrote_pyproject = False
     if not os.path.exists(pyproject):
         with open(pyproject, "w", encoding="utf-8") as f:
             f.write(PYPROJECT_TEMPLATE.format(name=name))
+        wrote_pyproject = True
 
     # The human entry point. AGENTS.md addresses the agent; without this a
     # person opening the directory has nothing written for them. Never
@@ -229,4 +258,7 @@ def new(argv: list[str]) -> int:
     write_manifest(target, RUNTIME_ENTRIES + (AI_KIT_ENTRIES if ai_kit else []))
 
     print(NEXT_STEPS.format(target=positional[0]))
+    if not wrote_pyproject and "[tool.pytest.ini_options]" not in \
+            open(pyproject, encoding="utf-8").read():
+        print(PYPROJECT_IS_YOURS)
     return 0

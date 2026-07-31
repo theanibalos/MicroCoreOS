@@ -221,3 +221,47 @@ def test_shipped_helpers_cover_every_tests_helpers_import_in_the_guide(tmp_path)
 
     shipped = {p.stem for p in (target / "tests" / "helpers").glob("*.py")}
     assert modules <= shipped, f"guide imports {modules - shipped}, scaffold ships none"
+
+
+def test_new_reports_what_a_pyproject_it_did_not_write_is_missing(tmp_path, capsys):
+    """`uv init && uv add microcoreos && microcoreos new .` is supported, and
+    that pyproject is the user's — so it is never edited. But without
+    `pythonpath = ["."]` every generated test fails on `from domains...`
+    (pytest puts `tests/` on sys.path, not the project root), on a project that
+    otherwise looks correctly set up. The tool reports; the user decides."""
+    target = tmp_path / "proj"
+    target.mkdir()
+    mine = '[project]\nname = "mine"\nversion = "9.9.9"\n'
+    (target / "pyproject.toml").write_text(mine, encoding="utf-8")
+
+    assert cli.main(["new", str(target)]) == 0
+
+    assert (target / "pyproject.toml").read_text(encoding="utf-8") == mine
+    out = capsys.readouterr().out
+    assert 'pythonpath = ["."]' in out
+    assert "uv add --dev pytest anyio" in out
+
+
+def test_new_says_nothing_when_the_pyproject_already_configures_pytest(tmp_path, capsys):
+    target = tmp_path / "proj"
+    target.mkdir()
+    mine = '[project]\nname = "mine"\n\n[tool.pytest.ini_options]\ntestpaths = ["spec"]\n'
+    (target / "pyproject.toml").write_text(mine, encoding="utf-8")
+
+    assert cli.main(["new", str(target)]) == 0
+
+    assert (target / "pyproject.toml").read_text(encoding="utf-8") == mine
+    assert "left untouched" not in capsys.readouterr().out
+
+
+def test_generated_pyproject_installs_the_runner_it_configures(tmp_path):
+    """Declaring `[tool.pytest.ini_options]` while nothing installs pytest is
+    how a fresh project answered `uv run -m pytest` with 'No module named
+    pytest' — found by installing the built wheel, not by any unit test."""
+    target = tmp_path / "proj"
+    scaffold.new([str(target)])
+    text = (target / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "[dependency-groups]" in text
+    assert "pytest" in text.split("[dependency-groups]")[1]
+    assert "anyio" in text.split("[dependency-groups]")[1]
