@@ -22,7 +22,7 @@ Non-Negotiable Rules — one that never mentioned typed event payloads.
 | Kernel/tool/event-bus laws | `AGENTS.md` § Core Architectural Laws |
 | The plugin template | `AI_CONTEXT.md` § Plugin Authoring Guide (regenerated every boot) |
 | What exists right now | `AI_CONTEXT.md` § Available Tools / § Domains |
-| The plan format and its 18 rules | `docs/PARALLEL_DEVELOPMENT.md` § Phase 1 |
+| The plan format and its 19 rules | `docs/PARALLEL_DEVELOPMENT.md` § Phase 1 |
 | Anti-patterns, testing, building a tool | `INSTRUCTIONS_FOR_AI.md` |
 
 Before you finish, the gates are commands, not a checklist to eyeball:

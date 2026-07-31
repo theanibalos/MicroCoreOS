@@ -47,6 +47,9 @@ _NO_EXPIRY = None
 
 
 class StateTool(BaseTool):
+    # keys are invented per feature; the store is a flat namespace:key map
+    resource_shape = "namespace:key"
+
     """
     In-Memory State Tool (StateTool):
     Allows sharing volatile global data between plugins safely.

@@ -1264,3 +1264,155 @@ def test_rule_18_ignores_a_plain_path_with_no_node(tmp_path, monkeypatch):
     result = run_validation(plan, LiveSnapshot())
 
     assert not any(e.rule == 18 for e in result.errors)
+
+
+# ── rule 19 — resources are declared, and the TOOL says what needs declaring ──
+#
+# The objection this answers: a rule per tool makes the validator grow forever
+# in a framework whose premise is that tools are swapped and added. So the rule
+# is one, and the knowledge lives in the tool — a new tool dropped into
+# `tools/` brings its own requirement and nothing here changes.
+
+def _tool_source(class_name, tool_name, shape=None):
+    shape_line = f'    resource_shape = "{shape}"\n' if shape else ""
+    return (f"class {class_name}:\n{shape_line}"
+            f"    @property\n"
+            f"    def name(self):\n        return \"{tool_name}\"\n")
+
+
+def _tools_dir(tmp_path, *tools):
+    root = tmp_path / "tools"
+    for class_name, tool_name, shape in tools:
+        d = root / tool_name
+        d.mkdir(parents=True)
+        (d / f"{tool_name}_tool.py").write_text(
+            _tool_source(class_name, tool_name, shape), encoding="utf-8")
+    return root
+
+
+def test_scanner_reads_the_shape_off_the_tool_source(tmp_path, monkeypatch):
+    from domains.devtools.plugins.plan_validator_plugin import scan_tool_resource_shapes
+
+    _tools_dir(tmp_path,
+               ("StateTool", "state", "namespace:key"),
+               ("S3Tool", "s3", "bucket/path"),
+               ("LoggerTool", "logger", None))
+    monkeypatch.chdir(tmp_path)
+
+    assert scan_tool_resource_shapes() == {"state": "namespace:key",
+                                           "s3": "bucket/path"}
+
+
+def _plan_injecting(tool, touches=None):
+    plan = plan_copy()
+    feature = plan["features"][-1]
+    feature["mocks"] = ["event_bus", tool]
+    if touches:
+        feature["touches"] = touches
+    return plan, feature["plugin"]
+
+
+def test_rule_19_flags_a_tool_that_namespaces_with_no_contract(tmp_path, monkeypatch):
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan, plugin = _plan_injecting("state")
+
+    result = run_validation(
+        plan, LiveSnapshot(resource_shapes={"state": "namespace:key"}))
+
+    err = next(e for e in result.errors if e.rule == 19)
+    assert plugin in err.where
+    assert "namespace:key" in err.fix
+
+
+def test_rule_19_ignores_tools_that_declare_no_shape():
+    """`event_bus`, `logger`, `http` have a fixed surface — nothing to pin."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan, _ = _plan_injecting("logger")
+
+    result = run_validation(
+        plan, LiveSnapshot(resource_shapes={"state": "namespace:key"}))
+
+    assert not any(e.rule == 19 for e in result.errors)
+
+
+def test_rule_19_accepts_a_declared_contract():
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan, _ = _plan_injecting(
+        "state", {"state": {"writes": ["note-counts:{author_id}"]}})
+
+    result = run_validation(
+        plan, LiveSnapshot(resource_shapes={"state": "namespace:key"}))
+
+    assert not any(e.rule == 19 for e in result.errors)
+
+
+def test_rule_19_rejects_an_entry_that_is_not_in_the_declared_shape():
+    """"namespace:key" means both halves — a bare key leaves the namespace to
+    whoever writes the file first, which is the bug this rule exists for."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan, _ = _plan_injecting("state", {"state": {"writes": ["{author_id}"]}})
+
+    result = run_validation(
+        plan, LiveSnapshot(resource_shapes={"state": "namespace:key"}))
+
+    err = next(e for e in result.errors if e.rule == 19)
+    assert "namespace:key" in err.detail
+
+
+def test_rule_19_takes_the_first_class_db_contract_as_the_db_entry():
+    """`db:` predates `touches:` and every shipped plan uses it."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan = plan_copy()
+    plan["features"][0]["mocks"] = ["db"]
+
+    result = run_validation(plan, LiveSnapshot(resource_shapes={"db": "table"}))
+
+    assert not any(e.rule == 19 for e in result.errors)
+
+
+def test_rule_19_is_silent_when_no_tool_asks_for_a_contract():
+    """A project whose tools all have a fixed surface must see nothing."""
+    from domains.devtools.plugins.plan_validator_plugin import (
+        LiveSnapshot, run_validation,
+    )
+    plan, _ = _plan_injecting("state")
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert not any(e.rule == 19 for e in result.errors)
+
+
+def test_mocks_is_still_accepted_as_the_old_spelling_of_tools():
+    """`mocks:` was renamed to `tools:` — it says which tools the plugin's
+    __init__ takes, not what a test stands in for, and that misreading is why
+    the shipped template listed two while its example constructor took four.
+    Every plan already written uses the old name, so it never stops working."""
+    from domains.devtools.plugins.plan_validator_plugin import Plan
+
+    old = Plan(**{"features": [{"plugin": "P", "file": "domains/d/plugins/p.py",
+                                "mocks": ["http", "db", "logger"]}]})
+    new = Plan(**{"features": [{"plugin": "P", "file": "domains/d/plugins/p.py",
+                                "tools": ["http", "db", "logger"]}]})
+
+    assert old.features[0].tools == ["http", "db", "logger"]
+    assert new.features[0].tools == old.features[0].tools
+
+
+def test_the_old_spelling_is_not_reported_as_an_unknown_key():
+    """An alias that validates but warns would push every existing plan to be
+    rewritten for no reason."""
+    from domains.devtools.plugins.plan_validator_plugin import unknown_plan_keys
+
+    found = unknown_plan_keys({"features": [{"plugin": "P", "mocks": ["db"]}]})
+
+    assert not any(key == "mocks" for _where, key in found)

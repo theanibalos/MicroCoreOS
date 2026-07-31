@@ -200,7 +200,8 @@ def test_pipeline_commands_refuse_to_run_outside_a_project(tmp_path, monkeypatch
 def test_plan_without_a_subcommand_prints_usage(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(_project(tmp_path))
     assert cli.main(["plan"]) == 2
-    assert "plan validate" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "validate" in out and "probe" in out
 
 
 def test_plan_validate_rejects_the_untouched_template(tmp_path, monkeypatch, capsys):
@@ -623,3 +624,109 @@ def test_status_stays_quiet_without_a_scaffold_baseline(tmp_path, monkeypatch, c
 
     assert cli.main(["status"]) == 0
     assert "stray" not in capsys.readouterr().out
+
+
+# ── plan probe — does the CODE match the plan it was written from ────────────
+#
+# `validate` checks the plan's shape; this drives each feature with recording
+# stand-ins and writes down every call. It exists because `mocks:` says WHICH
+# tool and never WHICH resources, and those are invented per feature: on a real
+# wave the plugin author wrote `increment("counter", namespace=author_id)`
+# while the test author asserted `namespace="counter-{author_id}"`. Nothing
+# failed until the assertion, and one agent writing both files never notices.
+
+PROBE_PLAN = """\
+plan:
+  domain: shop
+  features:
+    - plugin: CounterPlugin
+      file: domains/shop/plugins/counter_plugin.py
+      consumes:
+        - event: order.placed
+          requires: [id, buyer_id]
+      mocks: [event_bus, state]
+      test: tests/test_counter_plugin.py
+"""
+
+COUNTER_SOURCE = """\
+class CounterPlugin:
+    def __init__(self, event_bus, state):
+        self.bus, self.state = event_bus, state
+
+    async def on_boot(self):
+        await self.bus.subscribe("order.placed", self.on_order_placed)
+
+    async def on_order_placed(self, event):
+        await self.state.increment("total", namespace=event.payload["buyer_id"])
+"""
+
+
+def _probe_project(tmp_path, plan=PROBE_PLAN, source=COUNTER_SOURCE, touches=""):
+    project = _project(tmp_path, plan=plan.replace("__TOUCHES__", touches))
+    plugins = project / "domains" / "shop" / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "counter_plugin.py").write_text(source, encoding="utf-8")
+    # Which tools need a `touches:` is asked of the tools, never hardcoded —
+    # `state` namespaces keys a feature invents, `event_bus` does not.
+    for name, shape in (("state", '"namespace:key"'), ("event_bus", None)):
+        d = project / "tools" / name
+        d.mkdir(parents=True, exist_ok=True)
+        shape_line = f"    resource_shape = {shape}\n" if shape else ""
+        (d / f"{name}_tool.py").write_text(
+            f"class {name.title()}Tool:\n{shape_line}"
+            f"    @property\n    def name(self):\n        return \"{name}\"\n",
+            encoding="utf-8")
+    return project
+
+
+def test_probe_records_the_calls_a_feature_actually_makes(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_probe_project(tmp_path))
+
+    cli.main(["plan", "probe"])
+    out = capsys.readouterr().out
+
+    assert "state.increment('total'" in out
+    assert "event_bus.subscribe('order.placed')" in out
+
+
+def test_probe_flags_a_resource_tool_the_plan_never_declared(tmp_path, monkeypatch, capsys):
+    """The measured bug: `state` used, no `touches.state`, layout invented."""
+    monkeypatch.chdir(_probe_project(tmp_path))
+
+    assert cli.main(["plan", "probe"]) == 1
+    assert "declares no `touches.state`" in capsys.readouterr().out
+
+
+def test_probe_is_quiet_about_tools_that_declare_no_shape(tmp_path, monkeypatch, capsys):
+    """`event_bus` invents no names, and says so by not declaring a
+    `resource_shape`. Nothing in the pipeline lists which tools those are."""
+    monkeypatch.chdir(_probe_project(tmp_path))
+
+    cli.main(["plan", "probe"])
+    out = capsys.readouterr().out
+
+    assert "touches.event_bus" not in out
+
+
+def test_probe_reports_mocks_that_do_not_fit_the_constructor(tmp_path, monkeypatch, capsys):
+    """Found on the real project: three plugins took `http` and `logger` that
+    their plan entry never listed, so any test written from the plan alone
+    cannot construct them."""
+    source = COUNTER_SOURCE.replace("def __init__(self, event_bus, state):",
+                                    "def __init__(self, http, event_bus, state, logger):")
+    monkeypatch.chdir(_probe_project(tmp_path, source=source))
+
+    cli.main(["plan", "probe"])
+
+    assert "does not fit its __init__" in capsys.readouterr().out
+
+
+def test_probe_passes_when_the_plan_declares_what_the_code_touches(tmp_path, monkeypatch, capsys):
+    plan = PROBE_PLAN.replace(
+        "      test: tests/test_counter_plugin.py",
+        "      touches:\n        state: { writes: [\"total:{buyer_id}\"] }\n"
+        "      test: tests/test_counter_plugin.py")
+    monkeypatch.chdir(_probe_project(tmp_path, plan=plan))
+
+    assert cli.main(["plan", "probe"]) == 0
+    assert "touches exactly what its plan entry declares" in capsys.readouterr().out

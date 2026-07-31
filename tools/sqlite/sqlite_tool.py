@@ -119,6 +119,9 @@ def _normalize_column_type(raw_type: str) -> str:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class SqliteTool(BaseTool):
+    # tables are invented per feature, one owner each (rule 14)
+    resource_shape = "table"
+
     """
     SQLite persistence tool for MicroCoreOS.
 

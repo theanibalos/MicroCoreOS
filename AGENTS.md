@@ -104,7 +104,7 @@ The plan pipeline — prefix with `uv run` if the package is installed in a venv
 
 ```bash
 microcoreos status                  # Active plan, progress, manifest freshness
-microcoreos plan validate           # The 16 plan rules, OFFLINE (no server, no jq, no curl)
+microcoreos plan validate           # The 19 plan rules, OFFLINE (no server, no jq, no curl)
 microcoreos migrate                 # Apply migrations AND regenerate AI_CONTEXT.md
 microcoreos schema                  # The live tables and columns, read by the db tool itself
 ```

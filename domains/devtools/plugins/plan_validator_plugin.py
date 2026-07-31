@@ -1,5 +1,5 @@
 """
-POST /system/plan/validate — the executable form of the 18 plan validity
+POST /system/plan/validate — the executable form of the 19 plan validity
 rules in docs/PARALLEL_DEVELOPMENT.md ("Formal plan format").
 
 The orchestrator sends the formal plan (YAML or JSON) BEFORE dispatching any
@@ -52,6 +52,26 @@ class PlanDbContract(BaseModel):
     writes: list[str] = []
 
 
+class PlanResourceContract(BaseModel):
+    """Which resources of ONE tool a feature touches.
+
+    The generalisation of `db:`, and it exists for the same reason. `db:`
+    pins the tables so two features cannot silently fight over one; this pins
+    whatever the tool namespaces. Measured with `state`: given only
+    `mocks: [event_bus, state]`, one agent wrote
+    `increment("counter", namespace=author_id)` and another asserted on
+    `namespace="counter-{author_id}"`. Neither was wrong — the contract did
+    not say, and one agent writing both files never notices, because it
+    agrees with itself.
+
+    The entry format is the tool's OWN `resource_shape` ("table",
+    "namespace:key", "bucket/path"), so nothing here is per-tool knowledge.
+    `{braces}` mark the parts filled in at runtime.
+    """
+    reads: list[str] = []
+    writes: list[str] = []
+
+
 class PlanPublish(BaseModel):
     event: str
     model: Optional[str] = None
@@ -69,10 +89,21 @@ class PlanFeature(BaseModel):
     function: str = ""
     route: Optional[PlanRoute] = None
     db: Optional[PlanDbContract] = None
+    touches: dict[str, PlanResourceContract] = {}
     publishes: list[PlanPublish] = []
     consumes: list[PlanConsume] = []
-    mocks: list[str] = []
+    # Named `tools:` because that is what it is — the tools this plugin's
+    # __init__ takes, in order, since DI is by parameter name. It was `mocks:`,
+    # which reads as "what the test stands in for", and that reading is why the
+    # shipped template listed only the interesting two while the example
+    # plugin's constructor took four: nobody mocks a logger for its own sake.
+    # An incomplete list cannot construct the plugin, so a test written from
+    # the plan alone fails on TypeError. `mocks:` stays accepted forever —
+    # every plan already written uses it.
+    tools: list[str] = Field(default_factory=list, alias="mocks")
     test: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class PlanLink(BaseModel):
@@ -239,13 +270,17 @@ class LiveSnapshot:
     """What the running system (and the repo on disk) already occupies."""
 
     def __init__(self, routes=None, tables=None, events=None, subscribers=None,
-                 driver="in_process", columns=None):
+                 driver="in_process", columns=None, resource_shapes=None):
         self.routes: dict[str, str] = routes or {}         # "METHOD /path" -> source file
         self.tables: dict[str, str] = tables or {}         # table -> owning domain
         self.columns: dict[str, set[str]] = columns or {}  # table -> its column names
         self.events: set[str] = events or set()            # events published live
         self.subscribers: dict[str, list] = subscribers or {}  # event -> handler names
         self.driver: str = driver
+        # tool name -> its `resource_shape`, for the tools that namespace
+        # resources a feature invents. Empty means "no tool asks for a
+        # contract", which is exactly what a project with none should get.
+        self.resource_shapes: dict[str, str] = resource_shapes or {}
 
 
 def scan_live_routes(domains_dir: str = "domains") -> dict[str, str]:
@@ -457,6 +492,7 @@ class PlanValidator:
         self._rule_16_language()
         self._rule_17_plan_sizing()
         self._rule_18_declared_test_nodes()
+        self._rule_19_resource_contracts()
         return ValidatePlanData(
             valid=not self.errors, errors=self.errors, warnings=self.warnings
         )
@@ -963,6 +999,62 @@ class PlanValidator:
                 names.add(node.name)
         return names
 
+    # rule 19 — a feature declares which resources it touches, for every tool
+    #           that says it namespaces any
+    #
+    # `mocks:` says WHICH tool; it never said WHICH resources, and those are
+    # invented per feature. Two agents working from the same plan then pick two
+    # layouts and only meet at the assertion — measured with `state`, where one
+    # wrote `namespace=author_id` and the other asserted `namespace="counter-
+    # {author_id}"`. `db:` has pinned its tables since rule 14; this is that
+    # guarantee for every other store.
+    #
+    # Nothing here knows what `state` or `s3` are. The tools declare their own
+    # `resource_shape` and this rule reads it, so dropping a new tool into
+    # `tools/` brings its requirement along and the validator does not grow.
+    def _rule_19_resource_contracts(self):
+        shapes = self.live.resource_shapes
+        if not shapes:
+            return
+        for feature in self.plan.features:
+            for tool in feature.tools:
+                shape = shapes.get(tool)
+                if not shape:
+                    continue
+                contract = self._contract_for(feature, tool)
+                if contract is None or not (contract.reads or contract.writes):
+                    self._error(
+                        19, feature.plugin,
+                        f"injects `{tool}` but declares no resources — its "
+                        f"names are invented per feature, so the plugin author "
+                        f"and the test author will each invent a different one",
+                        fix=f"- plugin: {feature.plugin}\n"
+                            f"  touches:\n"
+                            f"    {tool}: {{ writes: [\"{shape}\"] }}"
+                            f"   # one entry per resource, in that shape",
+                    )
+                    continue
+                for entry in contract.reads + contract.writes:
+                    for sep in (":", "/"):
+                        if sep in shape and sep not in entry:
+                            self._error(
+                                19, feature.plugin,
+                                f"`{tool}` resource '{entry}' is not in the "
+                                f"shape `{tool}` declares ({shape}) — the part "
+                                f"before '{sep}' is missing",
+                                fix=f"touches:\n    {tool}: "
+                                    f"{{ writes: [\"<{shape.split(sep)[0]}>"
+                                    f"{sep}{entry}\"] }}",
+                            )
+
+    def _contract_for(self, feature: PlanFeature, tool: str):
+        """`touches.<tool>`, or the first-class `db:` that predates it."""
+        if tool in feature.touches:
+            return feature.touches[tool]
+        if tool == "db":
+            return feature.db
+        return None
+
     @staticmethod
     def _feature_domain(feature: PlanFeature) -> Optional[str]:
         parts = feature.file.split("/")
@@ -1188,6 +1280,64 @@ def scan_live_events(domains_dir: str = "domains") -> tuple[set[str], dict[str, 
     return published, subscribers
 
 
+def scan_tool_resource_shapes(tools_dir: str = "tools") -> dict[str, str]:
+    """{tool name: resource_shape} for every tool that namespaces resources.
+
+    A tool sets `resource_shape` when the FEATURE invents the names it uses —
+    `db` invents tables, `state` invents keys — as opposed to a fixed surface
+    like `http` or `logger`. Read off the source by AST, the same way routes
+    and tables already are, so this answers offline with nothing running.
+
+    This is what keeps the validator from growing a rule per tool: the rule is
+    one and generic, and a new tool dropped into `tools/` brings its own
+    requirement with it. Nothing here knows what `state` or `s3` mean.
+    """
+    shapes: dict[str, str] = {}
+    if not os.path.isdir(tools_dir):
+        return shapes
+    for dirpath, _dirs, files in os.walk(tools_dir):
+        for filename in files:
+            if not filename.endswith("_tool.py"):
+                continue
+            try:
+                with open(os.path.join(dirpath, filename), encoding="utf-8") as f:
+                    tree = ast.parse(f.read())
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                shape = _class_attr_str(node, "resource_shape")
+                name = _tool_name_of(node)
+                if shape and name:
+                    shapes[name] = shape
+    return shapes
+
+
+def _class_attr_str(cls: ast.ClassDef, attr: str) -> Optional[str]:
+    """`attr = "literal"` at class level, or None."""
+    for item in cls.body:
+        targets = item.targets if isinstance(item, ast.Assign) else (
+            [item.target] if isinstance(item, ast.AnnAssign) else [])
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == attr:
+                value = item.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    return value.value
+    return None
+
+
+def _tool_name_of(cls: ast.ClassDef) -> Optional[str]:
+    """The string the tool's `name` property returns — its DI parameter name."""
+    for item in cls.body:
+        if isinstance(item, (ast.FunctionDef,)) and item.name == "name":
+            for sub in ast.walk(item):
+                if isinstance(sub, ast.Return) and isinstance(sub.value, ast.Constant) \
+                        and isinstance(sub.value.value, str):
+                    return sub.value.value
+    return None
+
+
 def offline_snapshot(domains_dir: str = "domains") -> LiveSnapshot:
     """What the repo on disk already occupies, with no system running."""
     tables = scan_live_tables(domains_dir)
@@ -1199,6 +1349,7 @@ def offline_snapshot(domains_dir: str = "domains") -> LiveSnapshot:
         events=published | set(subscribers),
         subscribers=subscribers,
         driver=os.getenv("EVENT_BUS_DRIVER", "in_process"),
+        resource_shapes=scan_tool_resource_shapes(),
     )
 
 

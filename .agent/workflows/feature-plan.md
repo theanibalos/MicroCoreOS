@@ -62,7 +62,7 @@ plan:
           model: OrderCancelledPayload
           payload: { id: int, reason: str }
       consumes: []
-      mocks: [db, event_bus]
+      tools: [http, db, event_bus, logger]   # every tool __init__ takes
       test: tests/test_cancel_order.py
   flows:
     - name: order-cancellation
@@ -85,7 +85,7 @@ plan:
 
 ### 2. Validate before writing code
 
-`microcoreos plan validate` — it runs the 18 validity rules of
+`microcoreos plan validate` — it runs the 19 validity rules of
 `docs/PARALLEL_DEVELOPMENT.md` against this plan AND what the repo already
 occupies, with no server running. (`POST /system/plan/validate` is the same
 rules against a booted system, and adds live subscribers.) Zero `errors` before any code; `warnings` are advisory. The main
@@ -108,7 +108,7 @@ Publish with `XxxPayload(...).model_dump()` — bare call, no arguments.
 
 - One test per plugin proving the black-box contract: input → output, DB
   effects on the declared tables, published payloads with the declared fields.
-  Mock exactly the tools the plan's `mocks:` lists; run the rest as real
+  Mock exactly the tools the plan's `tools:` lists; run the rest as real
   in-memory instances (`INSTRUCTIONS_FOR_AI.md` § Testing).
 - One double-delivery test per idempotent link (same envelope twice → same
   final state), at the path declared in `idempotency_test`.

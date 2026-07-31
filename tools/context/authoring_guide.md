@@ -34,8 +34,11 @@ follow-ups.
 1. **Schemas inline** — request, response AND event payload models at the top
    of the plugin file. Never import them from `models/` or other domains.
 2. **DI by parameter name** — `__init__(self, http, db, logger)` receives the
-   tools named `http`, `db`, `logger`. Inject exactly the tools your feature
-   uses. No hardcoded imports from `tools/`.
+   tools named `http`, `db`, `logger`. No hardcoded imports from `tools/`.
+   **Your parameters are exactly your feature's `tools:` list in the plan, in
+   that order** — not what a template happens to show. The plan is the
+   contract, and the test is written against that same list: add a `logger`
+   nobody declared and the two no longer fit.
 3. **Return envelope** — `{"success": bool, "data": ..., "error": ...}`:
    `success` always present, `data` on success, `error` on failure. Responses
    serialize AS-IS — `response_model` does NOT backfill omitted keys, so an
@@ -90,7 +93,10 @@ follow-ups.
     returns "already seen" — no work, no error, no DLQ. Write the
     double-delivery test under the exact name `idempotency_test` gives, with a
     real `StateTool()`: an `AsyncMock` returns truthy from `has()`, so the guard
-    swallows everything and the test proves nothing.
+    swallows everything and the test proves nothing. Rule 6 says a *plugin*
+    never imports the envelope; a *test* has to build one —
+    `from tools.event_bus.envelope import EventEnvelope` — and deliver the same
+    instance twice.
 
 ### Templates — one per deliverable type, copy the one your task matches
 
@@ -294,7 +300,8 @@ x = tool.method.return_value.__aenter__.return_value  # bound by `as x:`
   PLAN (route, envelope shape, declared tables, declared payload keys) —
   never from your own implementation. The test is the contract's proof; a
   test that mirrors the code proves nothing.
-- Mock exactly the tools your feature's `mocks:` lists
+- Mock exactly the tools your feature's `tools:` lists — all of them; an
+  omitted `logger` is still a required positional argument
   (`unittest.mock.AsyncMock` / `MagicMock`); run every other injected tool as
   a real in-memory instance (SQLite `:memory:` with your domain's migration
   applied, in-process event bus).

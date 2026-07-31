@@ -132,9 +132,9 @@ Check that:
 ### 6. Generate tests
 
 Create `tests/test_{name}_plugin.py` with one test per plugin. Mock exactly
-the tools the plan's `mocks:` field lists; run the rest as real in-memory
+the tools the plan's `tools:` field lists; run the rest as real in-memory
 instances (`INSTRUCTIONS_FOR_AI.md` § Testing). Example with everything
-mocked (`mocks: [http, db, event_bus, logger]`):
+mocked (`tools: [http, db, event_bus, logger]`):
 
 ```python
 import pytest

@@ -145,7 +145,10 @@ plan:
           model: OrderCreatedPayload        # Pydantic payload model, inline in the plugin
           payload: { id: int, user_id: int, total: float, note: "Optional[str]" }
       consumes: []
-      mocks: [db, event_bus]                # what its test mocks
+      tools: [http, db, event_bus, logger]  # EVERY tool THIS __init__ takes, in
+                                            # order. Not a fixed list: the pure
+                                            # consumer below names neither http
+                                            # nor logger
       test: tests/test_create_order.py
 
     - plugin: OrderNotifierPlugin
@@ -160,7 +163,7 @@ plan:
       consumes:
         - event: order.created
           requires: [id, user_id]           # keys this consumer will read (tolerant reader)
-      mocks: [event_bus, logger]
+      tools: [event_bus, logger]
       test: tests/test_order_notifier.py
 
   flows:
@@ -191,7 +194,7 @@ empty is **omitted**, never filled with nulls:
   `.agent/workflows/feature-plan.md`).
 - **No events published or consumed?** Omit `flows` entirely. A pure CRUD
   endpoint is one `features:` entry of ~10 lines — route, `db:` contract,
-  `mocks`, `test` — and nothing else.
+  `tools`, `test` — and nothing else.
 - **One event chain?** That is ONE flow with its links — e.g. "deleting a user
   deletes everything they own" is `DELETE /users/{id} → user.deleted →
   cleanup consumers`, a single flow even if three domains consume it.
@@ -218,7 +221,7 @@ plan must pin down everything observable from outside — the route it serves
 the events it consumes (the keys it reads), and the tables it touches (`db:`).
 The feature's test proves **that contract**, not the implementation: drive
 the input, assert the output, the DB effects on the declared tables, and the
-published payloads. The plan's `mocks:` field decides the level per feature:
+published payloads. The plan's `tools:` field decides the level per feature:
 tools listed there are mocked (`AsyncMock`/`MagicMock`); tools NOT listed run
 as real in-memory instances (`db` as SQLite `:memory:` with the domain's
 migrations applied, `event_bus` in-process) — the black-box style of
@@ -371,7 +374,7 @@ A plan is valid iff:
     the blast radius down. When neither the plan nor the live system knows the
     table, the rule warns that it cannot check rather than inventing an error.
 
-Above the 18 rules sits **rule 0, the shape of the document itself**. The
+Above the 19 rules sits **rule 0, the shape of the document itself**. The
 schema ignores keys it does not know, and a typo lands in exactly that bucket:
 `feature:` instead of `features:` yields a plan that declares nothing and
 therefore satisfies every rule below. Rule 0 warns on any unknown key (with its

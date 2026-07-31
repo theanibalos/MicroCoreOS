@@ -276,17 +276,22 @@ def schema(argv: list[str]) -> int:
 
 # ── plan validate ────────────────────────────────────────────────────────────
 
-PLAN_USAGE = """Usage: microcoreos plan validate [path]
+PLAN_USAGE = """Usage: microcoreos plan <validate|probe> [path]
 
-  path  defaults to plans/active_plan.yaml
+  validate  the 19 rules, offline — is the PLAN well formed
+  probe     drive each feature and record what it touches — does the CODE
+            match the plan it was written from
+
+  path      defaults to plans/active_plan.yaml
 """
 
 
 def plan(argv: list[str]) -> int:
-    if not argv or argv[0] != "validate":
+    if not argv or argv[0] not in ("validate", "probe"):
         print(PLAN_USAGE)
         return 2
-    return _plan_validate(argv[1] if len(argv) > 1 else PLAN_PATH)
+    path = argv[1] if len(argv) > 1 else PLAN_PATH
+    return _plan_validate(path) if argv[0] == "validate" else _plan_probe(path)
 
 
 def _plan_validate(path: str) -> int:
@@ -518,3 +523,181 @@ def _ago(seconds: float) -> str:
     if seconds < 172800:
         return f"{int(seconds // 3600)} h ago"
     return f"{int(seconds // 86400)} days ago"
+
+
+# ── plan probe ───────────────────────────────────────────────────────────────
+#
+# `plan validate` asks "is the PLAN well formed". This asks the other half:
+# **does the CODE do what the plan it was written from says.**
+#
+# It answers by driving each feature with recording stand-ins for its tools and
+# writing down every call. The recorder knows nothing about any tool — it
+# records `tool.method(args)` — so an s3 or redis tool dropped into `tools/`
+# is covered the day it arrives, and this file does not grow.
+#
+# What it exists to catch: `tools:` says WHICH tool, never WHICH resources, and
+# those are invented per feature. Measured on a real wave — the plugin author
+# wrote `increment("counter", namespace=author_id)` while the test author
+# asserted on `namespace="counter-{author_id}"`. Both were reasonable, the plan
+# did not say, and nothing failed until the assertion. With one agent writing
+# both files the divergence never surfaces at all: it agrees with itself.
+
+class _Recorder:
+    """A stand-in for one tool. Records every call; answers anything."""
+
+    def __init__(self, name: str, log: list):
+        self._name, self._log = name, log
+
+    def __getattr__(self, method: str):
+        if method.startswith("_"):
+            raise AttributeError(method)
+
+        async def call(*args, **kwargs):
+            self._log.append((self._name, method, args, kwargs))
+            # Handlers are registered by being PASSED to a tool
+            # (`bus.subscribe(event, self.on_x)`, `http.add_endpoint(path,
+            # method, self.execute)`), so the recording also hands us the
+            # entry points — no naming convention to guess.
+            return None
+
+        return call
+
+
+def _synthetic(type_name: str):
+    """A value of the type the plan declares. The plan is the only input spec."""
+    return {"int": 1, "float": 1.0, "bool": True,
+            "str": "x", "list": [], "dict": {}}.get(str(type_name).lower(), "x")
+
+
+def _plan_probe(path: str) -> int:
+    from microcoreos.cli import _ensure_project_on_path, _load_project_env, _require_project
+
+    root = _ensure_project_on_path()
+    if not _require_project(root):
+        return 2
+    _load_project_env(root)
+
+    if not os.path.exists(path):
+        print(f"[MicroCoreOS] No plan at {path}")
+        return 2
+    try:
+        from domains.devtools.plugins import plan_validator_plugin as validator
+    except ImportError as e:
+        print(f"[MicroCoreOS] The plan validator is not importable here: {e}")
+        return 2
+
+    with open(path, "r", encoding="utf-8") as f:
+        plan_dict, error = validator.parse_plan_yaml(f.read())
+    if error:
+        print(f"[MicroCoreOS] {error}\n              Run `microcoreos plan validate` first.")
+        return 2
+
+    features = validator.Plan(**plan_dict).features
+    # Which tools namespace names a feature invents, asked of the tools
+    # themselves. A hardcoded list of the fixed-surface ones (`http`, `logger`,
+    # …) would be the same list that grows every time someone adds a tool —
+    # the thing this whole design is avoiding.
+    shapes = validator.scan_tool_resource_shapes()
+    print(f"\nProbing {len(features)} feature(s) from {path}\n")
+
+    findings = 0
+    for feature in features:
+        observed, why = _drive(feature)
+        if why:
+            print(f"  ⚠️  {feature.plugin}: {why}")
+            continue
+        findings += _report(feature, observed, shapes)
+    print()
+    if findings:
+        print(f"❌ {findings} mismatch(es) between the code and the plan.\n"
+              f"   Fix the code, or amend the plan and re-dispatch — never let "
+              f"them disagree silently.")
+        return 1
+    print("✅ Every feature touches exactly what its plan entry declares.")
+    return 0
+
+
+def _drive(feature):
+    """Build the plugin from `mocks:`, boot it, deliver what it consumes."""
+    import importlib
+
+    module_path = feature.file.replace("/", ".").removesuffix(".py")
+    # Always the file as it is on disk right now. A probe is run right after an
+    # executor rewrote the plugin, so a module cached from earlier in this
+    # process would report on source that no longer exists.
+    import sys
+    sys.modules.pop(module_path, None)
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(module_path)
+        plugin_class = getattr(module, feature.plugin)
+    except (ImportError, AttributeError) as e:
+        return [], f"not importable yet ({e})"
+
+    log: list = []
+    tools = {name: _Recorder(name, log) for name in feature.tools}
+    try:
+        instance = plugin_class(**tools)
+    except TypeError as e:
+        # The plan's `mocks:` and the constructor disagree — which is itself
+        # the finding, and the one an independent test author trips on first.
+        return [], f"`tools: {feature.tools}` does not fit its __init__ ({e})"
+
+    async def run():
+        if hasattr(instance, "on_boot"):
+            await instance.on_boot()
+        # Every handler the plugin registered came through a recorded call, so
+        # deliver to those — never to a method name guessed from the outside.
+        for _tool, _method, args, _kwargs in list(log):
+            for arg in args:
+                if callable(arg) and getattr(arg, "__self__", None) is instance:
+                    await _deliver(arg, feature)
+
+    try:
+        asyncio.run(run())
+    except Exception as e:
+        return log, f"raised while being driven ({type(e).__name__}: {e})"
+    return log, None
+
+
+async def _deliver(handler, feature):
+    """Call one registered handler with an input built from the plan."""
+    payload = {}
+    for consume in feature.consumes:
+        for key in consume.requires:
+            payload[key] = _synthetic("int" if key.endswith("id") else "str")
+    envelope = type("Envelope", (), {"id": "probe-1", "payload": payload,
+                                     "event": "probe", "emitter": "probe"})()
+    with contextlib.suppress(Exception):
+        await handler(envelope)
+
+
+def _report(feature, observed, shapes) -> int:
+    """Print what the feature touched, and flag what the plan does not declare."""
+    declared = {tool: set(c.reads) | set(c.writes)
+                for tool, c in (feature.touches or {}).items()}
+    if feature.db:
+        declared.setdefault("db", set()).update(feature.db.reads, feature.db.writes)
+
+    used = {}
+    for tool, method, args, kwargs in observed:
+        used.setdefault(tool, set()).add(_signature(method, args, kwargs))
+
+    print(f"  {feature.plugin}")
+    problems = 0
+    for tool in sorted(used):
+        for call in sorted(used[tool]):
+            print(f"      {tool}.{call}")
+    for tool in sorted(t for t in used if t in shapes and t not in declared):
+        print(f"      ⚠️  `{tool}` is used but the plan declares no `touches.{tool}` "
+              f"— the layout above is whatever the author picked")
+        problems += 1
+    return problems
+
+
+
+def _signature(method: str, args, kwargs) -> str:
+    """`increment('counter', namespace='ana')` — the call, not its result."""
+    shown = [repr(a) for a in args if not callable(a)]
+    shown += [f"{k}={v!r}" for k, v in sorted(kwargs.items())]
+    return f"{method}({', '.join(shown)})"
