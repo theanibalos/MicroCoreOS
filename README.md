@@ -39,6 +39,7 @@ Redis Streams, RabbitMQ, Kafka and a durable SQLite transport already shipped.
 uv init my-app && cd my-app
 uv add microcoreos
 uv run microcoreos new .        # materialize tools/, domains/, plans/ as YOUR source
+uv run microcoreos migrate      # apply DB migrations & generate AI_CONTEXT.md — DO THIS FIRST
 uv run microcoreos              # boot
 # Visit http://localhost:5000/docs
 ```
@@ -76,6 +77,15 @@ uv run microcoreos add auth
 own `.env` keys and never overwrites a value you already set.
 
 Use that rather than `uv add 'microcoreos[auth]'`. The extra is only the **dependency** — installing it alone leaves the source in `extras/`, where nothing discovers it, and the boot looks perfectly fine with the feature simply absent. `microcoreos add` does all three parts: the dependency, the source, and the `.env` keys.
+
+### Development & AI Pipeline Commands
+
+| Command | Purpose |
+|---|---|
+| `microcoreos status` | Reports active plan progress and `AI_CONTEXT.md` freshness |
+| `microcoreos plan validate` | Validates active plan YAML (`plans/active_plan.yaml`) offline against 18 rules |
+| `microcoreos migrate` | Applies SQL migrations AND regenerates `AI_CONTEXT.md` (the AI context manifest) |
+| `microcoreos schema` | Inspects live database schema and normalized tables |
 
 ---
 
