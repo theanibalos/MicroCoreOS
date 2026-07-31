@@ -1,5 +1,14 @@
-"""Plan fuzzer — attacks POST /system/plan/validate with plans that are wrong
-on purpose, and checks it answers what it should.
+"""Plan fuzzer — feeds microcoreos_dev.plan plans that are wrong on purpose,
+in-process, and checks it answers what it should.
+
+This used to attack POST /system/plan/validate over HTTP (`uv run main.py`
+had to be listening first). That endpoint is gone — an endpoint validating
+plans next to the user's business was the point of the split
+(docs/DEV_PACKAGE_SPLIT.md). The rules were always pure; only the live
+snapshot needed a running system, and neither pass below carries live state,
+so this calls run_validation/validate_yaml directly: no server, no urllib,
+no port, and an iteration that used to cost a round-trip now costs a
+function call.
 
 Two passes, because they answer different questions:
 
@@ -11,13 +20,13 @@ Two passes, because they answer different questions:
   FUZZ       Throw structurally broken documents at it — wrong types, absurd
              nesting, truncated YAML, huge strings. There is no oracle for the
              verdict here, only for the CRASH: every input must come back as a
-             structured answer, never a 500 and never a stack trace. This is
-             what catches the validator dying on input it did not imagine.
+             structured answer, never an unhandled exception and never a
+             stack trace. This is what catches the validator dying on input
+             it did not imagine.
 
 Usage:
-  uv run main.py &                          # the app must be listening
-  python dev_infra/plan_fuzzer.py           # both passes
-  python dev_infra/plan_fuzzer.py --fuzz-only --iterations 500
+  uv run python microcoreos_dev/fuzzer.py                    # both passes
+  uv run python microcoreos_dev/fuzzer.py --fuzz-only --iterations 500
 """
 import argparse
 import copy
@@ -25,10 +34,8 @@ import json
 import random
 import string
 import sys
-import urllib.error
-import urllib.request
 
-URL = "http://localhost:5000/system/plan/validate"
+from microcoreos_dev.plan import LiveSnapshot, run_validation, validate_yaml
 
 VALID_PLAN = {
     "domain": "orders",
@@ -159,20 +166,38 @@ def _fuzz_payload():
     return {"plan": random.choice([[], "string", 42, None, {"plan": {"plan": {}}}])}
 
 
-def post(payload, timeout=15):
-    request = urllib.request.Request(
-        URL, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+def check_plan(payload):
+    """(status, body) — the shape the old HTTP endpoint returned, kept so the
+    two passes below didn't have to change. `status` is synthetic now: 200 for
+    a structured answer (valid or not), 500 for anything this call could not
+    turn into one. Malformed top-level shapes (a list where the plan should
+    be, a doubly-wrapped {"plan": {"plan": ...}}) are the same input parsing
+    the deleted endpoint used to do — reproduced here because nothing else in
+    the library does it, and a plan sent by a real caller can still be shaped
+    like that.
+    """
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read())
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()[:400]
+        plan_dict, plan_yaml = payload.get("plan"), payload.get("plan_yaml")
+        if plan_dict is None and plan_yaml is not None:
+            result, error = validate_yaml(plan_yaml, live=LiveSnapshot())
+            if error:
+                return 200, {"success": False, "error": error}
+        else:
+            if isinstance(plan_dict, dict) and set(plan_dict.keys()) == {"plan"} \
+                    and isinstance(plan_dict["plan"], dict):
+                plan_dict = plan_dict["plan"]
+            if not isinstance(plan_dict, dict):
+                return 200, {"success": False, "error":
+                             "Provide the plan in 'plan' (JSON) or 'plan_yaml' (YAML)"}
+            result = run_validation(plan_dict, LiveSnapshot())
+        return 200, {"success": True, "data": result.model_dump()}
+    except Exception as e:
+        return 500, {"success": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def run_mutations():
     print("MUTATIONS — each damage must produce its rule\n")
-    baseline_status, baseline = post({"plan": copy.deepcopy(VALID_PLAN)})
+    baseline_status, baseline = check_plan({"plan": copy.deepcopy(VALID_PLAN)})
     failures = 0
     if baseline_status != 200 or not baseline.get("data", {}).get("valid"):
         print(f"  !! the baseline plan is not valid — fix it first:\n     {baseline}")
@@ -184,9 +209,9 @@ def run_mutations():
     for name, damage, rule, severity in MUTATIONS:
         plan = copy.deepcopy(VALID_PLAN)
         damage(plan)
-        status, body = post({"plan": plan})
+        status, body = check_plan({"plan": plan})
         if status != 200 or "data" not in body:
-            print(f"  FAIL  {name}: HTTP {status} — {body}")
+            print(f"  FAIL  {name}: status {status} — {body}")
             failures += 1
             continue
         pool = body["data"]["errors"] if severity == "ERROR" else body["data"]["warnings"]
@@ -201,17 +226,17 @@ def run_mutations():
 
 
 def run_fuzz(iterations):
-    print(f"\nFUZZ — {iterations} malformed documents, none may crash the endpoint\n")
+    print(f"\nFUZZ — {iterations} malformed documents, none may crash the validator\n")
     failures = 0
     for index in range(iterations):
         payload = _fuzz_payload()
-        status, body = post(payload)
+        status, body = check_plan(payload)
         crashed = status >= 500 or (
             isinstance(body, dict) and body.get("success") is False
             and "Traceback" in str(body.get("error", "")))
         if crashed:
             failures += 1
-            print(f"  CRASH on iteration {index}: HTTP {status}\n"
+            print(f"  CRASH on iteration {index}: status {status}\n"
                   f"    payload: {json.dumps(payload)[:300]}\n"
                   f"    body:    {str(body)[:300]}")
     print(f"  {iterations - failures}/{iterations} answered without crashing")
@@ -224,12 +249,6 @@ def main():
     parser.add_argument("--mutations-only", action="store_true")
     parser.add_argument("--iterations", type=int, default=200)
     args = parser.parse_args()
-
-    try:
-        post({"plan": {}})
-    except Exception as e:
-        print(f"Cannot reach {URL} — is `uv run main.py` running?  ({e})")
-        return 2
 
     failures = 0
     if not args.fuzz_only:

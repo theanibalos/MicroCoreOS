@@ -256,9 +256,9 @@ arrives, with no entry anywhere in this codebase.
 always pure; only the live snapshot needed a booted system, and everything in
 it except live *subscribers* can be read off the disk. Errors carry the YAML
 that fixes them. Exit code 1 on errors, 0 on valid.
-`POST /system/plan/validate` runs the identical rules against a booted system
-and adds those live subscribers — use it when a `dlq_watcher` or a compensation
-consumer only exists at runtime.
+There is no server-side form. A `dlq_watcher` or a compensation consumer that
+exists only at runtime is invisible to a disk scan, and the command says so in
+its own output rather than pointing at something to boot.
 
 **`migrate`** — the boot with an ending. `uv run main.py` regenerates the
 manifest too, but never returns: in the foreground it hangs the agent's

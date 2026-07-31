@@ -55,8 +55,8 @@ persistence contract), and — ONLY if any plugin publishes or consumes events �
 the `atomic_with_db` outbox question — and the declared `idempotency_test` /
 `sad_path_test` files). A pure-CRUD domain has no `flows` section at all; a
 domain whose delete cascades through one event has exactly one flow.
-Validate with `microcoreos plan validate` before writing code (offline — the
-endpoint form is the same rules against a running system). Build in that
+Validate with `microcoreos plan validate` before writing code (offline —
+nothing needs to be booted). Build in that
 order — tools first if any, then migrations + models, then plugins with their
 events. Nothing below this line should require a decision the plan did not
 already make. Expected size for a CRUD domain with one event chain: ~80-120

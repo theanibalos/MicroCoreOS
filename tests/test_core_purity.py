@@ -29,10 +29,13 @@ KERNEL_MODULES = [
     "registry.py",
 ]
 
-# `pipeline.py` is distribution: the plan-pipeline commands are things you run
-# AT a project (validate, migrate, inspect), never code a booted app imports.
+# `project.py` is distribution: locating the project a command is being run AT,
+# and the seam `microcoreos-dev` is allowed to use. The plan pipeline used to be
+# here too, as `pipeline.py`; it now ships as its own package — see
+# docs/DEV_PACKAGE_SPLIT.md and the two direction tests at the bottom of this
+# file, which are what keep it from coming back.
 DISTRIBUTION_MODULES = ["cli.py", "catalog.py", "scaffold.py", "upgrade.py",
-                        "pipeline.py"]
+                        "project.py"]
 
 
 def _imported_roots(path: Path) -> set[str]:
@@ -98,3 +101,83 @@ def test_every_module_is_on_one_side_or_the_other():
         f"{sorted(on_disk - accounted)}. Add it to KERNEL_MODULES (and it must "
         "then pass the stdlib rule) or to DISTRIBUTION_MODULES."
     )
+
+
+# ── The direction between the two packages ─────────────────────────────────
+#
+# The tests above police one boundary INSIDE the wheel. These two police the
+# boundary BETWEEN the wheel and `microcoreos-dev`, which is the one that
+# actually broke: `pipeline.py` shipped in the wheel and imported
+# `domains.devtools.plugins.plan_validator_plugin` — the user's VENDORED source,
+# so the framework depended on the project. Restoring a project to an earlier
+# commit was enough to kill `microcoreos plan probe` with AttributeError, twice
+# in a row, and what got written was a version-tolerance shim (`_plan_attr`)
+# rather than the direction being fixed. Nothing was watching, because nothing
+# could: the two halves were not distinguishable to a test.
+
+DEV_PACKAGE = Path(__file__).resolve().parent.parent / "microcoreos_dev"
+
+
+def _module_level_imports(path: Path) -> set[str]:
+    """Top-level module name of every import that runs AT IMPORT TIME.
+
+    Imports nested in a function body are excluded on purpose: they are the
+    sanctioned way to reach for something optional, and the whole delegation in
+    `cli.py` depends on being allowed to do exactly that.
+    """
+    roots: set[str] = set()
+
+    def walk(node, in_function: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            nested = in_function or isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if not nested:
+                if isinstance(child, ast.Import):
+                    roots.update(a.name.split(".")[0] for a in child.names)
+                elif (isinstance(child, ast.ImportFrom)
+                      and child.level == 0 and child.module):
+                    roots.add(child.module.split(".")[0])
+            walk(child, nested)
+
+    walk(ast.parse(path.read_text(encoding="utf-8")), False)
+    return roots
+
+
+def test_the_framework_does_not_import_the_development_package():
+    """
+    `microcoreos-dev` depends on `microcoreos`. Never the reverse.
+
+    `cli.py` IS allowed to reach for `microcoreos_dev` — that is how
+    `microcoreos plan validate` keeps working under the name every doc and
+    workflow uses — but only from inside the function that runs the command. At
+    module level it would make the framework require its own development tooling
+    in order to import, so a production install with `uv sync --no-dev` would
+    fail to boot at all.
+    """
+    for path in sorted(PACKAGE.glob("*.py")):
+        assert "microcoreos_dev" not in _module_level_imports(path), (
+            f"{path.name} imports microcoreos_dev at module level. The framework "
+            f"must not depend on the development package — move the import "
+            f"inside the function that needs it."
+        )
+
+
+def test_neither_package_imports_the_user_s_own_source():
+    """
+    `domains/` and `tools/` are the USER's files, materialized into their
+    project and edited by them. Either package importing one statically is the
+    inversion this split removed: code that ships in a wheel, binding itself to
+    a vendored copy it does not version.
+
+    Dynamic loading is untouched and is not what this checks — `plan probe`
+    imports the plugin under test by name, and that is its entire job.
+    """
+    for package in (PACKAGE, DEV_PACKAGE):
+        for path in sorted(package.rglob("*.py")):
+            imported = _module_level_imports(path)
+            assert not imported & {"domains", "tools"}, (
+                f"{path.relative_to(package.parent)} imports "
+                f"{sorted(imported & {'domains', 'tools'})} — that is the "
+                f"project's own vendored source, and a package must never "
+                f"depend on it."
+            )

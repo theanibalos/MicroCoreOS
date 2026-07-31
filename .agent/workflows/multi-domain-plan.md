@@ -66,8 +66,8 @@ the sqlite/redis driver) and the sad-path checklist per link:
   `on_timeout`
 
 Then run the 18 validity rules mechanically: `microcoreos plan validate`
-(offline; `POST /system/plan/validate` is the same rules against a running
-system) — zero `errors` before building anything. An invalid plan is a task-allocation error — fix the plan,
+(offline — nothing needs to be booted) — zero `errors` before building
+anything. An invalid plan is a task-allocation error — fix the plan,
 never patch it in code.
 
 ## Phases 0, 2 and 3

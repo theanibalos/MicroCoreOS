@@ -8,6 +8,7 @@ the command never destroys work that was already there.
 
 import os
 import tomllib
+import types
 from pathlib import Path
 
 from microcoreos import cli, scaffold
@@ -72,17 +73,15 @@ def test_new_writes_env_and_pyproject_when_absent(tmp_path):
     assert "microcoreos" in (target / "pyproject.toml").read_text(encoding="utf-8")
 
 
-def test_new_never_clobbers_an_existing_env_or_pyproject(tmp_path):
-    """`uv add microcoreos && microcoreos new .` is a supported flow: that
-    pyproject and that .env belong to the user."""
+def test_new_never_clobbers_an_existing_env(tmp_path):
+    """`uv add microcoreos && microcoreos new .` is a supported flow, and that
+    .env may already hold a secret somebody typed."""
     target = tmp_path / "demo"
     target.mkdir()
     (target / ".env").write_text("AUTH_SECRET_KEY=mine\n", encoding="utf-8")
-    (target / "pyproject.toml").write_text('[project]\nname = "mine"\n', encoding="utf-8")
 
-    assert cli.main(["new", str(target)]) == 0
+    assert cli.main(["new", str(target), "--no-install"]) == 0
     assert (target / ".env").read_text(encoding="utf-8") == "AUTH_SECRET_KEY=mine\n"
-    assert (target / "pyproject.toml").read_text(encoding="utf-8") == '[project]\nname = "mine"\n'
 
 
 def test_new_refuses_to_overwrite_existing_source(tmp_path, capsys):
@@ -223,23 +222,66 @@ def test_shipped_helpers_cover_every_tests_helpers_import_in_the_guide(tmp_path)
     assert modules <= shipped, f"guide imports {modules - shipped}, scaffold ships none"
 
 
-def test_new_reports_what_a_pyproject_it_did_not_write_is_missing(tmp_path, capsys):
-    """`uv init && uv add microcoreos && microcoreos new .` is supported, and
-    that pyproject is the user's — so it is never edited. But without
-    `pythonpath = ["."]` every generated test fails on `from domains...`
-    (pytest puts `tests/` on sys.path, not the project root), on a project that
-    otherwise looks correctly set up. The tool reports; the user decides."""
+def test_new_gives_your_own_pyproject_what_the_generated_tests_need(tmp_path):
+    """`uv init && uv add microcoreos && microcoreos new .` is supported, and it
+    is the flow where nothing the template configures reaches the user. Without
+    `pythonpath = ["."]` every generated test fails on `from domains...` (pytest
+    puts `tests/` on sys.path, not the project root) — on a project that
+    otherwise looks correctly set up.
+
+    Appended, never rewritten: everything the user already had survives byte for
+    byte, comments included, and the result still has to be valid TOML.
+    """
     target = tmp_path / "proj"
     target.mkdir()
-    mine = '[project]\nname = "mine"\nversion = "9.9.9"\n'
+    mine = ('[project]\nname = "mine"\nversion = "9.9.9"\n'
+            '# a comment nobody may eat\n')
     (target / "pyproject.toml").write_text(mine, encoding="utf-8")
 
-    assert cli.main(["new", str(target)]) == 0
+    assert cli.main(["new", str(target), "--no-install"]) == 0
+
+    written = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert written.startswith(mine)
+    parsed = tomllib.loads(written)
+    assert parsed["project"]["version"] == "9.9.9"
+    assert parsed["tool"]["pytest"]["ini_options"]["pythonpath"] == ["."]
+    assert parsed["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
+
+
+def test_new_leaves_a_pyproject_that_already_configures_pytest_alone(tmp_path, capsys):
+    """Appending a second `[tool.pytest.ini_options]` is invalid TOML, and
+    merging means choosing between two `pythonpath` values with no way to know
+    which was meant. So this one case reports instead of guessing."""
+    target = tmp_path / "proj"
+    target.mkdir()
+    mine = ('[project]\nname = "mine"\n\n'
+            '[tool.pytest.ini_options]\ntestpaths = ["spec"]\n')
+    (target / "pyproject.toml").write_text(mine, encoding="utf-8")
+
+    assert cli.main(["new", str(target), "--no-install"]) == 0
 
     assert (target / "pyproject.toml").read_text(encoding="utf-8") == mine
-    out = capsys.readouterr().out
-    assert 'pythonpath = ["."]' in out
-    assert "uv add --dev pytest anyio" in out
+    assert 'pythonpath = ["."]' in capsys.readouterr().out
+
+
+def test_new_installs_the_test_runner_unless_told_not_to(tmp_path, monkeypatch):
+    """Configuring pytest in a project that does not have it installed is the
+    half-step that reads as done: `testpaths` points at a suite and
+    `uv run -m pytest` answers "No module named pytest"."""
+    calls = []
+    monkeypatch.setattr("microcoreos.scaffold.subprocess.run",
+                        lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(returncode=0))
+
+    target = tmp_path / "proj"
+    target.mkdir()
+    (target / "pyproject.toml").write_text('[project]\nname = "mine"\n', encoding="utf-8")
+
+    assert cli.main(["new", str(target)]) == 0
+    assert calls == [["uv", "add", "--dev", "pytest", "anyio"]]
+
+    calls.clear()
+    assert cli.main(["new", str(target), "--force", "--no-install"]) == 0
+    assert calls == []
 
 
 def test_new_says_nothing_when_the_pyproject_already_configures_pytest(tmp_path, capsys):

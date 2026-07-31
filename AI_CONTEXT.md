@@ -293,13 +293,10 @@ Async SQLite Persistence Tool (sqlite):
     - **res**: EventSchemasData(schemas: dict)
   - `GET /system/lint`
     - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str])
-  - `POST /system/plan/validate`
-    - **req**: plan: Optional[dict], plan_yaml: Optional[str]
-    - **res**: ValidatePlanData(valid: bool, errors: list[PlanViolation(rule: int, severity: str, where: str, detail: str)], warnings: list[PlanViolation(rule: int, severity: str, where: str, detail: str)])
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
-- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.PlanValidatorPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
+- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
 
 ### `system`
 - **Tables**: none
@@ -344,8 +341,10 @@ Your task line names either a **feature** or a **flow's tests**:
 - Flow-tests task → 1. the flow's `e2e_test` (trigger the happy path, assert
   the causal chain with `tests/helpers/trace_chains.py`:
   `assert_chain(build_tree(bus.get_trace_history()), [...])`) and 2. its
-  `sad_path_test` (force the consumer to fail with a mock that raises, assert
-  `_dlq.<event>` appears as a child of the failed event in the same tree).
+  `sad_path_test` (force the consumer to fail — the mock must raise on the
+  FIRST tool call the handler makes, since an idempotency guard runs before
+  the effect — and assert `_dlq.<event>` appears as a child of the failed
+  event in the same tree).
 
 Nothing else: no migrations, no entity models, no edits to `main.py`, no
 touching other domains or other tasks' files. When both files are written,
@@ -357,8 +356,11 @@ follow-ups.
 1. **Schemas inline** — request, response AND event payload models at the top
    of the plugin file. Never import them from `models/` or other domains.
 2. **DI by parameter name** — `__init__(self, http, db, logger)` receives the
-   tools named `http`, `db`, `logger`. Inject exactly the tools your feature
-   uses. No hardcoded imports from `tools/`.
+   tools named `http`, `db`, `logger`. No hardcoded imports from `tools/`.
+   **Your parameters are exactly your feature's `tools:` list in the plan, in
+   that order** — not what a template happens to show. The plan is the
+   contract, and the test is written against that same list: add a `logger`
+   nobody declared and the two no longer fit.
 3. **Return envelope** — `{"success": bool, "data": ..., "error": ...}`:
    `success` always present, `data` on success, `error` on failure. Responses
    serialize AS-IS — `response_model` does NOT backfill omitted keys, so an
@@ -397,6 +399,26 @@ follow-ups.
     Every executor in a wave reads this same table, which is what keeps the API
     coherent without any of you coordinating: your feature is written in
     isolation, but its vocabulary is shared.
+
+11. **Idempotent consumer** — when the plan's flow link says
+    `idempotent: true`, guard on `event.id` (the envelope is frozen, so a
+    redelivery carries the same one) and mark it **after** the effect:
+
+    ```python
+    if await self.state.has(event.id, namespace="thing-seen"):
+        return                                    # duplicate: already applied
+    await self.state.increment(...)               # the effect
+    await self.state.set(event.id, True, namespace="thing-seen", ttl=3600)
+    ```
+
+    Marking first drops the event: the effect raises, the retry hits the guard,
+    returns "already seen" — no work, no error, no DLQ. Write the
+    double-delivery test under the exact name `idempotency_test` gives, with a
+    real `StateTool()`: an `AsyncMock` returns truthy from `has()`, so the guard
+    swallows everything and the test proves nothing. Rule 6 says a *plugin*
+    never imports the envelope; a *test* has to build one —
+    `from tools.event_bus.envelope import EventEnvelope` — and deliver the same
+    instance twice.
 
 ### Templates — one per deliverable type, copy the one your task matches
 
@@ -600,7 +622,8 @@ x = tool.method.return_value.__aenter__.return_value  # bound by `as x:`
   PLAN (route, envelope shape, declared tables, declared payload keys) —
   never from your own implementation. The test is the contract's proof; a
   test that mirrors the code proves nothing.
-- Mock exactly the tools your feature's `mocks:` lists
+- Mock exactly the tools your feature's `tools:` lists — all of them; an
+  omitted `logger` is still a required positional argument
   (`unittest.mock.AsyncMock` / `MagicMock`); run every other injected tool as
   a real in-memory instance (SQLite `:memory:` with your domain's migration
   applied, in-process event bus).

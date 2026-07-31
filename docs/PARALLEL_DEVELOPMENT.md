@@ -386,18 +386,20 @@ neither passes unseen.
 These rules are executable, not aspirational: **`microcoreos plan validate`**
 runs them offline and returns `errors` (the plan is invalid) and `warnings`
 (advisory, e.g. rule 13); where a rule knows the shape that fixes it, the
-error carries that YAML. **`POST /system/plan/validate`** is the same rules
-against a booted system, taking the plan as YAML or JSON, and sees the one
-thing a disk scan cannot: live subscribers. The orchestrator runs it before
-dispatching any agent; an invalid plan is a task-allocation error — fix the
-plan, never patch it in code.
+error carries that YAML. The orchestrator runs it before dispatching any agent;
+an invalid plan is a task-allocation error — fix the plan, never patch it in
+code.
+
+There is no server-side form and nothing to boot first. The one thing a disk
+scan cannot see is **live subscribers** — a `dlq_watcher` or a compensation
+consumer that exists only at runtime — and `plan validate` says so in its own
+output rather than sending you somewhere else for it.
 
 ### Phase 2 — Execution (parallel, all at once)
 
 The **orchestrator agent** receives two artifacts: the **full plan** and the
 freshly regenerated **`AI_CONTEXT.md`**. It validates the plan
-(`microcoreos plan validate`, or the endpoint against the system booted in
-phase 0)
+(`microcoreos plan validate`)
 and dispatches ALL features in a single wave — one agent per feature, each
 producing exactly two files: its plugin and its test.
 
@@ -527,7 +529,7 @@ many the tests kill — a test that kills no mutants is decorative.
 
 ```
 Phase 1 (contract)   plan = namespace + schema + failure-mode reservation
-                     (authored FIRST, validated by POST /system/plan/validate)
+                     (authored FIRST, validated by `microcoreos plan validate`)
 Phase 0 (serial)     built FROM the plan: tools + migrations + models
                      → boot → AI_CONTEXT.md
 Phase 2 (parallel)   orchestrator + N agents → 1 plugin + 1 test each

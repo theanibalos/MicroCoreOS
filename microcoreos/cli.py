@@ -20,18 +20,21 @@ The root `main.py` and `cli.py` are thin shims over this module, so
     microcoreos schema              print the live tables and columns
 """
 
-import os
 import sys
 import signal
 import asyncio
-
-from dotenv import load_dotenv
 
 from microcoreos.kernel import Kernel
 from microcoreos.catalog import add
 from microcoreos.scaffold import new
 from microcoreos.upgrade import upgrade
-from microcoreos.pipeline import migrate, plan, schema, status
+
+from microcoreos.project import (
+    ensure_project_on_path,
+    load_project_env,
+    require_project,
+    stdio_speaks_unicode,
+)
 
 USAGE = """MicroCoreOS
 
@@ -51,20 +54,6 @@ The plan pipeline (docs/PARALLEL_DEVELOPMENT.md):
 Except for `new`, run these from the root of a MicroCoreOS project (the
 directory holding tools/, domains/ and plans/).
 """
-
-
-def _load_project_env(root: str) -> None:
-    """
-    Load `<project>/.env` — explicitly, by path.
-
-    Bare `load_dotenv()` searches upward from the file that CALLS it. Inside a
-    checkout that file was the root `main.py`, so it landed on the project's
-    .env by accident. Installed, the caller is `site-packages/microcoreos/
-    cli.py` and the search walks up the venv instead: the project's .env is
-    never seen, and the failure surfaces far away as `AUTH_SECRET_KEY is
-    required` on a project that has one.
-    """
-    load_dotenv(os.path.join(root, ".env"))
 
 
 async def _boot_forever():
@@ -90,50 +79,13 @@ async def _boot_forever():
         print("[MicroCoreOS] Shutdown complete. See you soon!")
 
 
-def _ensure_project_on_path() -> str:
-    """
-    Put the project root (the CWD) at the front of sys.path and return it.
-
-    `python main.py` gets this for free — sys.path[0] is the script's directory.
-    An installed console script does NOT: sys.path[0] is the venv's bin/, so
-    every `importlib.import_module("tools.sqlite.sqlite_tool")` the Kernel does
-    fails with "No module named 'tools'". Without this, `microcoreos` boots an
-    empty system and reports it as Ready.
-    """
-    root = os.getcwd()
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    return root
-
-
-def _looks_like_a_project(root: str) -> bool:
-    """A MicroCoreOS project is a directory holding tools/ and/or domains/."""
-    return any(os.path.isdir(os.path.join(root, d)) for d in ("tools", "domains"))
-
-
-def _require_project(root: str) -> bool:
-    """Same guard as `run`, shared with the pipeline commands.
-
-    Being in the wrong directory must never look like an empty project: the
-    Kernel would discover nothing and report "System Ready", and `status`
-    would report a pristine plan that is really someone else's directory.
-    """
-    if _looks_like_a_project(root):
-        return True
-    print(
-        f"[MicroCoreOS] No tools/ or domains/ directory in {root}.\n"
-        "              Run this from the root of a MicroCoreOS project."
-    )
-    return False
-
-
 def run(argv: list[str]) -> int:
     """Boot the Kernel. With --boot-tool, boot ONE tool in isolation and exit."""
-    _stdio_speaks_unicode()  # Reached without `main` as the reload child of `dev`.
-    root = _ensure_project_on_path()
+    stdio_speaks_unicode()  # Reached without `main` as the reload child of `dev`.
+    root = ensure_project_on_path()
     # The Kernel would otherwise discover nothing and announce "System Ready" —
     # the most confusing possible answer to being in the wrong directory.
-    if not _require_project(root):
+    if not require_project(root):
         return 2
 
     if "--boot-tool" in argv:
@@ -143,11 +95,11 @@ def run(argv: list[str]) -> int:
         if idx + 1 >= len(argv):
             print("Usage: microcoreos run --boot-tool <tool_name>")
             return 2
-        _load_project_env(root)
+        load_project_env(root)
         asyncio.run(Kernel().boot_tool(argv[idx + 1]))
         return 0
 
-    _load_project_env(root)
+    load_project_env(root)
 
     try:
         asyncio.run(_boot_forever())
@@ -163,7 +115,7 @@ def _watch_python_sources(change, path: str) -> bool:
 
 def dev(argv: list[str]) -> int:
     """Boot with auto-reload. watchfiles is a dev dependency, hence the lazy import."""
-    _stdio_speaks_unicode()  # Reached without `main` as the root `cli.py` shim.
+    stdio_speaks_unicode()  # Reached without `main` as the root `cli.py` shim.
     try:
         from watchfiles import run_process
     except ImportError:
@@ -174,7 +126,7 @@ def dev(argv: list[str]) -> int:
         return 1
 
     # The project root — not the package — is what gets watched and booted.
-    root = _ensure_project_on_path()
+    root = ensure_project_on_path()
 
     # Everything handed to run_process must survive pickling: watchfiles starts
     # the child with multiprocessing's SPAWN method, which serializes the target
@@ -191,37 +143,54 @@ def dev(argv: list[str]) -> int:
     return 0
 
 
+# The plan pipeline ships separately now, as `microcoreos-dev`. The commands
+# keep the names they always had: AGENTS.md, four workflows and eight docs spell
+# them this way, and agents read those files as instructions. Renaming them
+# would mean rewriting that corpus for nothing. See docs/DEV_PACKAGE_SPLIT.md.
+PIPELINE_COMMANDS = ("status", "plan", "migrate", "schema")
+
+MISSING_DEV_PACKAGE = """\
+[MicroCoreOS] `microcoreos {name}` lives in the development package.
+
+              Install it:  uv add --dev microcoreos-dev
+
+              It is a dev dependency because validating a plan, applying
+              migrations and reading the schema are things you do WHILE
+              building — never inside a running app. That is also why
+              `uv sync --no-dev` leaves it out of your deploy."""
+
+
+def _pipeline(name: str):
+    """Hand one pipeline command to `microcoreos-dev`, if it is installed.
+
+    The import sits INSIDE the returned function, and that placement is the rule
+    the whole split exists to establish: `microcoreos` must not depend on
+    `microcoreos_dev`. Hoisting it to module level would make the framework
+    require its own development tooling in order to start — the same inverted
+    direction as the old `pipeline.py` importing the project's vendored
+    validator, aimed at a different victim. `tests/test_core_purity.py` fails
+    if it ever moves up there.
+    """
+    def command(argv: list[str]) -> int:
+        try:
+            from microcoreos_dev.cli import dispatch
+        except ImportError:
+            print(MISSING_DEV_PACKAGE.format(name=name))
+            return 2
+        return dispatch(name, argv)
+
+    command.__name__ = name
+    return command
+
+
 COMMANDS = {
     "new": new, "add": add, "upgrade": upgrade, "run": run, "dev": dev,
-    "status": status, "plan": plan, "migrate": migrate, "schema": schema,
+    **{name: _pipeline(name) for name in PIPELINE_COMMANDS},
 }
 
 
-def _stdio_speaks_unicode() -> None:
-    """Every message this CLI prints contains an emoji or an em dash.
-
-    On Windows that is not decoration, it is a crash: when stdout is a pipe or a
-    file rather than a console, Python encodes it as cp1252 and `print("✅")`
-    raises UnicodeEncodeError before the command does any work. Redirecting
-    output is exactly what CI, `| tee` and editors' terminals do.
-
-    A real Windows console already reports utf-8, so this is a no-op there and
-    everywhere on Linux and macOS. `backslashreplace` is the belt to the braces:
-    whatever the stream turns out to be, printing must never be the thing that
-    fails.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        encoding = getattr(stream, "encoding", None) or ""
-        if encoding.lower().replace("-", "").replace("_", "") == "utf8":
-            continue
-        try:
-            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-        except (AttributeError, OSError, ValueError):
-            pass  # Not a reconfigurable text stream; nothing to do but try.
-
-
 def main(argv: list[str] | None = None) -> int:
-    _stdio_speaks_unicode()
+    stdio_speaks_unicode()
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if argv and argv[0] in ("-h", "--help", "help"):

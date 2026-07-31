@@ -16,6 +16,7 @@ update only the files you never touched.
 
 import os
 import shutil
+import subprocess
 
 from microcoreos.upgrade import write_manifest
 
@@ -183,31 +184,89 @@ def materialize(target: str, ai_kit: bool = True) -> list[str]:
     return copied
 
 
-# Printed when the pyproject is the user's, because then none of the config
-# above reached them. `pythonpath` is the load-bearing line: without it a test
-# cannot `from domains.<x>.plugins...` — pytest puts `tests/` on sys.path, not
-# the project root — so every generated test fails on import, on a project that
+# `pythonpath` is the load-bearing line: without it a test cannot
+# `from domains.<x>.plugins...` — pytest puts `tests/` on sys.path, not the
+# project root — so every generated test fails on import, on a project that
 # otherwise looks correctly set up.
-PYPROJECT_IS_YOURS = """
-   ⚠️  Your pyproject.toml was left untouched (it is yours). It is missing what
-       the generated tests need — add it, or `uv run -m pytest` will fail:
+PYTEST_CONFIG_BLOCK = """
+# Added by `microcoreos new`. Every plugin ships with a test, and `pythonpath`
+# is what lets one import the domain it tests: pytest puts tests/ on sys.path,
+# not the project root.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+"""
 
-         uv add --dev pytest anyio
+PYTEST_TABLE_IS_YOURS = """
+   ⚠️  Your pyproject.toml already configures pytest, so it was left alone.
+       Check that it carries this line — without it every generated test fails
+       on import with ModuleNotFoundError: domains
 
-         [tool.pytest.ini_options]
-         testpaths = ["tests"]
-         pythonpath = ["."]      # without this: ModuleNotFoundError: domains
+         pythonpath = ["."]
 """
 
 
+def _ensure_test_config(pyproject: str) -> bool:
+    """Give the user's own pyproject what the generated tests need.
+
+    The same discipline `microcoreos add` already applies to `.env`: add only
+    what is missing, never rewrite what is there, and say what happened. A
+    project whose tests cannot import is not a project someone forgot to
+    finish — it is one that looks finished and fails on the first `pytest`.
+
+    Appending is safe precisely BECAUSE the table is absent: a new table at the
+    end of a TOML file leaves every byte above it untouched, comments included.
+    When the table already exists the merge is genuinely ambiguous — two
+    `pythonpath` values and no way to know which was meant — so that case says
+    so rather than guessing. Python has no TOML writer in the stdlib, and
+    taking a dependency in order to rewrite someone's file is a worse trade
+    than one printed line.
+    """
+    with open(pyproject, encoding="utf-8") as f:
+        existing = f.read()
+
+    if "[tool.pytest.ini_options]" in existing:
+        print(PYTEST_TABLE_IS_YOURS)
+        return False
+
+    with open(pyproject, "a", encoding="utf-8") as f:
+        f.write(PYTEST_CONFIG_BLOCK)
+    print("   ✓ pyproject.toml += [tool.pytest.ini_options] "
+          '(testpaths, pythonpath = ["."])')
+    return True
+
+
+def _install_test_deps(root: str) -> bool:
+    """`uv add --dev pytest anyio` — the runner the generated tests need.
+
+    Configuring pytest in a project that does not have it installed is the
+    half-step that reads as done: `testpaths` points at a suite and
+    `uv run -m pytest` answers "No module named pytest".
+    """
+    if shutil.which("uv") is None:
+        print("   ⚠ uv not found. Install them yourself: "
+              "pip install pytest anyio")
+        return False
+
+    print("   $ uv add --dev pytest anyio")
+    result = subprocess.run(["uv", "add", "--dev", "pytest", "anyio"], cwd=root)
+    if result.returncode != 0:
+        print("   ⚠ uv add failed. Run it yourself: uv add --dev pytest anyio")
+        return False
+    return True
+
+
 def new(argv: list[str]) -> int:
-    """`microcoreos new <path> [--force] [--no-ai-kit]`"""
+    """`microcoreos new <path> [--force] [--no-ai-kit] [--no-install]`"""
     force = "--force" in argv
     ai_kit = "--no-ai-kit" not in argv
+    # Same escape hatch, same spelling as `microcoreos add`: the command may
+    # touch your dependencies, so there is a way to say don't.
+    no_install = "--no-install" in argv
     positional = [a for a in argv if not a.startswith("-")]
 
     if len(positional) != 1:
-        print("Usage: microcoreos new <path> [--force] [--no-ai-kit]")
+        print("Usage: microcoreos new <path> [--force] [--no-ai-kit] [--no-install]")
         return 2
 
     target = os.path.abspath(positional[0])
@@ -258,7 +317,13 @@ def new(argv: list[str]) -> int:
     write_manifest(target, RUNTIME_ENTRIES + (AI_KIT_ENTRIES if ai_kit else []))
 
     print(NEXT_STEPS.format(target=positional[0]))
-    if not wrote_pyproject and "[tool.pytest.ini_options]" not in \
-            open(pyproject, encoding="utf-8").read():
-        print(PYPROJECT_IS_YOURS)
+
+    # The pyproject we wrote already carries both; the user's carries neither,
+    # and leaving them to paste it by hand is a manual step in the middle of the
+    # one flow that is supposed to be a single line — `uv init && uv add
+    # microcoreos && microcoreos new .` is documented as supported.
+    if not wrote_pyproject:
+        _ensure_test_config(pyproject)
+        if not no_install:
+            _install_test_deps(target)
     return 0

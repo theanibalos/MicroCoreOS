@@ -1,27 +1,21 @@
 """
-Plan validator — one test per validity rule of docs/PARALLEL_DEVELOPMENT.md,
-plus the endpoint's input-parsing paths.
+Plan validator — one test per validity rule of docs/PARALLEL_DEVELOPMENT.md.
 
-The validator core is pure (PlanValidator + LiveSnapshot), so rule tests run
-without infrastructure; endpoint tests mock the live snapshot.
+The validator core is pure (PlanValidator + LiveSnapshot), so every test here
+runs without infrastructure — no server, no live subscribers.
 """
 import copy
 import pathlib
 
 import pytest
-from unittest.mock import MagicMock
 
-from domains.devtools.plugins.plan_validator_plugin import (
+from microcoreos_dev.plan import (
     LiveSnapshot,
     Plan,
     PlanValidator,
-    PlanValidatorPlugin,
+    run_validation,
+    validate_yaml,
 )
-
-
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
 
 
 VALID_PLAN = {
@@ -421,73 +415,20 @@ def test_rule15_no_checklist_is_skipped():
     assert rule_hits(check(plan_copy()), 15, "WARNING") == []
 
 
-# ── Endpoint: input parsing and schema errors ────────────────────────────
+# ── Schema errors and YAML input, offline ─────────────────────────────────
+#
+# These used to run through POST /system/plan/validate; the endpoint is gone
+# (docs/DEV_PACKAGE_SPLIT.md — an endpoint validating plans next to the user's
+# business was the point of the split), but the behaviour they pin belongs to
+# the rules, not the endpoint, so they now call run_validation/validate_yaml
+# directly. The endpoint's own input-parsing plumbing (double-wrapped JSON,
+# a missing body, reading the checklist off disk) went with it — nothing
+# offline replaces a test that only proved the HTTP layer worked.
 
-def make_plugin():
-    container = MagicMock()
-    container.registry.get_domain_metadata.return_value = {}
-    plugin = PlanValidatorPlugin(container=container, http=MagicMock(), logger=MagicMock())
-    plugin._live_snapshot = lambda: LiveSnapshot()
-    plugin._read_checklist = lambda: None  # hermetic: ignore the repo's real checklist
-    return plugin
-
-
-@pytest.mark.anyio
-async def test_endpoint_accepts_json_with_root_key():
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan": {"plan": plan_copy()}})
-    assert result["success"] is True
-    assert result["data"]["valid"] is True
-
-
-@pytest.mark.anyio
-async def test_endpoint_accepts_yaml():
-    yaml_doc = """
-plan:
-  domain: ping
-  features:
-    - plugin: PingPlugin
-      file: domains/ping/plugins/ping_plugin.py
-      route: { method: GET, path: /ping }
-      test: tests/test_ping.py
-"""
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan_yaml": yaml_doc})
-    assert result["success"] is True
-    assert result["data"]["valid"] is True
-
-
-@pytest.mark.anyio
-async def test_endpoint_schema_errors_reported_as_rule_zero():
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan": {"features": [{"file": "x.py"}]}})
-    assert result["success"] is True
-    assert result["data"]["valid"] is False
-    assert all(err["rule"] == 0 for err in result["data"]["errors"])
-
-
-@pytest.mark.anyio
-async def test_endpoint_rejects_missing_input():
-    plugin = make_plugin()
-    result = await plugin.validate_plan({})
-    assert result["success"] is False
-
-
-@pytest.mark.anyio
-async def test_endpoint_reads_active_checklist(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "plans").mkdir()
-    (tmp_path / "plans" / "active_plan.md").write_text(
-        "- [ ] `domains/orders/plugins/create_order_plugin.py`",
-        encoding="utf-8",
-    )
-    container = MagicMock()
-    container.registry.get_domain_metadata.return_value = {}
-    plugin = PlanValidatorPlugin(container=container, http=MagicMock(),
-                                 logger=MagicMock())
-    plugin._live_snapshot = lambda: LiveSnapshot()
-    result = await plugin.validate_plan({"plan": plan_copy()})
-    assert any(w["rule"] == 15 for w in result["data"]["warnings"])
+def test_schema_errors_reported_as_rule_zero():
+    result = run_validation({"features": [{"file": "x.py"}]}, LiveSnapshot())
+    assert not result.valid
+    assert all(err.rule == 0 for err in result.errors)
 
 
 # --- YAML the plan authors actually copy ------------------------------------
@@ -495,8 +436,7 @@ async def test_endpoint_reads_active_checklist(tmp_path, monkeypatch):
 # unquoted. These two tests keep a broken example from ever teaching the pattern
 # again, and keep the parse error pointing at the offending line.
 
-@pytest.mark.anyio
-async def test_endpoint_accepts_yaml_with_param_route_and_optional():
+def test_accepts_yaml_with_param_route_and_optional():
     yaml_doc = """
 plan:
   domain: tweets
@@ -510,20 +450,17 @@ plan:
           payload: { id: int, avatar_url: "Optional[str]" }
       test: tests/test_get_tweet.py
 """
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan_yaml": yaml_doc})
-    assert result["success"] is True
-    assert result["data"]["valid"] is True
+    result, error = validate_yaml(yaml_doc, live=LiveSnapshot())
+    assert error is None
+    assert result.valid
 
 
-@pytest.mark.anyio
-async def test_endpoint_yaml_error_reports_position():
+def test_yaml_error_reports_position():
     yaml_doc = "plan:\n  domain: tweets\n  x: { path: /tweets/{tweet_id} }\n"
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan_yaml": yaml_doc})
-    assert result["success"] is False
-    assert "line 3" in result["error"]
-    assert "column" in result["error"]
+    result, error = validate_yaml(yaml_doc)
+    assert result is None
+    assert "line 3" in error
+    assert "column" in error
 
 
 def test_repo_yaml_examples_parse():
@@ -532,7 +469,7 @@ def test_repo_yaml_examples_parse():
     from pathlib import Path
 
     yaml_mod = pytest.importorskip("yaml")
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     sources = [root / "plans" / "active_plan.yaml"]
     docs = [root / "docs" / "PARALLEL_DEVELOPMENT.md",
             *(root / ".agent" / "workflows").glob("*.md")]
@@ -556,37 +493,30 @@ def test_repo_yaml_examples_parse():
 
 # --- shape warnings: the plan that validates because it says nothing ---------
 
-@pytest.mark.anyio
-async def test_endpoint_warns_on_unknown_root_key():
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan": {"domain": "t", "feature": [
-        {"plugin": "P", "file": "domains/t/plugins/p.py", "test": "tests/p.py"}]}})
-    warnings = result["data"]["warnings"]
-    assert result["data"]["valid"] is True          # advisory, never a blocker
-    assert any(w["rule"] == 0 and "feature" in w["detail"] for w in warnings)
-    assert any(w["rule"] == 0 and "nothing to dispatch" in w["detail"]
-               for w in warnings)
+def test_warns_on_unknown_root_key():
+    result = run_validation({"domain": "t", "feature": [
+        {"plugin": "P", "file": "domains/t/plugins/p.py", "test": "tests/p.py"}]},
+        LiveSnapshot())
+    assert result.valid                              # advisory, never a blocker
+    assert any(w.rule == 0 and "feature" in w.detail for w in result.warnings)
+    assert any(w.rule == 0 and "nothing to dispatch" in w.detail
+               for w in result.warnings)
 
 
-@pytest.mark.anyio
-async def test_endpoint_warns_on_unknown_nested_key():
-    plugin = make_plugin()
+def test_warns_on_unknown_nested_key():
     plan = plan_copy()
     plan["features"][0]["mock"] = ["db"]            # typo for 'mocks'
     plan["flows"][0]["links"][0]["retry"] = 3       # typo for 'retries'
-    result = await plugin.validate_plan({"plan": plan})
-    warnings = result["data"]["warnings"]
-    assert any(w["where"] == "plan.features[0]" and "'mock'" in w["detail"]
-               for w in warnings)
-    assert any(w["where"] == "plan.flows[0].links[0]" and "'retry'" in w["detail"]
-               for w in warnings)
+    result = run_validation(plan, LiveSnapshot())
+    assert any(w.where == "plan.features[0]" and "'mock'" in w.detail
+               for w in result.warnings)
+    assert any(w.where == "plan.flows[0].links[0]" and "'retry'" in w.detail
+               for w in result.warnings)
 
 
-@pytest.mark.anyio
-async def test_valid_plan_has_no_shape_warnings():
-    plugin = make_plugin()
-    result = await plugin.validate_plan({"plan": plan_copy()})
-    assert not [w for w in result["data"]["warnings"] if w["rule"] == 0]
+def test_valid_plan_has_no_shape_warnings():
+    result = run_validation(plan_copy(), LiveSnapshot())
+    assert not [w for w in result.warnings if w.rule == 0]
 
 
 # --- rule 16: the language section (ROADMAP Issue 38) -----------------------
@@ -704,7 +634,7 @@ def test_rule_16_resolves_against_the_live_schema():
 
 def test_language_from_alias_is_not_an_unknown_key():
     """'from' is a Python keyword, so the field is aliased — both spellings are input."""
-    from domains.devtools.plugins.plan_validator_plugin import unknown_plan_keys
+    from microcoreos_dev.plan import unknown_plan_keys
     raw = {"domain": "orders", "language": [
         {"model": "OrderEntity", "op": "rename_field", "from": "client_id",
          "to": "user_id", "breaking": True}]}
@@ -713,7 +643,7 @@ def test_language_from_alias_is_not_an_unknown_key():
 
 def test_column_scanner_reads_real_create_table_bodies():
     """Rule 16 resolves names against columns, so the SQL parse is load-bearing."""
-    from domains.devtools.plugins.plan_validator_plugin import _columns_of
+    from microcoreos_dev.plan.scan import _columns_of
     sql = """
     CREATE TABLE IF NOT EXISTS "orders" (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -762,15 +692,13 @@ def test_no_migrations_means_no_engine_warning():
     assert not rule_hits(result, 2, "WARNING")
 
 
-@pytest.mark.anyio
-async def test_engine_is_no_longer_an_unknown_key():
+def test_engine_is_no_longer_an_unknown_key():
     """Every documented example carries `engine:` — the schema must know it."""
-    plugin = make_plugin()
     plan = plan_copy()
     plan["engine"] = "sqlite"
-    result = await plugin.validate_plan({"plan": plan})
-    assert not [w for w in result["data"]["warnings"]
-                if w["rule"] == 0 and "engine" in w["detail"]]
+    result = run_validation(plan, LiveSnapshot())
+    assert not [w for w in result.warnings
+                if w.rule == 0 and "engine" in w.detail]
 
 
 # ── Rule 0: the shipped template is not a plan ──────────────────────────────
@@ -816,7 +744,7 @@ def test_template_checklist_is_an_error():
 
 def test_the_shipped_template_files_are_actually_marked():
     """The rule is only worth having if the files it targets carry the marker."""
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     with open("plans/active_plan.yaml", encoding="utf-8") as f:
         plan_yaml = f.read()
@@ -872,7 +800,7 @@ def test_rule8_fix_names_an_e2e_test_path():
 
 def test_empty_route_error_explains_that_a_consumer_omits_the_key():
     """`route: {}` is not "no route" — it is a route missing method and path."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         run_validation,
     )
     plan = plan_copy()
@@ -884,7 +812,7 @@ def test_empty_route_error_explains_that_a_consumer_omits_the_key():
 
 def test_unknown_consumes_keys_carry_the_requires_form():
     """`model:`/`payload:` under consumes: is the publisher's shape, copied."""
-    from domains.devtools.plugins.plan_validator_plugin import run_validation
+    from microcoreos_dev.plan import run_validation
 
     plan = plan_copy()
     plan["features"][1]["consumes"][0]["model"] = "OrderCreatedPayload"
@@ -894,7 +822,7 @@ def test_unknown_consumes_keys_carry_the_requires_form():
 
 
 def test_unknown_flow_steps_key_carries_the_links_form():
-    from domains.devtools.plugins.plan_validator_plugin import run_validation
+    from microcoreos_dev.plan import run_validation
 
     plan = plan_copy()
     plan["flows"][0]["steps"] = []
@@ -905,7 +833,7 @@ def test_unknown_flow_steps_key_carries_the_links_form():
 # ── Offline validation: same rules, no running system ───────────────────────
 
 def test_validate_yaml_reports_a_parse_error_with_its_position():
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     result, error = validate_yaml("plan:\n  features:\n   - a\n  - b\n")
     assert result is None
@@ -913,7 +841,7 @@ def test_validate_yaml_reports_a_parse_error_with_its_position():
 
 
 def test_validate_yaml_accepts_the_documented_plan_root_key():
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     result, error = validate_yaml(
         "plan:\n  domain: orders\n  features:\n"
@@ -928,7 +856,7 @@ def test_validate_yaml_accepts_the_documented_plan_root_key():
 def test_scan_live_events_reads_publishers_and_subscribers(tmp_path):
     """Offline stand-in for the live bus — without it rule 3 flags every event
     the existing domains already publish."""
-    from domains.devtools.plugins.plan_validator_plugin import scan_live_events
+    from microcoreos_dev.plan import scan_live_events
 
     plugins = tmp_path / "domains" / "shop" / "plugins"
     plugins.mkdir(parents=True)
@@ -945,7 +873,7 @@ def test_scan_live_events_reads_publishers_and_subscribers(tmp_path):
 
 
 def test_offline_snapshot_sees_tables_and_routes(tmp_path, monkeypatch):
-    from domains.devtools.plugins.plan_validator_plugin import offline_snapshot
+    from microcoreos_dev.plan import offline_snapshot
 
     domain = tmp_path / "domains" / "shop"
     (domain / "migrations").mkdir(parents=True)
@@ -964,9 +892,9 @@ def test_offline_snapshot_sees_tables_and_routes(tmp_path, monkeypatch):
     assert "GET /orders" in snapshot.routes
 
 
-def test_offline_and_endpoint_agree_on_the_same_plan():
+def test_yaml_and_dict_entry_points_agree_on_the_same_plan():
     """The CLI must not be a second, drifting implementation of the rules."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         run_validation, validate_yaml,
     )
     import yaml as yaml_module
@@ -981,7 +909,7 @@ def test_offline_and_endpoint_agree_on_the_same_plan():
 
 # ── Regression corpus: a plan a real model actually wrote ───────────────────
 #
-# tests/corpus/qwen_twitter_plan.yaml is byte-exact output from
+# tests/dev/corpus/qwen_twitter_plan.yaml is byte-exact output from
 # Qwen3.6-35B-A3B (IQ2_XXS, thinking off), recovered from its session log.
 # Getting it to validate took that session four rounds, and the model resolved
 # the schema by reading ~500 lines of this file's source — the one thing the
@@ -998,7 +926,7 @@ def _corpus() -> str:
 def test_corpus_round1_names_the_constraint_written_as_a_column():
     """YAML reports the line AFTER the keyless one, so the bare scanner error
     pointed at `models:` while the mistake was `UNIQUE(...)` above it."""
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     result, error = validate_yaml(_corpus())
     assert result is None
@@ -1008,7 +936,7 @@ def test_corpus_round1_names_the_constraint_written_as_a_column():
 
 
 def test_corpus_round2_names_the_unquoted_path_param():
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     text = "\n".join(line for line in _corpus().splitlines()
                      if "UNIQUE(follower_id" not in line)
@@ -1029,7 +957,7 @@ def _corpus_parsable() -> str:
 def test_corpus_round3_explains_that_a_consumer_omits_route():
     """`route: {}` was the model's way of saying "no route". It is a route
     missing its required method and path."""
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     result, error = validate_yaml(_corpus_parsable())
     assert error is None
@@ -1042,7 +970,7 @@ def test_corpus_round4_catches_both_shapes_copied_from_publishes():
     """`consumes:` with `model:`/`payload:`, and `flows:` with `steps:` — both
     land in the unknown-key bucket, so the plan validates while declaring
     nothing. Each now carries the form that replaces it."""
-    from domains.devtools.plugins.plan_validator_plugin import validate_yaml
+    from microcoreos_dev.plan import validate_yaml
 
     result, _ = validate_yaml(_corpus_parsable().replace("      route: {}\n", ""))
     fixes = [w.fix for w in result.warnings if w.rule == 0 and w.fix]
@@ -1128,7 +1056,7 @@ def test_rule17_counts_per_domain_not_per_plan():
     ("plan.features[3]", "protected", "auth_validator=self.auth.validate_token"),
 ])
 def test_invented_keys_carry_the_real_form(where, key, expected):
-    from domains.devtools.plugins.plan_validator_plugin import _unknown_key_fix
+    from microcoreos_dev.plan.rules import _unknown_key_fix
 
     fix = _unknown_key_fix(where, key)
     assert fix and expected in fix
@@ -1136,7 +1064,7 @@ def test_invented_keys_carry_the_real_form(where, key, expected):
 
 def test_an_unrecognised_key_simply_has_no_fix():
     """The map answers what it has seen; it must not invent guidance."""
-    from domains.devtools.plugins.plan_validator_plugin import _unknown_key_fix
+    from microcoreos_dev.plan.rules import _unknown_key_fix
 
     assert _unknown_key_fix("plan.features[0]", "budget") is None
 
@@ -1145,7 +1073,7 @@ def test_an_unrecognised_key_simply_has_no_fix():
 
 def test_a_handful_of_schema_errors_stays_field_by_field():
     """Few errors means the author is inside the format and slipped."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     plan = plan_copy()
@@ -1161,7 +1089,7 @@ def test_a_wholesale_mismatch_names_the_worked_example_first():
     """Observed: a planner emitted `name/description/version` at the root with
     `phase_0` as a list. Twenty field errors invite twenty patches; the format
     was simply a different one."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     invented = {
@@ -1207,7 +1135,7 @@ def _plan_with_idempotency_test(nodeid):
 
 def test_rule_18_silent_while_the_test_file_does_not_exist(tmp_path, monkeypatch):
     """Phase 2 has not run yet — that is not a defect."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     monkeypatch.chdir(tmp_path)
@@ -1219,7 +1147,7 @@ def test_rule_18_silent_while_the_test_file_does_not_exist(tmp_path, monkeypatch
 
 
 def test_rule_18_flags_a_file_that_exists_without_the_declared_node(tmp_path, monkeypatch):
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     monkeypatch.chdir(tmp_path)
@@ -1236,7 +1164,7 @@ def test_rule_18_flags_a_file_that_exists_without_the_declared_node(tmp_path, mo
 
 
 def test_rule_18_accepts_the_node_once_it_is_written(tmp_path, monkeypatch):
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     monkeypatch.chdir(tmp_path)
@@ -1253,7 +1181,7 @@ def test_rule_18_accepts_the_node_once_it_is_written(tmp_path, monkeypatch):
 
 def test_rule_18_ignores_a_plain_path_with_no_node(tmp_path, monkeypatch):
     """`tests/x.py` with no `::` makes no claim about a specific function."""
-    from domains.devtools.plugins.plan_validator_plugin import (
+    from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )
     monkeypatch.chdir(tmp_path)
@@ -1271,7 +1199,7 @@ def test_mocks_is_still_accepted_as_the_old_spelling_of_tools():
     __init__ takes, not what a test stands in for, and that misreading is why
     the shipped template listed two while its example constructor took four.
     Every plan already written uses the old name, so it never stops working."""
-    from domains.devtools.plugins.plan_validator_plugin import Plan
+    from microcoreos_dev.plan import Plan
 
     old = Plan(**{"features": [{"plugin": "P", "file": "domains/d/plugins/p.py",
                                 "mocks": ["http", "db", "logger"]}]})
@@ -1285,7 +1213,7 @@ def test_mocks_is_still_accepted_as_the_old_spelling_of_tools():
 def test_the_old_spelling_is_not_reported_as_an_unknown_key():
     """An alias that validates but warns would push every existing plan to be
     rewritten for no reason."""
-    from domains.devtools.plugins.plan_validator_plugin import unknown_plan_keys
+    from microcoreos_dev.plan import unknown_plan_keys
 
     found = unknown_plan_keys({"features": [{"plugin": "P", "mocks": ["db"]}]})
 

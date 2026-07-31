@@ -50,11 +50,27 @@ build-backend = "hatchling.build"
 exclude = ["**/__pycache__", "**/*.pyc", "**/*.db", "**/*.db-wal", "**/*.db-shm"]
 
 [tool.hatch.build.targets.wheel]
-# Only `microcoreos/` is importable code. tools/, domains/ and the rest ride
-# along as INERT payload under microcoreos/_template/ and are copied out as the
-# user's own source by `microcoreos new` — see Issue 39 in ROADMAP.md. Nothing
-# under _template/ is ever imported from site-packages.
-packages = ["microcoreos"]
+# Two importable packages. `microcoreos` is the framework a booted app depends
+# on; `microcoreos_dev` is the plan pipeline — development tooling that never
+# runs inside your application, and that the framework never imports (enforced
+# by tests/test_core_purity.py).
+#
+# They ship in ONE wheel on purpose. Publishing `microcoreos-dev` separately
+# would buy only that its modules stay off a production install, where they are
+# inert anyway — and it would cost the thing that matters: `microcoreos new`
+# never overwrites an existing pyproject.toml, so it cannot add a dev
+# dependency to it, and `uv init && uv add microcoreos && microcoreos new .`
+# would leave every user's first `microcoreos migrate` asking them to install a
+# second package. That command is what writes AI_CONTEXT.md — the agent's whole
+# context — so the split would break onboarding at its most important step.
+# Measured, not assumed: that is exactly what happened when the wheel shipped
+# `microcoreos` alone. See docs/DEV_PACKAGE_SPLIT.md.
+packages = ["microcoreos", "microcoreos_dev"]
+
+# tools/, domains/ and the rest ride along as INERT payload under
+# microcoreos/_template/ and are copied out as the user's own source by
+# `microcoreos new` — see Issue 39 in ROADMAP.md. Nothing under _template/ is
+# ever imported from site-packages.
 
 # The template payload is NOT listed here. `hatch_build.py` derives it from
 # scaffold.RUNTIME_ENTRIES, which is the same list `microcoreos new` walks in a

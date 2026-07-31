@@ -101,15 +101,15 @@ goes BACK to the Planner — never patch it in code. Where a rule knows the
 shape that fixes it, the error prints that YAML: paste it rather than deriving
 it again.
 
-The endpoint form runs the identical rules against a **running** system and
-adds the one thing a disk scan cannot see, live subscribers — so it is what a
-`dlq_watcher` or a compensation consumer that exists only at runtime needs:
+Nothing needs to be running, and there is no server-side form to reach for.
+The one thing a disk scan cannot see is a **live subscriber** — a
+`dlq_watcher` or a compensation consumer that exists only at runtime — and the
+command reports that limit itself rather than sending you to boot something.
 
-```bash
-jq -Rs '{plan_yaml: .}' plans/active_plan.yaml | \
-  curl -s -X POST -H "Content-Type: application/json" -d @- \
-  http://localhost:5000/system/plan/validate
-```
+This step used to be a `jq | curl` pipeline against a booted server, and four
+turns of a real session went into the plumbing before the first actual
+validation: an empty response, a blind background boot, a `-d @file` decode
+error. That is why it is one offline command now.
 
 ---
 
@@ -263,7 +263,7 @@ accumulate over time without colliding with what previous plans built.
 
 - [ ] Request matched to the right workflow (scale ladder in `AGENTS.md`)
 - [ ] Plan written by the Planner (one pass, proportional)
-- [ ] `POST /system/plan/validate` → zero errors
+- [ ] `microcoreos plan validate` → zero errors
 - [ ] Phase 0 built 1:1 from the plan → booted ONCE → `AI_CONTEXT.md` frozen
 - [ ] Executors dispatched with the canonical prompt (first one warm-up, then the rest)
 - [ ] `uv run -m pytest` green, `GET /system/lint` clean

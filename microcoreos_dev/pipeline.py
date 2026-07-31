@@ -22,14 +22,29 @@ every one of those sequences was observed failing in a real session:
     plan active, stale manifest) was observable before the first tool call,
     and nothing was looking.
 
-They live here rather than in cli.py for the same reason `new`, `add` and
-`upgrade` do: cli.py is the dispatcher, not the implementation.
+They live in the development package rather than in the `microcoreos` wheel
+because none of them runs inside your application — they are things you run AT
+a project while building it, which is what makes them a dev dependency that
+`uv sync --no-dev` leaves out of the deploy.
 """
 
 import asyncio
 import contextlib
 import os
+import socket
 import time
+
+from microcoreos.base_tool import BaseTool
+from microcoreos.kernel import Kernel
+from microcoreos.project import (
+    ensure_project_on_path,
+    load_project_env,
+    require_project,
+)
+from microcoreos.upgrade import read_manifest
+
+from microcoreos_dev.plan import validate_yaml
+from microcoreos_dev.probe import probe as _run_probe
 
 # `plans/active_plan.yaml` is not a default anyone may override per-command:
 # the whole pipeline (this module, the validator's checklist cross-check, the
@@ -81,7 +96,6 @@ def migrate(argv: list[str]) -> int:
     background it has no signal for "the manifest is written" and leaves the
     process behind. This is that boot, with an ending.
     """
-    from microcoreos.cli import _ensure_project_on_path, _load_project_env, _require_project
 
     if argv:
         # `migrate` takes no options, and it WRITES — to the schema and to the
@@ -92,10 +106,10 @@ def migrate(argv: list[str]) -> int:
               "              Usage: microcoreos migrate")
         return 2
 
-    root = _ensure_project_on_path()
-    if not _require_project(root):
+    root = ensure_project_on_path()
+    if not require_project(root):
         return 2
-    _load_project_env(root)
+    load_project_env(root)
 
     busy = _port_in_use()
     if busy:
@@ -113,7 +127,6 @@ def migrate(argv: list[str]) -> int:
 
     before = _mtime(MANIFEST_PATH)
 
-    from microcoreos.kernel import Kernel
 
     async def _boot_once():
         kernel = Kernel()
@@ -149,7 +162,6 @@ def _port_in_use() -> int | None:
     the same pair. A project with no HTTP tool at all simply finds the default
     free, which is the right answer for it too.
     """
-    import socket
 
     host = os.getenv("HTTP_HOST", "127.0.0.1")
     try:
@@ -195,8 +207,6 @@ def _open_tool(tool_name: str):
     empty Container and an empty dict — and reaching into a private method of a
     sibling module in the same package is the smaller cost.
     """
-    from microcoreos.base_tool import BaseTool
-    from microcoreos.kernel import Kernel
 
     for tool_cls, _ in Kernel()._load_modules_from_dir("tools", BaseTool, "_tool.py"):
         instance = tool_cls()
@@ -219,12 +229,11 @@ def schema(argv: list[str]) -> int:
     everything downstream sees a migrated database), and the hook exists to
     hand a tool the container — which here would be empty.
     """
-    from microcoreos.cli import _ensure_project_on_path, _load_project_env, _require_project
 
-    root = _ensure_project_on_path()
-    if not _require_project(root):
+    root = ensure_project_on_path()
+    if not require_project(root):
         return 2
-    _load_project_env(root)
+    load_project_env(root)
 
     async def _read() -> dict:
         # Reporting, not mutating: reading the schema must never be the thing
@@ -291,7 +300,7 @@ def plan(argv: list[str]) -> int:
         print(PLAN_USAGE)
         return 2
     path = argv[1] if len(argv) > 1 else PLAN_PATH
-    return _plan_validate(path) if argv[0] == "validate" else _plan_probe(path)
+    return _plan_validate(path) if argv[0] == "validate" else _run_probe(path)
 
 
 def _plan_validate(path: str) -> int:
@@ -302,17 +311,9 @@ def _plan_validate(path: str) -> int:
     except live subscribers can be read straight off the disk. So the gate
     that the whole pipeline hangs on does not need the thing it gates.
     """
-    from microcoreos.cli import _ensure_project_on_path, _require_project
 
-    root = _ensure_project_on_path()
-    if not _require_project(root):
-        return 2
-
-    try:
-        from domains.devtools.plugins import plan_validator_plugin as validator
-    except ImportError as e:
-        print("[MicroCoreOS] The plan validator is part of the devtools domain, "
-              f"which is not importable here: {e}")
+    root = ensure_project_on_path()
+    if not require_project(root):
         return 2
 
     if not os.path.exists(path):
@@ -327,7 +328,7 @@ def _plan_validate(path: str) -> int:
         with open(CHECKLIST_PATH, "r", encoding="utf-8") as f:
             checklist = f.read()
 
-    result, error = validator.validate_yaml(plan_yaml, checklist=checklist)
+    result, error = validate_yaml(plan_yaml, checklist=checklist)
     if error:
         print(f"\n❌ {error}\n")
         return 1
@@ -368,10 +369,9 @@ def status(argv: list[str]) -> int:
     session: which plan is actually active, how much of it is done, and
     whether the manifest still describes the code on disk.
     """
-    from microcoreos.cli import _ensure_project_on_path, _require_project
 
-    root = _ensure_project_on_path()
-    if not _require_project(root):
+    root = ensure_project_on_path()
+    if not require_project(root):
         return 2
 
     print(f"\nMicroCoreOS project: {root}\n")
@@ -403,7 +403,6 @@ def _stray_line() -> str:
 
     Reported, never deleted: it is the operator's directory.
     """
-    from microcoreos.upgrade import read_manifest
 
     baseline = read_manifest(".")
     if baseline is None:
@@ -525,260 +524,3 @@ def _ago(seconds: float) -> str:
     return f"{int(seconds // 86400)} days ago"
 
 
-# ── plan probe ───────────────────────────────────────────────────────────────
-#
-# `plan validate` asks "is the PLAN well formed". This asks the other half:
-# **does the CODE do what the plan it was written from says.**
-#
-# It answers by driving each feature with recording stand-ins for its tools and
-# writing down every call. The recorder knows nothing about any tool — it
-# records `tool.method(args)` — so an s3 or redis tool dropped into `tools/`
-# is covered the day it arrives, and this file does not grow.
-#
-# What it exists to catch: `tools:` says WHICH tool, never WHICH resources, and
-# those are invented per feature. Measured on a real wave — the plugin author
-# wrote `increment("counter", namespace=author_id)` while the test author
-# asserted on `namespace="counter-{author_id}"`. Both were reasonable, the plan
-# did not say, and nothing failed until the assertion. With one agent writing
-# both files the divergence never surfaces at all: it agrees with itself.
-
-class _Recorder:
-    """A stand-in for one tool. Records every call; answers anything."""
-
-    def __init__(self, name: str, log: list):
-        self._name, self._log = name, log
-
-    def __getattr__(self, method: str):
-        if method.startswith("_"):
-            raise AttributeError(method)
-
-        def call(*args, **kwargs):
-            # Recorded HERE, not inside a coroutine body: tools have sync
-            # methods too, and `http.add_endpoint(...)` — the most common call
-            # there is — is one of them. An `async def` wrapper would build a
-            # coroutine nobody awaits, so the append would never run and the
-            # single most important call would be invisible.
-            self._log.append((self._name, method, args, kwargs))
-            # Handlers are registered by being PASSED to a tool
-            # (`bus.subscribe(event, self.on_x)`, `http.add_endpoint(path,
-            # method, self.execute)`), so the recording also hands us the
-            # entry points — no naming convention to guess.
-            return _Ignored()
-
-        return call
-
-
-class _Ignored:
-    """A return value that works whether or not the caller awaits it.
-
-    `await tool.thing()` and a bare `tool.thing()` are both legal against a
-    real tool, depending on the method — and an unawaited coroutine would warn
-    on every sync call. This answers both without either complaint.
-    """
-
-    def __await__(self):
-        return iter(())
-
-
-def _synthetic(type_name: str):
-    """A value of the type the plan declares. The plan is the only input spec."""
-    return {"int": 1, "float": 1.0, "bool": True,
-            "str": "x", "list": [], "dict": {}}.get(str(type_name).lower(), "x")
-
-
-def _plan_attr(obj, *names, default=None):
-    """The first attribute that exists, across validator versions.
-
-    `pipeline.py` ships in the wheel; the plan validator is vendored INTO the
-    project and may be older than this command by any number of releases. So a
-    field renamed here (`mocks:` → `tools:`) or added here (`touches:`) is
-    simply absent there. Asking for both names costs one line and turns a
-    traceback the user cannot act on into a probe that still reports the calls.
-    """
-    for name in names:
-        value = getattr(obj, name, None)
-        if value is not None:
-            return value
-    return default
-
-
-def _plan_probe(path: str) -> int:
-    from microcoreos.cli import _ensure_project_on_path, _load_project_env, _require_project
-
-    root = _ensure_project_on_path()
-    if not _require_project(root):
-        return 2
-    _load_project_env(root)
-
-    if not os.path.exists(path):
-        print(f"[MicroCoreOS] No plan at {path}")
-        return 2
-    try:
-        from domains.devtools.plugins import plan_validator_plugin as validator
-    except ImportError as e:
-        print(f"[MicroCoreOS] The plan validator is not importable here: {e}")
-        return 2
-
-    with open(path, "r", encoding="utf-8") as f:
-        plan_dict, error = validator.parse_plan_yaml(f.read())
-    if error:
-        print(f"[MicroCoreOS] {error}\n              Run `microcoreos plan validate` first.")
-        return 2
-
-    features = validator.Plan(**plan_dict).features
-    print(f"\nProbing {len(features)} feature(s) from {path}\n")
-
-    findings = 0
-    for feature in features:
-        observed, why = _drive(feature)
-        if why and not observed:
-            print(f"  ⚠️  {feature.plugin}: {why}")
-            continue
-        findings += _report(feature, observed)
-        if why:
-            # Everything up to the failure is real and worth showing: a plugin
-            # that registers its route and then dies still told you what it
-            # registered.
-            print(f"      ⚠️  stopped early: {why}")
-            findings += 1
-    print()
-    if findings:
-        print(f"❌ {findings} mismatch(es) between the code and the plan.\n"
-              f"   Fix the code, or amend the plan and re-dispatch — never let "
-              f"them disagree silently.")
-        return 1
-    print("✅ Every feature touches exactly what its plan entry declares.")
-    return 0
-
-
-def _drive(feature):
-    """Build the plugin from `mocks:`, boot it, deliver what it consumes."""
-    import importlib
-
-    module_path = feature.file.replace("/", ".").removesuffix(".py")
-    # Always the file as it is on disk right now. A probe is run right after an
-    # executor rewrote the plugin, so a module cached from earlier in this
-    # process would report on source that no longer exists.
-    import sys
-    sys.modules.pop(module_path, None)
-    importlib.invalidate_caches()
-    try:
-        module = importlib.import_module(module_path)
-        plugin_class = getattr(module, feature.plugin)
-    except (ImportError, AttributeError) as e:
-        return [], f"not importable yet ({e})"
-
-    log: list = []
-    tools = {name: _Recorder(name, log) for name in _plan_attr(feature, 'tools', 'mocks', default=[])}
-    try:
-        instance = plugin_class(**tools)
-    except TypeError as e:
-        # The plan's `mocks:` and the constructor disagree — which is itself
-        # the finding, and the one an independent test author trips on first.
-        return [], f"`tools: {_plan_attr(feature, 'tools', 'mocks', default=[])}` does not fit its __init__ ({e})"
-
-    async def run():
-        if hasattr(instance, "on_boot"):
-            await instance.on_boot()
-        # Every handler the plugin registered came through a recorded call, so
-        # deliver to those — never to a method name guessed from the outside.
-        for _tool, _method, args, _kwargs in list(log):
-            for arg in args:
-                if callable(arg) and getattr(arg, "__self__", None) is instance:
-                    await _deliver(arg, feature)
-
-    try:
-        asyncio.run(run())
-    except Exception as e:
-        return log, f"raised while being driven ({type(e).__name__}: {e})"
-    return log, None
-
-
-async def _deliver(handler, feature):
-    """Call one registered handler with an input built from the plan."""
-    payload = {}
-    for consume in feature.consumes:
-        for key in consume.requires:
-            payload[key] = _synthetic("int" if key.endswith("id") else "str")
-    envelope = type("Envelope", (), {"id": "probe-1", "payload": payload,
-                                     "event": "probe", "emitter": "probe"})()
-    with contextlib.suppress(Exception):
-        await handler(envelope)
-
-
-def _report(feature, observed) -> int:
-    """Print every call the feature made, and check the ones the PLAN declares.
-
-    The line this draws is the one that keeps the plan a spec. A plan says WHAT
-    a feature is: which tools it may reach, which route it answers, which
-    events it speaks. It does not say `increment('counter', namespace=...)` —
-    that is an implementation, and a plan that carries it has become a golden
-    file that must be rewritten every time the code is.
-
-    So only two things are checked, and both were already spec:
-
-      - the route `route:` declares, and the events `publishes:`/`consumes:` do
-      - `tools:`, which is complete by construction — the kernel injects ONLY
-        the parameters a constructor names, so a feature that reaches
-        `payments` cannot avoid declaring it, and `tools: [payments]` IS the
-        statement that this feature moves money
-
-    Everything else is PRINTED. A recording is worth reading — it is how you
-    see a plugin charging a card or turning on a light — and worth nothing as
-    a gate, because the plan was never the place to freeze it.
-    """
-    expected: dict[str, list[str]] = {}
-    route = _plan_attr(feature, "route")
-    if route:
-        expected.setdefault("http", []).append(
-            f"add_endpoint('{route.path}', '{route.method}'{{rest}})")
-    for pub in _plan_attr(feature, "publishes", default=[]):
-        expected.setdefault("event_bus", []).append(f"publish('{pub.event}'{{rest}})")
-    for con in _plan_attr(feature, "consumes", default=[]):
-        expected.setdefault("event_bus", []).append(f"subscribe('{con.event}'{{rest}})")
-
-    print(f"  {feature.plugin}")
-    problems, seen, used = 0, set(), set()
-    for tool, method, args, kwargs in observed:
-        call = _signature(method, args, kwargs)
-        if (tool, call) in seen:
-            continue
-        seen.add((tool, call))
-        used.add(tool)
-        print(f"      {tool}.{call}")
-        if tool in expected and not _covered(call, expected[tool]):
-            print(f"      ⚠️  the plan declares no such {tool} call — it says "
-                  f"{', '.join(expected[tool])}")
-            problems += 1
-
-    # A tool listed and never reached is plan drift: the feature was specified
-    # with a capability it does not use, and a test written from the plan will
-    # build a stand-in for nothing.
-    for tool in sorted(set(_plan_attr(feature, "tools", "mocks", default=[])) - used):
-        print(f"      ⚠️  `{tool}` is declared in `tools:` and never used")
-        problems += 1
-    return problems
-
-
-def _covered(call: str, expected) -> bool:
-    """Does one expected call describe this one? `{braces}` match any value."""
-    import re
-
-    method = call.split("(", 1)[0]
-    for entry in expected:
-        if entry.split("(", 1)[0] != method:
-            continue
-        pattern = "".join(
-            ".*?" if part.startswith("{") and part.endswith("}") else re.escape(part)
-            for part in re.split(r"(\{[^{}]*\})", entry)
-        )
-        if re.fullmatch(pattern, call):
-            return True
-    return False
-
-
-def _signature(method: str, args, kwargs) -> str:
-    """`increment('counter', namespace='ana')` — the call, not its result."""
-    shown = [repr(a) for a in args if not callable(a)]
-    shown += [f"{k}={v!r}" for k, v in sorted(kwargs.items())]
-    return f"{method}({', '.join(shown)})"

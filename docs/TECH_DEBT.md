@@ -415,9 +415,18 @@ of these three breaks projects that already installed it.
 
 ---
 
-## 9. The plan pipeline is development tooling that ships inside the runtime
+## 9. The plan pipeline was development tooling that shipped inside the runtime
 
-Every scaffolded project materializes `domains/devtools` and boots it with the
+**Phase 0 done 2026-07-31** — the code moved, the endpoint is gone, `_plan_attr`
+is deleted. `docs/DEV_PACKAGE_SPLIT.md` carries the plan and what is left of it.
+Everything below describes the state that motivated the change; it is kept
+because the reasoning is what makes the remaining phases decidable, and because
+`RUNTIME_ENTRIES` — the line that still materializes `domains/devtools` into
+every project — has not moved yet.
+
+### What it looked like
+
+Every scaffolded project materialized `domains/devtools` and booted it with the
 application. Measured 2026-07-31:
 
 | | lines | needs the app running? |
@@ -427,33 +436,59 @@ application. Measured 2026-07-31:
 | `event_schemas_plugin.py` | 94 | yes |
 | | **2414** | |
 
-Fifty-four percent of it is development-only, and it registers
+Fifty-four percent of it was development-only, and it registered
 `POST /system/plan/validate` in the user's production application: an endpoint
 for validating plans, running next to their business.
 
-**The dependency points the wrong way.** `microcoreos/pipeline.py` ships inside
-the wheel and imports `domains.devtools.plugins.plan_validator_plugin`, which
-is *the user's vendored source*. The framework depends on the project.
+**The dependency pointed the wrong way.** `microcoreos/pipeline.py` shipped
+inside the wheel and imported `domains.devtools.plugins.plan_validator_plugin`,
+which is *the user's vendored source*. The framework depended on the project.
 
-That is not theoretical. Restoring a project to an earlier commit made
+That was not theoretical. Restoring a project to an earlier commit made
 `microcoreos plan probe` die with `AttributeError` twice in a row — once for a
 function the vendored copy predated, once for a field renamed since. The fix in
-place is `_plan_attr()`, a version-tolerance shim that **should not need to
-exist**: it patches over a dependency that is inverted.
+place was `_plan_attr()`, a version-tolerance shim that **should not have needed
+to exist**: it patched over a dependency that was inverted.
 
-**The split is almost done already and nobody noticed.** The Kernel imports
-nothing from `devtools` — the only ties are that one import in `pipeline.py`
-and one line in `scaffold.RUNTIME_ENTRIES`. A development package would take
-the validator, the plan schema, the offline scanners, the probe and the four
-pipeline commands. Both halves would then live together, the dependency would
-run one way, and `_plan_attr` would be deleted rather than maintained.
+**The split was almost done already and nobody had noticed.** The Kernel
+imported nothing from `devtools` — the only ties were that one import in
+`pipeline.py` and one line in `scaffold.RUNTIME_ENTRIES`.
 
-**The linters are a separate decision.** They need the live boot to read the
-registry, so they are not development-only in the same sense. Whether they move
-too is worth deciding on its own, after the first split.
+### What changed
 
-Not started: a package split is the kind of change that wants its own plan, not
-the tail end of a long session. Recorded here so the reasoning is not lost —
-several frictions papered over one at a time (the vendoring shim, the probe
-needing `domains/devtools` present, validator metadata drifting toward the
-tools) are all this one thing.
+The validator, the plan schema, the offline scanners, the probe and the four
+pipeline commands are now `microcoreos_dev/`. The dependency runs one way and
+`tests/test_core_purity.py` fails if it ever turns around again — including a
+check that neither package statically imports `domains/` or `tools/`, which is
+the guard nothing could have expressed while the two halves shared a folder.
+`_plan_attr` is deleted. The endpoint is deleted; `microcoreos plan validate`
+does the same rules offline and is the only form now.
+
+`RUNTIME_ENTRIES` still lists `domains/devtools`, so a new project still
+receives the seven linters. That entry moves last, and only after the linters
+have somewhere to live — see the ordering constraint in
+docs/DEV_PACKAGE_SPLIT.md, which is not optional: `EventContractLinterPlugin`
+owns `GET /system/lint` and `EventSchemasPlugin` (real runtime) is built from
+metadata that linter registers at boot.
+
+**The linters move too, and cost less than this section first claimed.** They
+were recorded here as needing the live boot to read the registry. Measured
+2026-07-31, that is true of one of them. Five (`discovery_naming`,
+`domain_isolation`, `field_divergence`, `route_collision`, `table_ownership`)
+are pure AST scans of `domains/` on disk via `iter_plugin_files()`; what they
+use the registry for is PUBLISHING findings, not reading input. The boot is how
+results reach `GET /system/lint`, not how the analysis gets its data.
+`tool_doc_drift` is the real exception — it compares each tool's docstring
+against the live instance (`container.get_raw_tools()`). `event_contract` reads
+registry metadata at one site and needs its own look.
+
+So `ci.yml:186-194` boots an application and curls an endpoint to obtain
+findings that five of seven linters could have produced from the filesystem —
+the same shape `plan validate` had before it went offline, and the same
+misreading of where the data lives.
+
+**docs/DEV_PACKAGE_SPLIT.md** has the remaining phases. What made this worth
+its own plan rather than the tail end of a long session: several frictions
+papered over one at a time — the vendoring shim, the probe needing
+`domains/devtools` present, validator metadata drifting toward the tools —
+turned out to be this one thing wearing three faces.

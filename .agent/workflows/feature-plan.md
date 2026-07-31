@@ -87,9 +87,8 @@ plan:
 
 `microcoreos plan validate` — it runs the 18 validity rules of
 `docs/PARALLEL_DEVELOPMENT.md` against this plan AND what the repo already
-occupies, with no server running. (`POST /system/plan/validate` is the same
-rules against a booted system, and adds live subscribers.) Zero `errors` before any code; `warnings` are advisory. The main
-things it catches at this level:
+occupies, with no server running. Zero `errors` before any code; `warnings` are
+advisory. The main things it catches at this level:
 
 - The `route` and `file` collide with nothing live.
 - Every consumed event exists (live system or this plan) and provides the
