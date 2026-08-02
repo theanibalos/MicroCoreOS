@@ -173,3 +173,140 @@ class TestPublicApi:
         assert all(isinstance(c, type) for c in (Kernel, Container, Registry))
         for name in ("Kernel", "Container", "Registry"):
             assert not hasattr(microcoreos, name)
+
+
+# ─── Lifecycle & Robustness Tests ──────────────────────────
+
+class TestLifecycleHooksAndMetadata:
+    @pytest.mark.anyio
+    async def test_base_tool_optional_lifecycle_hooks(self):
+        class MinimalTool(BaseTool):
+            @property
+            def name(self) -> str:
+                return "minimal"
+            async def setup(self):
+                pass
+            def get_interface_description(self) -> str:
+                return "Minimal"
+
+        tool = MinimalTool()
+        await tool.setup()
+        await tool.on_boot_complete(None)
+        await tool.on_instrument(None)
+        await tool.shutdown()
+
+    @pytest.mark.anyio
+    async def test_base_plugin_optional_lifecycle_hooks(self):
+        class MinimalPlugin(BasePlugin):
+            pass
+
+        plugin = MinimalPlugin()
+        assert plugin._identity is None
+        await plugin.on_boot()
+        await plugin.shutdown()
+
+    def test_registry_domain_metadata_storage(self):
+        reg = Registry()
+        reg.register_domain_metadata("users", "version", "1.0")
+        metadata = reg.get_domain_metadata()
+        assert "users" in metadata
+        assert metadata["users"]["version"] == "1.0"
+
+    def test_registry_tool_and_plugin_dictionary_keys(self):
+        reg = Registry()
+        reg.register_tool("t1", "OK", "msg1")
+        dump = reg.get_system_dump()
+        assert "message" in dump["tools"]["t1"]
+        assert dump["tools"]["t1"]["message"] == "msg1"
+
+        reg.update_tool_status("t1", "DEAD", "msg2")
+        assert "message" in dump["tools"]["t1"]
+        assert dump["tools"]["t1"]["message"] == "msg2"
+
+        reg.register_plugin("p1", {"domain": "d1"})
+        assert "error" in dump["plugins"]["p1"]
+        assert dump["plugins"]["p1"]["error"] is None
+
+    @pytest.mark.anyio
+    async def test_container_metrics_sink_error_resilience(self):
+        container = Container()
+
+        def faulty_sink(record):
+            raise ValueError("Metrics sink failure")
+
+        container.add_metrics_sink(faulty_sink)
+
+        class AsyncRetTool(BaseTool):
+            @property
+            def name(self) -> str:
+                return "async_ret"
+            async def setup(self):
+                pass
+            def get_interface_description(self) -> str:
+                return ""
+            def sync_returning_async(self):
+                async def _inner():
+                    return 100
+                return _inner()
+
+        tool = AsyncRetTool()
+        container.register(tool)
+        proxy = container.get("async_ret")
+        val = await proxy.sync_returning_async()
+        assert val == 100
+
+    @pytest.mark.anyio
+    async def test_container_span_factory_and_callbacks_and_async_error(self):
+        container = Container()
+
+        # 1. Test span factory registration
+        spans_created = []
+        def dummy_span_factory(tool_name, method_name):
+            class DummySpan:
+                def __enter__(self):
+                    spans_created.append((tool_name, method_name))
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return DummySpan()
+
+        container.register_span_factory(dummy_span_factory)
+
+        # 2. Test tool with _set_core_registry and _set_container callbacks
+        class ToolWithCallbacks(BaseTool):
+            def _set_core_registry(self, registry):
+                self.reg = registry
+
+            def _set_container(self, cnt):
+                self.cnt = cnt
+
+            @property
+            def name(self) -> str:
+                return "tool_with_callbacks"
+
+            async def setup(self):
+                pass
+
+            def get_interface_description(self) -> str:
+                return ""
+
+            def sync_returning_failing_coro(self):
+                async def _failing_inner():
+                    raise ValueError("Inner async failure")
+                return _failing_inner()
+
+        tool = ToolWithCallbacks()
+        container.register(tool)
+
+        assert hasattr(tool, "reg") and tool.reg is container.registry
+        assert hasattr(tool, "cnt") and tool.cnt is container
+
+        proxy = container.get("tool_with_callbacks")
+
+        # Execute and check that span was created
+        with pytest.raises(ValueError, match="Inner async failure"):
+            ret = proxy.sync_returning_failing_coro()
+            await ret
+
+        assert len(spans_created) > 0
+        assert ("tool_with_callbacks", "sync_returning_failing_coro") in spans_created

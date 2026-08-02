@@ -55,3 +55,10 @@ package-lock.json
 # as a submodule with no .gitmodules, and every checkout since failed its
 # cleanup step with exit 128.
 .claude/worktrees/
+
+# Test Coverage & Mutation Testing
+.coverage
+htmlcov/
+.mutmut-cache/
+mutants/
+

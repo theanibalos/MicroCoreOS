@@ -243,3 +243,63 @@ async def test_ordering_is_per_key_not_global(event_bus):
     for key in ("a", "b"):
         assert [n for k, n in seen if k == key] == list(range(10)), \
             f"key {key!r} out of order: {seen}"
+
+
+async def test_event_bus_async_listeners_and_failure_listeners(event_bus):
+    listener_called = []
+    failure_called = []
+
+    async def async_listener(raw_record):
+        listener_called.append(raw_record)
+
+    async def async_failure_listener(failure_record):
+        failure_called.append(failure_record)
+
+    async def failing_subscriber(env):
+        raise RuntimeError("simulated subscriber failure")
+
+    event_bus.add_listener(async_listener)
+    event_bus.add_failure_listener(async_failure_listener)
+
+    await event_bus.subscribe("test.listener.fail", failing_subscriber)
+    await event_bus.publish("test.listener.fail", {"x": 1})
+
+    await wait_until(lambda: len(listener_called) >= 1 and len(failure_called) >= 1)
+    assert len(listener_called) >= 1
+    assert len(failure_called) >= 1
+
+
+async def test_event_bus_ttl_expiration(event_bus):
+    from datetime import datetime, timezone, timedelta
+
+    seen = []
+    async def handler(env):
+        seen.append(env)
+
+    await event_bus.subscribe("test.ttl", handler)
+
+    # Manually construct an envelope with past timestamp & ttl
+    past_env = EventEnvelope(
+        emitter="test_domain",
+        event="test.ttl",
+        payload={"msg": "expired"},
+        ttl=0.001,
+        timestamp=datetime.now(timezone.utc) - timedelta(seconds=10)
+    )
+    await event_bus._deliver(past_env, handler)
+
+    await asyncio.sleep(0.05)
+    assert len(seen) == 0
+
+    history = event_bus.get_trace_history()
+    expired_nodes = [n for n in history if n.error == "ttl_expired"]
+    assert len(expired_nodes) > 0
+
+
+@pytest.mark.anyio
+async def test_event_bus_get_name_unbound_function(event_bus):
+    def raw_function(env):
+        pass
+
+    name = event_bus._get_name(raw_function)
+    assert "raw_function" in name

@@ -280,7 +280,7 @@ def test_public_contract_frozen():
     capabilities enter as plugin-layer compositions or driver capability
     claims. If you consciously extend the contract, update this set in the
     same commit as the ROADMAP issue that justifies it."""
-    public = {n for n in dir(EventBusTool) if not n.startswith("_")}
+    public = {n for n in dir(EventBusTool) if not n.startswith(("_", "xǁ"))}
     assert public == {
         # BaseTool lifecycle
         "name", "setup", "get_interface_description", "on_boot_complete",

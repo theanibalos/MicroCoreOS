@@ -1,6 +1,6 @@
 [project]
 name = "microcoreos"
-version = "0.3.0"
+version = "0.3.1"
 description = "Atomic Microkernel Architecture optimized for AI-Driven Development"
 license = {text = "MIT"}
 readme = "README.md"
@@ -121,4 +121,12 @@ dev = [
     "ruff>=0.15.16",
     # Test-only + `microcoreos dev` (imported lazily, with an install message).
     "watchfiles>=1.1.1",
+    "pytest-cov>=7.1.0",
+    "mutmut>=3.2.0",
 ]
+
+[tool.mutmut]
+runner = "uv run -m pytest -x -k \"not parity and not upgrade\""
+source_paths = ["microcoreos/", "tools/"]
+also_copy = ["tests", "tools", "domains", "extras", "microcoreos", "microcoreos_dev", "plans", "docs", "pyproject.toml", "uv.lock", ".venv", "README.md", ".env.example", "AGENTS.md", "INSTRUCTIONS_FOR_AI.md", "main.py", "Dockerfile", ".dockerignore", ".gitignore", "dev_infra", ".agent"]
+

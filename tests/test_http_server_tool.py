@@ -12,9 +12,7 @@ def anyio_backend():
 
 @pytest.fixture
 def tool():
-    t = HttpServerTool()
-    # No necesitamos setup() completo ni arrancar uvicorn para probar la app de FastAPI
-    return t
+    return HttpServerTool()
 
 @pytest.fixture
 async def client(tool):
@@ -469,6 +467,61 @@ def test_ws_without_a_validator_stays_a_single_argument_handler(tool):
         await conn.send_text("open")
 
     tool.add_ws_endpoint("/ws", on_connect)
+    tool._register_all_endpoints()
 
     with TestClient(tool.app).websocket_connect("/ws") as ws:
         assert ws.receive_text() == "open"
+
+
+async def test_http_server_lifecycle_and_middleware(monkeypatch):
+    """Tests setup, security warnings, CORS validation, security headers, on_instrument, and shutdown."""
+    from fastapi.testclient import TestClient
+
+    # 1. Test short auth key & 0.0.0.0 warning
+    monkeypatch.setenv("HTTP_HOST", "0.0.0.0")
+    monkeypatch.setenv("AUTH_SECRET_KEY", "short_key")
+    t = HttpServerTool()
+    await t.setup()
+    assert t.get_interface_description() != ""
+
+    # Test security headers middleware
+    c = TestClient(t.app)
+    resp = c.get("/non_existent_route")
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    assert resp.headers.get("X-Frame-Options") == "DENY"
+
+    # Test 422 validation error handler
+    async def int_handler(data, context):
+        return {"success": True}
+    t.add_endpoint("/int_test", "POST", int_handler)
+    t._register_all_endpoints()
+
+    # 2. Test invalid CORS credentials with '*' origins raises ValueError
+    monkeypatch.setenv("HTTP_CORS_CREDENTIALS", "true")
+    monkeypatch.setenv("HTTP_CORS_ORIGINS", "*")
+    t_cors_err = HttpServerTool()
+    with pytest.raises(ValueError, match="HTTP_CORS_CREDENTIALS=true requires an explicit"):
+        await t_cors_err.setup()
+
+    # 3. Test on_instrument & shutdown
+    await t.on_instrument(None)
+    await t.shutdown()
+
+
+async def test_http_server_on_boot_complete_and_shutdown(monkeypatch):
+    """Tests on_boot_complete and graceful uvicorn shutdown."""
+    t = HttpServerTool()
+    await t.setup()
+
+    # Mock uvicorn Server serve to return immediately
+    class DummyUvicornServer:
+        def __init__(self):
+            self.should_exit = False
+        async def serve(self):
+            pass
+
+    t._server = DummyUvicornServer()
+    await t.on_boot_complete(None)
+    assert t._server_task is not None
+    await t.shutdown()
+    assert t._server.should_exit is True

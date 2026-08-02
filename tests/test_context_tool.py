@@ -1,5 +1,6 @@
 import ast
 import shutil
+import pytest
 from pathlib import Path
 
 from tools.context import scanners
@@ -115,10 +116,84 @@ def test_a_domain_with_plugins_still_lists_them(tmp_path, monkeypatch):
     container.registry.get_system_dump.return_value = {
         "plugins": {"shop.ListPlugin": {"domain": "shop", "dependencies": ["db"]}}
     }
-    container.get.return_value.get_subscribers.return_value = {}
-
     ContextTool()._generate_global_manifest(container, {})
 
     manifest = (tmp_path / "AI_CONTEXT.md").read_text(encoding="utf-8")
     assert "**Plugins**: shop.ListPlugin" in manifest
     assert "phase 0 only" not in manifest
+
+
+@pytest.mark.anyio
+async def test_context_tool_on_boot_complete_and_tool_rendering(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock, AsyncMock
+    from tools.context.context_tool import ContextTool
+
+    monkeypatch.chdir(tmp_path)
+
+    tool = ContextTool()
+    assert tool.name == "context_manager"
+    tool.setup()
+    assert "Context Manager Tool" in tool.get_interface_description()
+
+    container = MagicMock()
+    container.list_tools.return_value = ["tool1", "tool2", "tool3"]
+
+    tool1 = MagicMock()
+    tool1.get_interface_description.return_value = "Tool 1 Description"
+
+    tool2 = MagicMock()
+    tool2.get_interface_description.return_value = ""
+
+    tool3 = MagicMock()
+    tool3.get_interface_description.side_effect = Exception("Desc error")
+
+    db_mock = MagicMock()
+    db_mock.describe_schema = AsyncMock(return_value={"test_table": {"columns": []}})
+
+    def get_tool(name):
+        if name == "tool1": return tool1
+        if name == "tool2": return tool2
+        if name == "tool3": return tool3
+        if name == "db": return db_mock
+        raise RuntimeError("No such tool")
+
+    container.get.side_effect = get_tool
+    container.registry.get_system_dump.return_value = {"plugins": {}}
+
+    await tool.on_boot_complete(container)
+
+    manifest = (tmp_path / "AI_CONTEXT.md").read_text(encoding="utf-8")
+    assert "### 🔧 Tool: `tool1`" in manifest
+    assert "### 🔧 Tool: `tool2`" in manifest
+    assert "### 🔧 Tool: `tool3` (Status: ❌)" in manifest
+
+
+def test_context_tool_endpoint_schema_formatting(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    from tools.context.context_tool import ContextTool
+
+    monkeypatch.chdir(tmp_path)
+
+    fake_endpoints = [
+        "POST /users (req: name: str; res: success: bool)",
+        "POST /login (req: email: str)",
+        "GET /me (res: success: bool, data: UserData)",
+        "GET /ping",
+    ]
+    monkeypatch.setattr("tools.context.scanners._get_domain_endpoints", lambda d: fake_endpoints)
+
+    (tmp_path / "domains" / "testdom" / "plugins").mkdir(parents=True)
+
+    container = MagicMock()
+    container.list_tools.return_value = []
+    container.registry.get_system_dump.return_value = {
+        "plugins": {"testdom.TestPlugin": {"domain": "testdom", "dependencies": []}}
+    }
+
+    ContextTool()._generate_global_manifest(container, {})
+
+    manifest = (tmp_path / "AI_CONTEXT.md").read_text(encoding="utf-8")
+    assert "POST /users" in manifest
+    assert "POST /login" in manifest
+    assert "GET /me" in manifest
+    assert "GET /ping" in manifest

@@ -61,11 +61,18 @@ def test_consecutive_failures_mark_dead(registry):
     """DEAD_THRESHOLD consecutive generic failures mark the tool DEAD."""
     proxy = ToolProxy(FailingTool(), registry)
 
-    for _ in range(ToolProxy.DEAD_THRESHOLD):
+    assert proxy._consecutive_failures == 0
+    with pytest.raises(ValueError):
+        proxy.sync_fail()
+    assert proxy._consecutive_failures == 1
+
+    for _ in range(ToolProxy.DEAD_THRESHOLD - 1):
         with pytest.raises(ValueError):
             proxy.sync_fail()
 
     assert registry.get_tool_status("unstable_tool") == "DEAD"
+    dump = registry.get_system_dump()
+    assert "consecutive failures. Last: sync error" in dump["tools"]["unstable_tool"]["message"]
 
 def test_success_resets_failure_streak(registry):
     """A success in the middle of failures resets the consecutive counter."""
@@ -90,6 +97,8 @@ def test_sync_infra_failure_marks_dead_immediately(registry):
         proxy.sync_infra_fail()
 
     assert registry.get_tool_status("unstable_tool") == "DEAD"
+    dump = registry.get_system_dump()
+    assert dump["tools"]["unstable_tool"]["message"] == "backend unreachable"
 
 async def test_async_infra_failure_marks_dead_immediately(registry):
     proxy = ToolProxy(FailingTool(), registry)
@@ -98,6 +107,8 @@ async def test_async_infra_failure_marks_dead_immediately(registry):
         await proxy.async_infra_fail()
 
     assert registry.get_tool_status("unstable_tool") == "DEAD"
+    dump = registry.get_system_dump()
+    assert dump["tools"]["unstable_tool"]["message"] == "backend unreachable"
 
 def test_proxy_sync_recovery_marks_ok(registry):
     registry.update_tool_status("unstable_tool", "DEAD", "old error")

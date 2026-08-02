@@ -59,7 +59,7 @@ def test_the_kernel_is_stdlib_only():
     for name in KERNEL_MODULES:
         foreign = {
             r for r in _imported_roots(PACKAGE / name)
-            if r not in sys.stdlib_module_names and r != "microcoreos"
+            if r not in sys.stdlib_module_names and r not in ("microcoreos", "mutmut")
         }
         if foreign:
             offenders[name] = sorted(foreign)
