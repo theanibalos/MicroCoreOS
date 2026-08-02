@@ -142,3 +142,125 @@ def test_the_readme_table_lists_every_extra():
     assert documented == set(CATALOG), (
         f"README's extras table is out of date — missing: {sorted(set(CATALOG) - documented)}"
     )
+
+
+# ─── .env formatting and duplicate prevention ────────────────────────────────
+
+def test_add_heads_each_extra_with_its_own_section(project):
+    """.env stays readable as extras accumulate: one boxed heading per tool."""
+    cli.main(["add", "postgres", "--no-install"])
+    cli.main(["add", "s3", "--no-install"])
+
+    env = (project / ".env").read_text(encoding="utf-8")
+
+    assert "POSTGRES" in env and "microcoreos add postgres" in env
+    assert "S3" in env and "microcoreos add s3" in env
+    # The heading precedes the settings it introduces.
+    assert env.index("microcoreos add postgres") < env.index("PG_HOST=")
+    assert env.index("microcoreos add s3") < env.index("AWS_ACCESS_KEY_ID=")
+
+
+def test_env_section_boxes_line_up(project):
+    """Three lines of unequal width render as a broken box."""
+    cli.main(["add", "postgres", "--no-install"])
+
+    box_lines = [
+        line for line in (project / ".env").read_text(encoding="utf-8").splitlines()
+        if line.startswith("# ") and line[2] in "╭│╰"
+    ]
+
+    assert box_lines, "no section heading was written"
+    assert len({len(line) for line in box_lines}) == 1, box_lines
+
+
+def test_a_commented_setting_is_not_appended_again(project):
+    """
+    python-dotenv gives precedence to the LAST occurrence, so appending a
+    duplicate would override the line above it and editing that line would
+    silently do nothing.
+    """
+    (project / ".env").write_text("# PG_HOST=localhost\n#PG_PORT=5432\n", encoding="utf-8")
+
+    cli.main(["add", "postgres", "--no-install"])
+
+    env = (project / ".env").read_text(encoding="utf-8")
+    assert env.count("PG_HOST=") == 1
+    assert env.count("PG_PORT=") == 1
+    assert "PG_DATABASE=microcoreos" in env  # the genuinely absent ones still land
+
+
+def test_a_commented_setting_is_reported_not_decided(project, capsys):
+    """
+    Commenting a variable reads equally as "I want the default" and as "I will
+    fill this in later". `add` cannot know which, so it says so.
+    """
+    (project / ".env").write_text("# PG_HOST=localhost\n", encoding="utf-8")
+
+    cli.main(["add", "postgres", "--no-install"])
+
+    out = capsys.readouterr().out
+    assert "PG_HOST" in out and "commented out" in out
+
+
+def test_a_commented_setting_does_not_block_the_rest(project):
+    """Reporting one variable must not turn the whole append into a no-op."""
+    (project / ".env").write_text("# SCHEDULER_ENABLED=true\n", encoding="utf-8")
+
+    assert cli.main(["add", "scheduler", "--no-install"]) == 0
+
+    env = (project / ".env").read_text(encoding="utf-8")
+    assert env.count("SCHEDULER_ENABLED=") == 1
+
+
+# ─── .env.example mirrors what `add` writes ──────────────────────────────────
+
+def _example_sections():
+    """(title, source) for every boxed heading in the shipped .env.example."""
+    path = os.path.join(scaffold._template_root(), ".env.example")
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return lines, [
+        (i, *[p.strip() for p in line[3:-1].strip().split("  ") if p.strip()])
+        for i, line in enumerate(lines) if line.startswith("# │")
+    ]
+
+
+def test_example_headings_come_from_the_same_generator_as_add():
+    """
+    The reference file and the blocks `add` appends must be the same shape.
+    Hand-drawing a heading here is what makes them drift apart again.
+    """
+    lines, sections = _example_sections()
+    assert sections, ".env.example has no boxed headings"
+
+    for i, title, source in sections:
+        expected = catalog._env_section_header(title, source)
+        assert lines[i - 1: i + 2] == expected, f"heading for {title!r} is hand-drawn"
+
+
+def test_every_extra_has_a_section_in_the_example():
+    """A new catalog entry with no documented settings is invisible to users."""
+    _, sections = _example_sections()
+    documented = {source for _, _, source in sections}
+
+    for name in catalog.CATALOG:
+        if catalog.CATALOG[name].env:
+            assert f"microcoreos add {name}" in documented, \
+                f"{name} has env settings but no section in .env.example"
+
+
+def test_every_setting_add_can_write_is_documented_in_the_example():
+    """The reference is only a reference if it lists what `add` actually writes."""
+    path = os.path.join(scaffold._template_root(), ".env.example")
+    example = Path(path).read_text(encoding="utf-8")
+
+    for name, extra in catalog.CATALOG.items():
+        for var, _, _ in extra.env:
+            assert f"{var}=" in example, f"{var} ({name}) is missing from .env.example"
+
+
+def test_example_boxes_line_up():
+    lines, _ = _example_sections()
+    box_lines = [l for l in lines if l.startswith("# ") and l[2] in "╔║╚╭│╰"]
+
+    assert len({len(l) for l in box_lines}) == 1, \
+        sorted({len(l) for l in box_lines})

@@ -174,12 +174,48 @@ def _install_dependency(extra: str, root: str) -> bool:
     return True
 
 
+ENV_BOX_WIDTH = 76
+
+
+def _env_section_header(title: str, source: str) -> list:
+    """
+    One boxed heading per tool, so .env stays readable as extras accumulate.
+    .env.example uses this same function; keep the three lines equal in width
+    or the boxes stop lining up.
+    """
+    left = f"  {title}"
+    pad = ENV_BOX_WIDTH - len(left) - len(source) - 2
+    return [
+        f"# ╭{'─' * ENV_BOX_WIDTH}╮",
+        f"# │{left}{' ' * max(pad, 1)}{source}  │",
+        f"# ╰{'─' * ENV_BOX_WIDTH}╯",
+    ]
+
+
+def _env_state(existing: str, var: str) -> str:
+    """Whether var is absent, set, or present but commented out."""
+    for line in existing.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"{var}="):
+            return "set"
+        if stripped.startswith("#") and stripped.lstrip("#").strip().startswith(f"{var}="):
+            return "commented"
+    return "absent"
+
+
 def _append_env(root: str, name: str, entries) -> None:
     """
     Append the extra's settings to .env, once.
 
     Anything already defined there is the user's decision and is left alone —
     re-running `add` must never rewrite a password someone typed.
+
+    A commented-out setting counts as already there. It is not appended again:
+    python-dotenv gives precedence to the LAST occurrence, so the duplicate
+    would override the line above it and editing that line would do nothing.
+    Which of the two the user meant is not knowable here — commenting a
+    variable reads equally as "I want the default" and as "I will fill this in
+    later" — so the choice is reported rather than made.
     """
     if not entries:
         return
@@ -189,12 +225,18 @@ def _append_env(root: str, name: str, entries) -> None:
     if os.path.exists(path):
         existing = open(path, encoding="utf-8").read()
 
-    missing = [e for e in entries if f"\n{e[0]}=" not in f"\n{existing}"]
+    states = {e[0]: _env_state(existing, e[0]) for e in entries}
+    missing = [e for e in entries if states[e[0]] == "absent"]
+    commented = [v for v, s in states.items() if s == "commented"]
+
+    for var in commented:
+        print(f"   ! .env has {var} commented out — uncomment it or delete the line.")
+
     if not missing:
         print("   ✓ .env already has these settings — unchanged.")
         return
 
-    block = [f"\n# ─── {name} (added by `microcoreos add {name}`) ───"]
+    block = [""] + _env_section_header(name.upper(), f"microcoreos add {name}") + [""]
     for var, value, comment in missing:
         block.append(f"{var}={value}" + (f"   # {comment}" if comment else ""))
 

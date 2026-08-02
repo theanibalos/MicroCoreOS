@@ -20,8 +20,13 @@ PUBLIC CONTRACT (what plugins use):
         has_files=False,                  # Optional: if True, enables multipart/form-data
     )
 
-    # Serve static files from a directory
+    # Serve static files from a directory. Only DEFAULT_STATIC_EXTENSIONS are
+    # served; pass allow_extensions to narrow or widen that set.
     http.mount_static("/static", "./public")
+
+    # Serve a UI: html=True resolves directory requests to their index.html.
+    # Mounts are applied after every endpoint, so "/" does not shadow the API.
+    http.mount_static("/", "./ui", html=True)
 
     # WebSocket endpoint
     http.add_ws_endpoint(
@@ -119,7 +124,7 @@ REPLACEMENT STANDARD (implement this to swap the backend):
     2. name = "http"                               ← same injection key, plugins are unaffected
     3. Implement the public methods:
           add_endpoint(path, method, handler, tags, request_model, response_model, auth_validator, has_files)
-          mount_static(path, directory_path)
+          mount_static(path, directory_path, html=False, allow_extensions=None)
           add_ws_endpoint(path, on_connect, on_disconnect)
           add_sse_endpoint(path, generator, tags, auth_validator)
     4. Handler contract: handler(data: dict, context: HttpContext) → dict
@@ -137,6 +142,7 @@ REPLACEMENT STANDARD (implement this to swap the backend):
 """
 
 import os
+import stat
 import asyncio
 import inspect
 import uvicorn
@@ -149,6 +155,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.concurrency import run_in_threadpool
+
+# Extensions mount_static() serves when the caller declares none.
+DEFAULT_STATIC_EXTENSIONS = frozenset({
+    "html", "htm", "css", "js", "mjs", "json", "txt", "xml", "webmanifest",
+    "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico",
+    "woff", "woff2", "ttf", "otf",
+    "mp4", "webm", "mp3", "ogg", "wasm", "pdf",
+})
 
 # HttpContext and the request-processing pipeline were split out into their
 # own modules (mechanical move, no behavior change). Re-exported here since
@@ -168,6 +182,7 @@ class HttpServerTool(BaseTool):
         self._port: int = int(os.getenv("HTTP_PORT", 5000))
         self._server: Optional[uvicorn.Server] = None
         self._pending_endpoints: list[dict] = []
+        self._pending_mounts: list[dict] = []
         self._pre_mount_hooks: list[Callable] = []
         # Documentation-only security scheme: shows the "Authorize" button in
         # Swagger UI (/docs) and marks protected routes with a lock icon.
@@ -244,6 +259,7 @@ class HttpServerTool(BaseTool):
         """
         self._run_pre_mount_hooks()
         self._register_all_endpoints()
+        self._register_all_static_mounts()
         host = os.getenv("HTTP_HOST", "127.0.0.1")
         log_level = os.getenv("HTTP_LOG_LEVEL", "warning")
         config = uvicorn.Config(self.app, host=host, port=self._port, log_level=log_level)
@@ -293,7 +309,13 @@ class HttpServerTool(BaseTool):
                 - has_files: if True, enables multipart/form-data. Request model fields 
                   become Form fields. To use a file: file = data["_files"][0]; 
                   await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
-            - mount_static(path, directory_path): Serve static files from a directory.
+            - mount_static(path, directory_path, html=False, allow_extensions=None):
+                Serve static files from a directory. Deny by default: only files whose
+                extension is allowed are served (default DEFAULT_STATIC_EXTENSIONS; pass
+                a set to declare your own, or "*" to serve everything). Dotfiles are
+                always refused except under '.well-known/'. Use html=True to serve
+                index.html for directory requests, which a UI/SPA mounted at "/" needs.
+                Raises ValueError if the directory does not exist.
             - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
             - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
                 Server-Sent Events. generator yields formatted strings: "data: {...}\\n\\n".
@@ -371,10 +393,110 @@ class HttpServerTool(BaseTool):
         for hook in self._pre_mount_hooks:
             hook(endpoints)
 
-    def mount_static(self, path: str, directory_path: str) -> None:
-        """Serves static files from a local directory."""
-        if os.path.exists(directory_path):
-            self.app.mount(path, StaticFiles(directory=directory_path), name=path)
+    def mount_static(
+        self,
+        path: str,
+        directory_path: str,
+        html: bool = False,
+        allow_extensions: Optional[set] = None,
+    ) -> None:
+        """Serves static files from a local directory. Deny by default.
+
+        Only files whose extension is in allow_extensions are reachable;
+        everything else 404s. Dot-prefixed segments ('.env', '.git/config') are
+        always refused, except under '.well-known/'.
+
+            allow_extensions=None                   # DEFAULT_STATIC_EXTENSIONS
+            allow_extensions={"html", "css", "js"}  # exactly these
+            allow_extensions="*"                    # serve everything
+
+        html=True serves 'index.html' for directory requests, which is what a
+        UI or SPA mounted at "/" needs. Off by default: it also makes a miss
+        render '404.html' when that file exists.
+
+        The mount is buffered and applied in on_boot_complete(), after every
+        endpoint. Starlette matches routes in registration order and a Mount
+        matches its whole subtree, so mounting "/" earlier would shadow the API.
+
+        Raises ValueError if the directory does not exist.
+        """
+        if not os.path.isdir(directory_path):
+            raise ValueError(
+                f"mount_static: directory not found: {directory_path!r} "
+                f"(resolved to {os.path.abspath(directory_path)!r})"
+            )
+
+        if allow_extensions is None:
+            allow_extensions = DEFAULT_STATIC_EXTENSIONS
+        elif allow_extensions != "*":
+            allow_extensions = frozenset(e.lstrip(".").lower() for e in allow_extensions)
+
+        self._pending_mounts.append({
+            "path": path,
+            "directory_path": directory_path,
+            "html": html,
+            "allow_extensions": allow_extensions,
+        })
+
+    class _AllowlistedStaticFiles(StaticFiles):
+        """
+        StaticFiles restricted to declared extensions. Plain StaticFiles serves
+        everything under the directory; this serves only what was allowed.
+
+        Blocked files return "no result" rather than raising, so they 404
+        exactly like missing ones and existence is never confirmed.
+
+        '.well-known/' bypasses both checks: it is public by spec and its ACME
+        challenge tokens have no extension.
+        """
+
+        _WELL_KNOWN = ".well-known"
+
+        def __init__(self, *args, allow_extensions, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.allow_extensions = allow_extensions
+
+        def lookup_path(self, path: str):
+            # get_path() normalizes the mount root to "." and strips traversal,
+            # so "" and "." are structural rather than dot-prefixed names.
+            segments = [s for s in path.split(os.sep) if s not in ("", ".")]
+            exempt = bool(segments) and segments[0] == self._WELL_KNOWN
+
+            if not exempt and any(s.startswith(".") for s in segments):
+                return "", None
+
+            full_path, stat_result = super().lookup_path(path)
+
+            # Directories pass through unchecked: html mode resolves them by
+            # re-entering here with "<dir>/index.html", which is checked.
+            if stat_result is None or stat.S_ISDIR(stat_result.st_mode):
+                return full_path, stat_result
+
+            if exempt or self.allow_extensions == "*":
+                return full_path, stat_result
+
+            ext = os.path.splitext(segments[-1])[1].lstrip(".").lower()
+            if ext not in self.allow_extensions:
+                return "", None
+
+            return full_path, stat_result
+
+    def _register_all_static_mounts(self) -> None:
+        """
+        Applies buffered static mounts. Must run after _register_all_endpoints():
+        a Mount swallows every route registered after it within its subtree.
+        """
+        for m in self._pending_mounts:
+            self.app.mount(
+                m["path"],
+                self._AllowlistedStaticFiles(
+                    directory=m["directory_path"],
+                    html=m["html"],
+                    allow_extensions=m["allow_extensions"],
+                ),
+                name=m["path"],
+            )
+            print(f"[HttpServer] Static mount — {m['path']!r} → {m['directory_path']!r} (html={m['html']})")
 
     def add_ws_endpoint(self, path: str, on_connect: Callable, on_disconnect: Optional[Callable] = None) -> None:
         """Registers a WebSocket endpoint."""
