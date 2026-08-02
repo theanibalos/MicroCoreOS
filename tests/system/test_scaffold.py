@@ -169,7 +169,7 @@ def test_the_wheel_payload_is_derived_not_retyped():
     `hatch_build.py` derives the table from RUNTIME_ENTRIES now. This asserts
     nobody hand-writes the second copy again.
     """
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     with open(root / "pyproject.toml", "rb") as f:
         wheel_cfg = tomllib.load(f)["tool"]["hatch"]["build"]["targets"]["wheel"]
 
@@ -188,7 +188,7 @@ def test_every_entry_the_wheel_will_carry_exists():
     silently ships one file fewer, in both directions at once now that the two
     lists are one.
     """
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     missing = [
         e for e in scaffold.RUNTIME_ENTRIES + scaffold.AI_KIT_ENTRIES
         if not (root / e).exists()

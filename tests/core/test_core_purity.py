@@ -14,7 +14,7 @@ import ast
 import sys
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parent.parent / "microcoreos"
+PACKAGE = Path(__file__).resolve().parent.parent.parent / "microcoreos"
 
 # What a running application depends on. Everything else in the package is the
 # CLI: scaffolding a project, installing an extra, upgrading — build-time work
@@ -115,7 +115,7 @@ def test_every_module_is_on_one_side_or_the_other():
 # rather than the direction being fixed. Nothing was watching, because nothing
 # could: the two halves were not distinguishable to a test.
 
-DEV_PACKAGE = Path(__file__).resolve().parent.parent / "microcoreos_dev"
+DEV_PACKAGE = Path(__file__).resolve().parent.parent.parent / "microcoreos_dev"
 
 
 def _module_level_imports(path: Path) -> set[str]:

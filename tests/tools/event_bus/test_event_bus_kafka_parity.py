@@ -22,7 +22,7 @@ from extras.available_tools.kafka.kafka_driver import (
 # Re-use the canonical parity assertions verbatim — importing the test
 # functions registers them in THIS module, bound to the kafka `bus` fixture
 # below. If a new parity test is added upstream, it is covered here for free.
-from tests.tools.test_event_bus_broker_parity import (  # noqa: F401
+from tests.tools.event_bus.test_event_bus_broker_parity import (  # noqa: F401
     test_ttl_expired,
     test_ttl_valid,
     test_retry_then_success,

@@ -136,7 +136,7 @@ def test_the_readme_table_lists_every_extra():
     """
     from microcoreos.catalog import CATALOG
 
-    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    readme = (Path(__file__).resolve().parent.parent.parent / "README.md").read_text(encoding="utf-8")
     documented = {n for n in CATALOG if f"`add {n}`" in readme}
 
     assert documented == set(CATALOG), (

@@ -46,7 +46,7 @@ def test_get_domain_endpoints_users(tmp_path, monkeypatch):
     domains happen to exist in this checkout is what broke this test when
     users moved out of `domains/`.
     """
-    src = Path(__file__).resolve().parent.parent / "extras/available_domains/users/plugins"
+    src = Path(__file__).resolve().parents[3] / "extras/available_domains/users/plugins"
     staged = tmp_path / "domains" / "users" / "plugins"
     staged.mkdir(parents=True)
     for name in ("create_user_plugin.py", "login_plugin.py"):

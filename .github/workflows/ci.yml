@@ -35,7 +35,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      # Real Redis so the state parity suite (tests/tools/test_state_parity.py)
+      # Real Redis so the state parity suite (tests/tools/state/test_state_parity.py)
       # runs against actual infrastructure instead of skipping itself.
       redis:
         image: redis:7-alpine
@@ -48,7 +48,7 @@ jobs:
           --health-retries 5
 
       # Real RabbitMQ so the broker parity suite
-      # (tests/tools/test_event_bus_rabbitmq_parity.py) runs instead of skipping.
+      # (tests/tools/event_bus/test_event_bus_rabbitmq_parity.py) runs instead of skipping.
       rabbitmq:
         image: rabbitmq:3.13-alpine
         ports:
@@ -373,7 +373,7 @@ jobs:
       # The filesystem-facing suites. The rest of tests/ needs Postgres, Redis
       # and RabbitMQ, which is what the Linux matrix is for.
       - name: Path and packaging suites
-        run: uv run -m pytest tests/test_upgrade.py tests/test_scaffold.py tests/test_catalog.py tests/test_cli.py -q
+        run: uv run -m pytest tests/system/test_upgrade.py tests/system/test_scaffold.py tests/system/test_catalog.py tests/system/test_cli.py -q
 
       - name: Build the wheel
         run: uv build --wheel -o dist
