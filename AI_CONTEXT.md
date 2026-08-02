@@ -23,7 +23,8 @@ HTTP Server Tool (http):
           'data' = flat merge of [path params] + [query params] + [body/form fields].
           Special keys in 'data':
             - data["_auth"]: contains the payload from auth_validator if successful.
-            - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
+            - data["_files"]: list of UploadedFile objects (only if has_files=True).
+                Fields: .filename, .content_type, .stream (sync file object), await .read().
         - SECURITY DEFAULTS:
             - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
             - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
@@ -35,8 +36,19 @@ HTTP Server Tool (http):
                 - has_files: if True, enables multipart/form-data. Request model fields 
                   become Form fields. To use a file: file = data["_files"][0]; 
                   await s3.upload_fileobj(file.filename, file.file, content_type=file.content_type)
-            - mount_static(path, directory_path): Serve static files from a directory.
-            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
+            - mount_static(path, directory_path, html=False, allow_extensions=None):
+                Serve static files from a directory. Deny by default: only files whose
+                extension is allowed are served (default DEFAULT_STATIC_EXTENSIONS; pass
+                a set to declare your own, or "*" to serve everything). Dotfiles are
+                always refused except under '.well-known/'. Use html=True to serve
+                index.html for directory requests, which a UI/SPA mounted at "/" needs.
+                Raises ValueError if the directory does not exist.
+            - add_ws_endpoint(path, on_connect, on_disconnect=None, auth_validator=None):
+                WebSocket support. on_connect receives a WebSocketConnection: send_text,
+                send_json, receive_text, receive_json, close, query_params, path_params.
+                With auth_validator the token is read from the Authorization header, the
+                `token` query param, then the access_token cookie; an invalid one is
+                closed with 1008 BEFORE the handshake and on_connect takes (conn, payload).
             - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
                 Server-Sent Events. generator yields formatted strings: "data: {...}\n\n".
             - register_pre_mount_hook(hook): hook(endpoints: list[dict]) is called once in

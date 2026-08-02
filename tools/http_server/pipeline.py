@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from tools.http_server.context import HttpContext
+from tools.http_server.types import UploadedFile
 
 
 def _serialize(obj):
@@ -132,7 +133,9 @@ async def _process_request(
             except Exception: pass
 
     if files is not None:
-        data["_files"] = files
+        # Wrapped at the boundary: a plugin must never hold the web
+        # framework's own upload object (see types.py).
+        data["_files"] = [UploadedFile.from_starlette(f) for f in files]
 
     # ── Phase 2: Causality Context Seeding ────────────────────────────────
     # Honor X-Request-ID from an upstream MicroCoreOS service if present,
@@ -238,6 +241,31 @@ async def _process_request(
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
+
+def _extract_ws_token(websocket) -> Optional[str]:
+    """
+    Token for a WebSocket handshake: Authorization header, then the `token`
+    query parameter, then the access_token cookie.
+
+    The query parameter exists because browsers cannot set headers on a
+    WebSocket handshake. It is also the least private of the three — query
+    strings reach access logs and proxies — so it is tried after the header.
+
+    No CSRF guard applies here the way it does for cookie-authenticated
+    mutations: a WebSocket handshake is not a form submission, and its
+    cross-origin requests are governed by the Origin check, not by headers a
+    form could forge.
+    """
+    auth_header = websocket.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+
+    token = websocket.query_params.get("token")
+    if token:
+        return token
+
+    return websocket.cookies.get("access_token")
+
 
 def _extract_bearer_token(request: Request) -> Optional[str]:
     """

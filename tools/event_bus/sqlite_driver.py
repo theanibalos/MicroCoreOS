@@ -106,6 +106,13 @@ class SQLiteDriver(EventBusDriver):
         self._poll_s: float = int(os.getenv("EVENT_BUS_SQLITE_POLL_MS", "25")) / 1000.0
         self._maxlen: int = int(os.getenv("EVENT_BUS_SQLITE_MAXLEN", "10000"))
         sync = os.getenv("EVENT_BUS_SQLITE_SYNCHRONOUS", "FULL").upper()
+        if sync not in _SYNC_MODES:
+            # Falling back is right — FULL is the durable one — but doing it
+            # quietly leaves someone who asked for NORMAL wondering why writes
+            # are slow. SQLite is no help here: it accepts an unknown value and
+            # settles on NORMAL without erroring.
+            print(f"[SQLiteDriver] EVENT_BUS_SQLITE_SYNCHRONOUS={sync!r} is not one of "
+                  f"{sorted(_SYNC_MODES)} — using FULL.")
         self._synchronous: str = sync if sync in _SYNC_MODES else "FULL"
         self._conn: Optional[sqlite3.Connection] = None
         self._db_lock = threading.Lock()

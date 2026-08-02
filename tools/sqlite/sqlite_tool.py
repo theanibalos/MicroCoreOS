@@ -229,10 +229,10 @@ class SqliteTool(BaseTool):
         sql, params = _normalize_sql(sql, params)
         for attempt in range(3):
             try:
-                cursor = await self._db.execute(sql, params)
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                rows = await cursor.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
+                async with self._db.execute(sql, params) as cursor:
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    rows = await cursor.fetchall()
+                    return [dict(zip(columns, row)) for row in rows]
             except aiosqlite.OperationalError as e:
                 if "database is locked" in str(e) or "database is busy" in str(e):
                     if attempt < 2:
@@ -263,10 +263,10 @@ class SqliteTool(BaseTool):
         sql, params = _normalize_sql(sql, params)
         for attempt in range(3):
             try:
-                cursor = await self._db.execute(sql, params)
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                row = await cursor.fetchone()
-                return dict(zip(columns, row)) if row is not None else None
+                async with self._db.execute(sql, params) as cursor:
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    row = await cursor.fetchone()
+                    return dict(zip(columns, row)) if row is not None else None
             except aiosqlite.OperationalError as e:
                 if "database is locked" in str(e) or "database is busy" in str(e):
                     if attempt < 2:
@@ -341,20 +341,22 @@ class SqliteTool(BaseTool):
         for attempt in range(3):
             try:
                 if re.search(r"\bRETURNING\b", sql.upper()):
-                    cursor = await self._db.execute(sql, params)
-                    row = await cursor.fetchone()
+                    async with self._db.execute(sql, params) as cursor:
+                        row = await cursor.fetchone()
                     if commit:
                         await self._db.commit()
                     if row is not None:
                         return row[0]
                     return None
                 else:
-                    cursor = await self._db.execute(sql, params)
+                    async with self._db.execute(sql, params) as cursor:
+                        # Read while the cursor is open: closing invalidates both.
+                        result = (cursor.lastrowid
+                                  if sql.strip().upper().startswith("INSERT")
+                                  else cursor.rowcount)
                     if commit:
                         await self._db.commit()
-                    if sql.strip().upper().startswith("INSERT"):
-                        return cursor.lastrowid
-                    return cursor.rowcount
+                    return result
             except aiosqlite.OperationalError as e:
                 if "database is locked" in str(e) or "database is busy" in str(e):
                     if attempt < 2:
@@ -451,8 +453,8 @@ class SqliteTool(BaseTool):
         try:
             if self._db is None:
                 return False
-            cursor = await self._db.execute("SELECT 1")
-            await cursor.fetchone()
+            async with self._db.execute("SELECT 1") as cursor:
+                await cursor.fetchone()
             return True
         except Exception:
             return False

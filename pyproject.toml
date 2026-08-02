@@ -13,6 +13,10 @@ dependencies = [
     "fastapi>=0.115.0",
     "pydantic[email]>=2.10.0",
     "python-dotenv>=1.0.0",
+    # No `import multipart` anywhere: Starlette imports it to parse form data,
+    # required at runtime by HttpServerTool.add_endpoint(has_files=True).
+    # Without it that documented capability raises at REQUEST time, not boot.
+    "python-multipart>=0.0.9",
     "pyyaml>=6.0.3",
     "uvicorn>=0.30.0",
     # No `import websockets` anywhere: it is uvicorn's WS protocol
@@ -84,6 +88,11 @@ pythonpath = ["."]
 markers = [
     "migrations(*domains): apply these domains' real migrations to the `db` fixture",
 ]
+# An exception in a thread fails nothing on its own: pytest turns it into a
+# warning and the run stays green. That is how an unclosed aiosqlite cursor
+# posting into a dead event loop went unnoticed. As an error it arrives with a
+# traceback the first time it happens instead of a summary line.
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 
 [tool.ruff.lint]
 # E701 (one-line `if x: return y`) is an accepted idiom in this codebase.

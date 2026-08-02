@@ -31,8 +31,10 @@ PUBLIC CONTRACT (what plugins use):
     # WebSocket endpoint
     http.add_ws_endpoint(
         path="/ws/chat",
-        on_connect=self.on_ws_connect,     # called when client connects (receives WebSocket)
+        on_connect=self.on_ws_connect,     # receives a WebSocketConnection (types.py)
         on_disconnect=self.on_ws_disconnect,  # optional, called on disconnect
+        auth_validator=self._validate,     # optional; rejects BEFORE the handshake.
+                                           # on_connect then takes (conn, auth_payload)
     )
 
     # Server-Sent Events endpoint
@@ -49,7 +51,8 @@ HANDLER SIGNATURE:
 
     async def execute(self, data: dict, context: HttpContext) -> dict:
         # 'data' is a flat dict merging: path params + query params + body
-        # If has_files=True, 'data["_files"]' contains the list of UploadFile objects.
+        # If has_files=True, 'data["_files"]' holds UploadedFile objects (types.py):
+        #   .filename  .content_type  .stream (sync, for storage clients)  await .read()
         # 'context' is an HttpContext handle for response manipulation
         return {"success": True, "data": {...}}
 
@@ -125,7 +128,7 @@ REPLACEMENT STANDARD (implement this to swap the backend):
     3. Implement the public methods:
           add_endpoint(path, method, handler, tags, request_model, response_model, auth_validator, has_files)
           mount_static(path, directory_path, html=False, allow_extensions=None)
-          add_ws_endpoint(path, on_connect, on_disconnect)
+          add_ws_endpoint(path, on_connect, on_disconnect, auth_validator)
           add_sse_endpoint(path, generator, tags, auth_validator)
     4. Handler contract: handler(data: dict, context: HttpContext) → dict
        - data: flat merge of path params + query params + body (+ _files if applicable)
@@ -156,6 +159,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.concurrency import run_in_threadpool
 
+# HttpContext and the request-processing pipeline were split out into their
+# own modules (mechanical move, no behavior change). Re-exported here since
+# external code imports HttpContext from this module.
+from tools.http_server.context import HttpContext  # noqa: F401 — re-export
+from tools.http_server.pipeline import _process_request, _sse_response, _extract_ws_token
+from tools.http_server.types import UploadedFile, WebSocketConnection  # noqa: F401 — re-export
+
 # Extensions mount_static() serves when the caller declares none.
 DEFAULT_STATIC_EXTENSIONS = frozenset({
     "html", "htm", "css", "js", "mjs", "json", "txt", "xml", "webmanifest",
@@ -163,12 +173,6 @@ DEFAULT_STATIC_EXTENSIONS = frozenset({
     "woff", "woff2", "ttf", "otf",
     "mp4", "webm", "mp3", "ogg", "wasm", "pdf",
 })
-
-# HttpContext and the request-processing pipeline were split out into their
-# own modules (mechanical move, no behavior change). Re-exported here since
-# external code imports HttpContext from this module.
-from tools.http_server.context import HttpContext  # noqa: F401 — re-export
-from tools.http_server.pipeline import _process_request, _sse_response
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -241,11 +245,25 @@ class HttpServerTool(BaseTool):
             response.headers["X-Frame-Options"] = "DENY"
             return response
 
-        cors_origins_raw = os.getenv("HTTP_CORS_ORIGINS", "*")
         cors_origins = [o.strip() for o in cors_origins_raw.split(",")] if cors_origins_raw != "*" else ["*"]
+        # Cookie auth from a different origin needs this on; it is off by
+        # default because turning it on makes every cross-origin request
+        # carry the session cookie.
+        allow_credentials = os.getenv("HTTP_CORS_CREDENTIALS", "false").strip().lower() == "true"
+
+        if allow_credentials and "*" in cors_origins:
+            # Starlette answers this pair by echoing the caller's Origin back,
+            # so every site could send the session cookie — and the preflight
+            # would approve the X-Requested-With that the CSRF guard needs.
+            raise ValueError(
+                "HTTP_CORS_CREDENTIALS=true requires an explicit HTTP_CORS_ORIGINS list. "
+                "With '*' every origin would be allowed to send the session cookie."
+            )
+
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
+            allow_credentials=allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -297,7 +315,8 @@ class HttpServerTool(BaseTool):
           'data' = flat merge of [path params] + [query params] + [body/form fields].
           Special keys in 'data':
             - data["_auth"]: contains the payload from auth_validator if successful.
-            - data["_files"]: list of FastAPI UploadFile objects (only if has_files=True).
+            - data["_files"]: list of UploadedFile objects (only if has_files=True).
+                Fields: .filename, .content_type, .stream (sync file object), await .read().
         - SECURITY DEFAULTS:
             - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
             - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
@@ -316,7 +335,12 @@ class HttpServerTool(BaseTool):
                 always refused except under '.well-known/'. Use html=True to serve
                 index.html for directory requests, which a UI/SPA mounted at "/" needs.
                 Raises ValueError if the directory does not exist.
-            - add_ws_endpoint(path, on_connect, on_disconnect=None): WebSocket support.
+            - add_ws_endpoint(path, on_connect, on_disconnect=None, auth_validator=None):
+                WebSocket support. on_connect receives a WebSocketConnection: send_text,
+                send_json, receive_text, receive_json, close, query_params, path_params.
+                With auth_validator the token is read from the Authorization header, the
+                `token` query param, then the access_token cookie; an invalid one is
+                closed with 1008 BEFORE the handshake and on_connect takes (conn, payload).
             - add_sse_endpoint(path, generator, tags=None, auth_validator=None):
                 Server-Sent Events. generator yields formatted strings: "data: {...}\\n\\n".
             - register_pre_mount_hook(hook): hook(endpoints: list[dict]) is called once in
@@ -498,30 +522,69 @@ class HttpServerTool(BaseTool):
             )
             print(f"[HttpServer] Static mount — {m['path']!r} → {m['directory_path']!r} (html={m['html']})")
 
-    def add_ws_endpoint(self, path: str, on_connect: Callable, on_disconnect: Optional[Callable] = None) -> None:
-        """Registers a WebSocket endpoint."""
+    def add_ws_endpoint(
+        self,
+        path: str,
+        on_connect: Callable,
+        on_disconnect: Optional[Callable] = None,
+        auth_validator: Optional[Callable] = None,
+    ) -> None:
+        """
+        Registers a WebSocket endpoint.
+
+        auth_validator has the same contract as add_endpoint's: it receives the
+        token and returns a payload, or a falsy value to reject. It runs BEFORE
+        the handshake is accepted — a rejected connection is closed with 1008
+        and on_connect never sees it.
+
+        Browsers cannot set headers on a WebSocket handshake, so the token is
+        read from the Authorization header, the `token` query parameter, then
+        the access_token cookie, in that order. The query parameter is there
+        because browsers have no other option; it lands in access logs and
+        proxy logs, so prefer short-lived tokens for it.
+
+        on_connect receives a WebSocketConnection (see types.py) plus, when
+        auth_validator is set, the payload it returned.
+        """
         @self.app.websocket(path)
         async def ws_handler(websocket: WebSocket):
+            auth_payload = None
+            if auth_validator:
+                token = _extract_ws_token(websocket)
+                if token:
+                    if inspect.iscoroutinefunction(auth_validator):
+                        auth_payload = await auth_validator(token)
+                    else:
+                        auth_payload = await run_in_threadpool(auth_validator, token)
+                if not auth_payload:
+                    # Rejected before accept(): no handshake, nothing to close
+                    # gracefully, and on_connect is never reached.
+                    await websocket.close(code=1008)
+                    print(f"[HttpServer] 🛡️ WebSocket rejected on {path}: invalid or missing token")
+                    return
+
             await websocket.accept()
+            conn = WebSocketConnection(websocket)
+            args = (conn, auth_payload) if auth_validator else (conn,)
             try:
                 if inspect.iscoroutinefunction(on_connect):
-                    await on_connect(websocket)
+                    await on_connect(*args)
                 else:
-                    await run_in_threadpool(on_connect, websocket)
+                    await run_in_threadpool(on_connect, *args)
             except WebSocketDisconnect:
                 if on_disconnect:
                     if inspect.iscoroutinefunction(on_disconnect):
-                        await on_disconnect(websocket)
+                        await on_disconnect(conn)
                     else:
-                        await run_in_threadpool(on_disconnect, websocket)
+                        await run_in_threadpool(on_disconnect, conn)
             except Exception as e:
                 print(f"[HttpServer] WebSocket error on {path}: {e}")
                 if on_disconnect:
                     try:
                         if inspect.iscoroutinefunction(on_disconnect):
-                            await on_disconnect(websocket)
+                            await on_disconnect(conn)
                         else:
-                            await run_in_threadpool(on_disconnect, websocket)
+                            await run_in_threadpool(on_disconnect, conn)
                     except Exception:
                         pass
 

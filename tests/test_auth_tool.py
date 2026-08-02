@@ -105,3 +105,36 @@ def test_init_with_short_secret_raises(monkeypatch):
     monkeypatch.setenv("AUTH_SECRET_KEY", "too-short")
     with pytest.raises(ValueError, match="at least 32 characters"):
         AuthTool()
+
+
+# ─── password length ─────────────────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_the_whole_password_counts_past_bcrypt_72_byte_limit(tool):
+    """
+    Bare bcrypt stops reading at 72 bytes, so two passwords sharing that prefix
+    verify against the same hash. Pre-hashing is what makes the tail matter.
+    """
+    base = "A" * 72
+    h = await tool.hash_password(base + "-first-suffix")
+
+    assert await tool.verify_password(base + "-first-suffix", h) is True
+    assert await tool.verify_password(base + "-second-suffix", h) is False
+    assert await tool.verify_password(base, h) is False
+
+
+@pytest.mark.anyio
+async def test_a_nul_byte_does_not_end_the_password(tool):
+    """bcrypt also stops at the first NUL; the digest has none."""
+    h = await tool.hash_password("secret\x00tail")
+
+    assert await tool.verify_password("secret\x00tail", h) is True
+    assert await tool.verify_password("secret", h) is False
+
+
+@pytest.mark.anyio
+async def test_unicode_passwords_round_trip(tool):
+    h = await tool.hash_password("contraseña-ñ-日本語-🔐")
+
+    assert await tool.verify_password("contraseña-ñ-日本語-🔐", h) is True
+    assert await tool.verify_password("contraseña-ñ-日本語", h) is False

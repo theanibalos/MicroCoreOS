@@ -260,7 +260,7 @@ def test_every_setting_add_can_write_is_documented_in_the_example():
 
 def test_example_boxes_line_up():
     lines, _ = _example_sections()
-    box_lines = [l for l in lines if l.startswith("# ") and l[2] in "╔║╚╭│╰"]
+    box_lines = [ln for ln in lines if ln.startswith("# ") and ln[2] in "╔║╚╭│╰"]
 
-    assert len({len(l) for l in box_lines}) == 1, \
-        sorted({len(l) for l in box_lines})
+    assert len({len(ln) for ln in box_lines}) == 1, \
+        sorted({len(ln) for ln in box_lines})

@@ -335,3 +335,140 @@ def test_mount_static_raises_when_path_is_a_file(tool, tmp_path):
 
     with pytest.raises(ValueError, match="directory not found"):
         tool.mount_static("/static", str(f))
+
+
+# ─── contract boundary: no framework objects reach plugins ───────────────────
+
+async def test_uploaded_files_reach_the_plugin_as_a_contract_type(tool, client):
+    """
+    A plugin holding Starlette's UploadFile makes Starlette part of the
+    contract, and no replacement implementation can reproduce it.
+    """
+    from tools.http_server.types import UploadedFile
+
+    seen = {}
+
+    async def handler(data, context):
+        f = data["_files"][0]
+        seen["type"] = type(f)
+        seen["filename"] = f.filename
+        seen["content_type"] = f.content_type
+        seen["via_read"] = await f.read()
+        seen["via_stream"] = hasattr(f.stream, "read")
+        return {"success": True}
+
+    tool.add_endpoint("/upload", "POST", handler, has_files=True)
+    tool._register_all_endpoints()
+
+    await client.post("/upload", files={"files": ("note.txt", b"hello", "text/plain")})
+
+    assert seen["type"] is UploadedFile
+    assert "starlette" not in type(seen["type"]).__module__
+    assert seen["filename"] == "note.txt"
+    assert seen["content_type"] == "text/plain"
+    assert seen["via_read"] == b"hello"
+    assert seen["via_stream"], "storage clients need the sync stream"
+
+
+async def test_uploaded_file_keeps_the_documented_file_alias(tool, client):
+    """The contract documented `file.file` for boto3's upload_fileobj."""
+    seen = {}
+
+    async def handler(data, context):
+        seen["same"] = data["_files"][0].file is data["_files"][0].stream
+        return {"success": True}
+
+    tool.add_endpoint("/upload", "POST", handler, has_files=True)
+    tool._register_all_endpoints()
+    await client.post("/upload", files={"files": ("a.bin", b"x", "application/octet-stream")})
+
+    assert seen["same"]
+
+
+def test_websocket_handler_receives_a_contract_type(tool):
+    """Same boundary for WebSockets: the plugin never holds Starlette's object."""
+    from fastapi.testclient import TestClient
+    from tools.http_server.types import WebSocketConnection
+
+    seen = {}
+
+    async def on_connect(conn):
+        seen["type"] = type(conn)
+        await conn.send_json({"ok": True})
+
+    tool.add_ws_endpoint("/ws", on_connect)
+
+    with TestClient(tool.app).websocket_connect("/ws") as ws:
+        assert ws.receive_json() == {"ok": True}
+
+    assert seen["type"] is WebSocketConnection
+
+
+# ─── WebSocket authentication ────────────────────────────────────────────────
+
+def _authed_tool(tool):
+    async def validator(token):
+        return {"user_id": 7} if token == "good" else None
+    return validator
+
+
+def test_ws_rejects_a_bad_token_before_accepting(tool):
+    """
+    Rejection has to happen before the handshake: an accepted socket is an
+    authenticated one as far as the plugin is concerned.
+    """
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    reached = []
+    tool.add_ws_endpoint("/ws", lambda conn, payload: reached.append(1),
+                         auth_validator=_authed_tool(tool))
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(tool.app).websocket_connect("/ws?token=bad"):
+            pass
+
+    assert exc.value.code == 1008
+    assert reached == [], "on_connect must never see a rejected connection"
+
+
+def test_ws_rejects_a_missing_token(tool):
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    tool.add_ws_endpoint("/ws", lambda conn, payload: None, auth_validator=_authed_tool(tool))
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(tool.app).websocket_connect("/ws"):
+            pass
+    assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize("connect", [
+    lambda c: c.websocket_connect("/ws?token=good"),
+    lambda c: c.websocket_connect("/ws", headers={"Authorization": "Bearer good"}),
+])
+def test_ws_accepts_a_valid_token_from_either_source(tool, connect):
+    """Browsers cannot set headers on a handshake, hence the query parameter."""
+    from fastapi.testclient import TestClient
+
+    async def on_connect(conn, payload):
+        await conn.send_json(payload)
+
+    tool.add_ws_endpoint("/ws", on_connect, auth_validator=_authed_tool(tool))
+
+    with connect(TestClient(tool.app)) as ws:
+        assert ws.receive_json() == {"user_id": 7}
+
+
+def test_ws_without_a_validator_stays_a_single_argument_handler(tool):
+    """Endpoints that never asked for auth keep the original signature."""
+    from fastapi.testclient import TestClient
+
+    async def on_connect(conn):
+        await conn.send_text("open")
+
+    tool.add_ws_endpoint("/ws", on_connect)
+
+    with TestClient(tool.app).websocket_connect("/ws") as ws:
+        assert ws.receive_text() == "open"
