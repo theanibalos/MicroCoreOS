@@ -376,6 +376,62 @@ def _install_test_deps(root: str) -> bool:
     return True
 
 
+def _write_initial_env(example_path: str, env_path: str) -> None:
+    """
+    Initializes .env from .env.example.
+
+    `.env.example` is the reference containing all commented options for extras.
+    `.env` is active state: only settings in effect, omitting commented-out
+    optional extra settings so that `microcoreos add <extra>` can append them cleanly.
+    """
+    from microcoreos.catalog import CATALOG
+
+    extra_vars = {
+        var for extra in CATALOG.values() if extra.env for var, _, _ in extra.env
+    }
+
+    with open(example_path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    out_lines = []
+    skip_section = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Omit commented-out settings for optional extras
+        if stripped.startswith("#") and any(
+            stripped.lstrip("#").strip().startswith(f"{var}=") for var in extra_vars
+        ):
+            continue
+
+        # Omit section header boxes for optional extras
+        if stripped.startswith("# │") and "microcoreos add" in stripped:
+            skip_section = True
+            if out_lines and "# ╭──" in out_lines[-1]:
+                out_lines.pop()
+            continue
+
+        if skip_section and ("# ╰──" in stripped or "# │" in stripped):
+            if "# ╰──" in stripped:
+                skip_section = False
+            continue
+
+        out_lines.append(line)
+
+    cleaned = []
+    prev_blank = False
+    for line_item in out_lines:
+        is_blank = not line_item.strip()
+        if is_blank and prev_blank:
+            continue
+        cleaned.append(line_item)
+        prev_blank = is_blank
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(cleaned)
+
+
 def new(argv: list[str]) -> int:
     """`microcoreos new <path> [--force] [--no-ai-kit] [--no-install]`"""
     force = "--force" in argv
@@ -405,7 +461,7 @@ def new(argv: list[str]) -> int:
     # .env is configuration, not source: never clobber one that exists.
     env, example = os.path.join(target, ".env"), os.path.join(target, ".env.example")
     if os.path.exists(example) and not os.path.exists(env):
-        shutil.copy2(example, env)
+        _write_initial_env(example, env)
 
     name = os.path.basename(target).replace("_", "-").lower() or "my-app"
 
