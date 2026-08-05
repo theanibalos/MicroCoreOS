@@ -137,12 +137,13 @@ class RabbitMQDriver(EventBusDriver):
         print("[System] RabbitMQDriver: Distributed transport ready.")
 
     async def shutdown(self) -> None:
-        for sub in list(self._subs):
-            await self._stop_subscription(sub)
-        self._subs.clear()
-        if self._connection is not None:
-            await self._connection.close()
-            self._connection = None
+        async with self._pub_lock:
+            for sub in list(self._subs):
+                await self._stop_subscription(sub)
+            self._subs.clear()
+            if self._connection is not None:
+                await self._connection.close()
+                self._connection = None
 
     async def _declare_exchange(self, channel) -> AbstractExchange:
         return await channel.declare_exchange(
