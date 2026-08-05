@@ -1,6 +1,6 @@
 [project]
 name = "microcoreos"
-version = "0.3.1"
+version = "0.3.2"
 description = "Atomic Microkernel Architecture optimized for AI-Driven Development"
 license = {text = "MIT"}
 readme = "README.md"
