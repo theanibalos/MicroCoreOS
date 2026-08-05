@@ -298,33 +298,6 @@ Async SQLite Persistence Tool (sqlite):
 
 ## 📦 Domains
 
-### `chaos`
-- **Tables**: none
-- **Endpoints**:
-  - `GET /system/chaos`
-    - **res**: ChaosStateData(faults: list[FaultSpecView(tool: str, source: str, mode: str, plugin: Optional[str], rate: Optional[float], seconds: Optional[float])], wrapped_tools: list[str], paused_plugins: list[str])
-  - `POST /system/chaos/fail`
-    - **req**: plugin: str, tool: Optional[str], rate: float
-    - **res**: FailData(plugin: str, tool: Optional[str], rate: float)
-  - `POST /system/chaos/latency`
-    - **req**: plugin: Optional[str], tool: Optional[str], seconds: float
-    - **res**: LatencyData(plugin: Optional[str], tool: Optional[str], seconds: float)
-  - `POST /system/chaos/off`
-    - **req**: plugin: str
-    - **res**: PluginPauseData(plugin: str, paused: bool)
-  - `POST /system/chaos/on`
-    - **req**: plugin: str
-    - **res**: PluginPauseData(plugin: str, paused: bool)
-  - `POST /system/chaos/reset`
-    - **res**: ResetData(cleared: int, restored_tools: list[str], resumed_plugins: list[str])
-  - `POST /system/chaos/tool`
-    - **req**: name: str, mode: Literal['down', 'slow', 'flaky', 'off'], seconds: float, rate: float
-    - **res**: ToolFaultData(name: str, mode: str)
-- **Events emitted**: `system.chaos.fail_armed` (plugin, rate, tool), `system.chaos.latency_armed` (plugin, seconds, tool), `system.chaos.plugin_paused` (plugin), `system.chaos.plugin_resumed` (plugin), `system.chaos.reset` (cleared), `system.chaos.tool_fault_armed` (mode, tool)
-- **Events consumed**: none
-- **Dependencies**: container, event_bus, http, logger
-- **Plugins**: chaos.ChaosControlPlugin
-
 ### `devtools`
 - **Tables**: none
 - **Endpoints**:

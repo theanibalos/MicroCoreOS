@@ -190,7 +190,7 @@ The Kernel is "logic-free." `ToolProxy` observes and reports health but **never 
 
 **Tool Call Metrics** — Every tool method call is automatically timed by ToolProxy. Access via `registry.get_metrics()` or attach a real-time sink.
 
-**OpenTelemetry** (optional) — Set `OTEL_ENABLED=true`. Every tool call gets a span. Export to Jaeger, Grafana Tempo, Datadog. Zero changes to plugins.
+**OpenTelemetry** (optional) — Set `OTEL_ENABLED=true`. Every tool call gets a span AND is recorded as a histogram (`tool_call_duration_ms`) + counter (`tool_call_total`). Export to Jaeger, Grafana Tempo, Prometheus, Datadog. Zero changes to plugins.
 
 ---
 

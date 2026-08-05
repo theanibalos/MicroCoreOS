@@ -47,10 +47,12 @@ The **`GET /system/metrics`** endpoint returns performance data for every tool c
 
 ## OpenTelemetry Integration
 
-When `OTEL_ENABLED=true`, MicroCoreOS automatically exports spans to any OTLP-compatible collector (Jaeger, Zipkin, Honeycomb).
+When `OTEL_ENABLED=true`, MicroCoreOS automatically exports spans AND metrics to any OTLP-compatible collector (Jaeger, Zipkin, Honeycomb, Prometheus via an OTel Collector).
 
-- **Auto-instrumentation**: Every tool call (DB queries, Cache hits, Event publishes) gets a span automatically via `ToolProxy`.
+- **Auto-instrumentation (spans)**: Every tool call (DB queries, Cache hits, Event publishes) gets a span automatically via `ToolProxy`.
+- **Auto-instrumentation (metrics)**: The same `ToolProxy` timing that feeds `registry.get_metrics()` / `GET /system/metrics` also records an OTel histogram (`tool_call_duration_ms`) and counter (`tool_call_total`), tagged with `tool`/`method`/`success`. This is what makes the tool-call metrics queryable from Prometheus/Grafana instead of only from the JSON snapshot/SSE stream.
 - **HTTP spans**: `HttpServerTool` instruments FastAPI with `FastAPIInstrumentor` (requires `opentelemetry-instrumentation-fastapi`). Adds per-request spans with method, route, status code, and latency.
+- **Custom instruments**: `self.telemetry.get_tracer(scope)` / `self.telemetry.get_meter(scope)` are available inside any plugin for custom spans/metrics beyond the automatic tool-call ones. Both return no-op implementations when OTel is disabled — safe to call unconditionally.
 - **Causality (intra-process)**: The Event Bus propagates `parent_id` through `EventEnvelope`, building causal trees of events within the same process. This is not OTel trace propagation — it is a separate, native mechanism queryable at `/system/traces/tree`.
 
 > OTel trace ID propagation across process boundaries via the Event Bus is not currently implemented. For distributed tracing, use the standard W3C `traceparent` header on HTTP calls between services.

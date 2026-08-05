@@ -257,7 +257,9 @@ def test_new_gives_your_own_pyproject_what_the_generated_tests_need(tmp_path):
 def test_new_leaves_a_pyproject_that_already_configures_pytest_alone(tmp_path, capsys):
     """Appending a second `[tool.pytest.ini_options]` is invalid TOML, and
     merging means choosing between two `pythonpath` values with no way to know
-    which was meant. So this one case reports instead of guessing."""
+    which was meant. So this one case reports instead of guessing. The pytest
+    and ruff tables are independent: this pyproject has no `[tool.ruff.lint]`,
+    so that one still gets added."""
     target = tmp_path / "proj"
     target.mkdir()
     mine = ('[project]\nname = "mine"\n\n'
@@ -266,14 +268,17 @@ def test_new_leaves_a_pyproject_that_already_configures_pytest_alone(tmp_path, c
 
     assert cli.main(["new", str(target), "--no-install"]) == 0
 
-    assert (target / "pyproject.toml").read_text(encoding="utf-8") == mine
+    text = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert text.startswith(mine)
+    assert "[tool.ruff.lint]" in text
     assert 'pythonpath = ["."]' in capsys.readouterr().out
 
 
 def test_new_installs_the_test_runner_unless_told_not_to(tmp_path, monkeypatch):
     """Configuring pytest in a project that does not have it installed is the
     half-step that reads as done: `testpaths` points at a suite and
-    `uv run -m pytest` answers "No module named pytest"."""
+    `uv run -m pytest` answers "No module named pytest". Same for the
+    `[tool.ruff.lint]` table `_ensure_lint_config` adds alongside it."""
     calls = []
     monkeypatch.setattr("microcoreos.scaffold.subprocess.run",
                         lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(returncode=0))
@@ -283,7 +288,7 @@ def test_new_installs_the_test_runner_unless_told_not_to(tmp_path, monkeypatch):
     (target / "pyproject.toml").write_text('[project]\nname = "mine"\n', encoding="utf-8")
 
     assert cli.main(["new", str(target)]) == 0
-    assert calls == [["uv", "add", "--dev", "pytest", "anyio"]]
+    assert calls == [["uv", "add", "--dev", "pytest", "anyio", "ruff"]]
 
     calls.clear()
     assert cli.main(["new", str(target), "--force", "--no-install"]) == 0
@@ -298,7 +303,8 @@ def test_new_says_nothing_when_the_pyproject_already_configures_pytest(tmp_path,
 
     assert cli.main(["new", str(target)]) == 0
 
-    assert (target / "pyproject.toml").read_text(encoding="utf-8") == mine
+    text = (target / "pyproject.toml").read_text(encoding="utf-8")
+    assert text.startswith(mine)
     assert "left untouched" not in capsys.readouterr().out
 
 
@@ -313,3 +319,5 @@ def test_generated_pyproject_installs_the_runner_it_configures(tmp_path):
     assert "[dependency-groups]" in text
     assert "pytest" in text.split("[dependency-groups]")[1]
     assert "anyio" in text.split("[dependency-groups]")[1]
+    assert "ruff" in text.split("[dependency-groups]")[1]
+    assert "[tool.ruff.lint]" in text

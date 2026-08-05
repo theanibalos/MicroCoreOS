@@ -107,11 +107,23 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "anyio>=4.0.0",
+    "ruff>=0.15.16",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# Vendored tools under tools/ (e.g. telemetry_tool.py) use broad
+# `except Exception` on purpose, to degrade gracefully when a swappable
+# driver or optional dependency is missing. Ruff's wider preview default
+# selection flags that as BLE001/S110 — pin select to the set this
+# framework is actually written against instead of excluding those tools.
+[tool.ruff.lint]
+ignore = ["E701"]
+select = ["E4", "E7", "E9", "F", "PLW1514"]
+preview = true
+explicit-preview-rules = true
 """
 
 NEXT_STEPS = """
@@ -325,6 +337,51 @@ PYTEST_TABLE_IS_YOURS = """
          pythonpath = ["."]
 """
 
+# Vendored tools under tools/ (e.g. telemetry_tool.py) use broad
+# `except Exception` on purpose, to degrade gracefully when a swappable
+# driver or optional dependency is missing. Ruff's wider preview default
+# selection flags that as BLE001/S110 — without this table, `ruff check .`
+# on a fresh project fails hard on code this framework ships intentionally.
+RUFF_CONFIG_BLOCK = """
+# Added by `microcoreos new`. See tools/*/  — broad `except Exception` there
+# is intentional graceful degradation, not an oversight ruff should flag.
+[tool.ruff.lint]
+ignore = ["E701"]
+select = ["E4", "E7", "E9", "F", "PLW1514"]
+preview = true
+explicit-preview-rules = true
+"""
+
+RUFF_TABLE_IS_YOURS = """
+   ⚠️  Your pyproject.toml already configures ruff, so it was left alone.
+       Vendored tools under tools/ use broad `except Exception` on purpose
+       (graceful degradation when a driver or optional dependency is
+       missing) — if lint flags that, narrow `select` the way this
+       framework's own pyproject.toml does, or ignore BLE001/S110.
+"""
+
+
+def _ensure_lint_config(pyproject: str) -> bool:
+    """Give the user's own pyproject the ruff scope the vendored tools need.
+
+    Same discipline as `_ensure_test_config`: add only what is missing, never
+    rewrite what is there. Without this, code copied out of a codebase that
+    passes lint with a narrow `select` fails lint the moment it lands in a
+    project whose pyproject carries no ruff config at all.
+    """
+    with open(pyproject, encoding="utf-8") as f:
+        existing = f.read()
+
+    if "[tool.ruff.lint]" in existing:
+        print(RUFF_TABLE_IS_YOURS)
+        return False
+
+    with open(pyproject, "a", encoding="utf-8") as f:
+        f.write(RUFF_CONFIG_BLOCK)
+    print("   ✓ pyproject.toml += [tool.ruff.lint] "
+          "(select scoped to what vendored tools are written against)")
+    return True
+
 
 def _ensure_test_config(pyproject: str) -> bool:
     """Give the user's own pyproject what the generated tests need.
@@ -357,21 +414,23 @@ def _ensure_test_config(pyproject: str) -> bool:
 
 
 def _install_test_deps(root: str) -> bool:
-    """`uv add --dev pytest anyio` — the runner the generated tests need.
+    """`uv add --dev pytest anyio ruff` — what the generated tests and the
+    `[tool.ruff.lint]` table `_ensure_lint_config` just added both need.
 
     Configuring pytest in a project that does not have it installed is the
     half-step that reads as done: `testpaths` points at a suite and
-    `uv run -m pytest` answers "No module named pytest".
+    `uv run -m pytest` answers "No module named pytest". Same for ruff: a
+    scoped `select` that nothing can run is just as half-finished.
     """
     if shutil.which("uv") is None:
         print("   ⚠ uv not found. Install them yourself: "
-              "pip install pytest anyio")
+              "pip install pytest anyio ruff")
         return False
 
-    print("   $ uv add --dev pytest anyio")
-    result = subprocess.run(["uv", "add", "--dev", "pytest", "anyio"], cwd=root)
+    print("   $ uv add --dev pytest anyio ruff")
+    result = subprocess.run(["uv", "add", "--dev", "pytest", "anyio", "ruff"], cwd=root)
     if result.returncode != 0:
-        print("   ⚠ uv add failed. Run it yourself: uv add --dev pytest anyio")
+        print("   ⚠ uv add failed. Run it yourself: uv add --dev pytest anyio ruff")
         return False
     return True
 
@@ -494,12 +553,14 @@ def new(argv: list[str]) -> int:
 
     print(NEXT_STEPS.format(target=positional[0]))
 
-    # The pyproject we wrote already carries both; the user's carries neither,
-    # and leaving them to paste it by hand is a manual step in the middle of the
-    # one flow that is supposed to be a single line — `uv init && uv add
-    # microcoreos && microcoreos new .` is documented as supported.
+    # The pyproject we wrote already carries all three; the user's carries
+    # none of them, and leaving them to paste it by hand is a manual step in
+    # the middle of the one flow that is supposed to be a single line —
+    # `uv init && uv add microcoreos && microcoreos new .` is documented as
+    # supported.
     if not wrote_pyproject:
         _ensure_test_config(pyproject)
+        _ensure_lint_config(pyproject)
         if not no_install:
             _install_test_deps(target)
     return 0
