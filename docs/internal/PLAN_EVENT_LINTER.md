@@ -75,7 +75,7 @@ An `event_bus.add_listener(...)` sink that validates every real payload against 
 
 Opt-in convention `domains/{domain}/events.py` with Pydantic models for the events the domain **emits** (the event's owner is its publisher). The linter — not the plugins — loads and validates them: (a) the emitting domain's literal publishes against its model, (b) consumer accesses against the model's fields. Consumers never import those models (the cross-domain prohibition holds: the only reader is the system domain's linter via filesystem/AST). This would add type checking, not just keys. Do NOT implement until Phase 1 is validated in real use.
 
-## Tests (`tests/domains/system/test_event_contract_linter.py`)
+## Tests (`tests/linters/test_event_contract_linter.py`)
 
 Unit tests of the analyzer with plugin sources as string fixtures (no real filesystem, use `ast.parse` directly):
 1. Publish with a dict literal + consumer with a Subscript of a present key → no findings.

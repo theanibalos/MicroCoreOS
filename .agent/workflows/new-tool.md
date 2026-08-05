@@ -20,6 +20,12 @@ else about them exists so they can be swapped without touching a single plugin.
 1. **Location**: `tools/{name}/{name}_tool.py` — or `extras/available_tools/{name}/`
    if it should not be active by default (a replacement ALWAYS starts in
    extras/: two tools with the same `name` silently overwrite each other).
+   **The tool's own tests go in `{that folder}/tests/`**, so they travel with
+   the tool when `microcoreos add` moves it. Import the tool the way those
+   tests do — `tools.{name}` first, `extras.available_tools.{name}` as the
+   fallback — or the import dies the moment the folder moves. Parity suites
+   are the exception: they import two implementations at once, so they stay in
+   `tests/tools/{name}/`.
 2. **The `name` property is the contract** — it is the DI injection key.
 3. **A tool never uses other tools.** If a capability needs `db` + `event_bus`
    + `scheduler`, it is not a tool: compose it in the plugin layer
@@ -52,8 +58,8 @@ No imports from other tools, no plugin imports, stateless where possible.
 
 The same test battery runs against the reference implementation AND yours:
 
-- Canonical examples: `tests/tools/test_state_parity.py`,
-  `tests/tools/test_event_bus_broker_parity.py` (parameterized over transports).
+- Canonical examples: `tests/tools/state/test_state_parity.py`,
+  `tests/tools/event_bus/test_event_bus_broker_parity.py` (parameterized over transports).
 - If the backend needs a server, the suite skips itself when unavailable and
   the server is added to CI services (`dev_infra/docker-compose.yml`).
 - **A replacement that does not pass the reference's parity suite is not a

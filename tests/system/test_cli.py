@@ -162,7 +162,7 @@ def test_the_delegation_import_is_not_at_module_level():
     make `import microcoreos.cli` — and therefore every `microcoreos run` —
     fail outright on exactly the deploy this split exists to keep clean.
 
-    tests/test_core_purity.py asserts the same thing statically, across the
+    tests/core/test_core_purity.py asserts the same thing statically, across the
     whole package. This one proves the runtime consequence.
     """
     import importlib

@@ -143,7 +143,7 @@ That is the code your app depends on, and it is the whole of it: booting loads
 `kernel`, `container`, `registry`, `context` and the two base classes, and
 nothing else. The rest of the package — the scaffolder, the extras catalog,
 `upgrade` — is the `microcoreos` command, build-time work that never executes
-inside your application. `tests/test_core_purity.py` enforces both halves of
+inside your application. `tests/core/test_core_purity.py` enforces both halves of
 that: a third-party import in the kernel fails the suite, and so does the
 kernel importing the CLI half.
 
@@ -176,7 +176,7 @@ This pattern works for any infrastructure: swap the event bus backend, the HTTP 
 
 Additional tools — PostgreSQL, Redis state, auth, S3, the scheduler, chaos — ship in `extras/` and install with `microcoreos add <name>`. If the new tool reuses an existing `name` (e.g. `redis_state` registers as `"state"`), move the tool it replaces out of `tools/` first: only one tool per name may be discovered.
 
-The Redis state swap is verified by a parity suite (`tests/tools/test_state_parity.py`): the same contract battery runs against the in-memory reference and against a real Redis, so the replacement is proven equivalent, not assumed.
+The Redis state swap is verified by a parity suite (`tests/tools/state/test_state_parity.py`): the same contract battery runs against the in-memory reference and against a real Redis, so the replacement is proven equivalent, not assumed.
 
 ### Honest Kernel & Smart Infrastructure.
 

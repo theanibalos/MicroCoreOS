@@ -30,8 +30,8 @@ existing vocabulary implies, put it in the YAML, and flag it in a comment.
 
 `docs/PARALLEL_DEVELOPMENT.md` § Phase 1 holds the rules behind the format.
 Read it when a validator error is unclear, not before — and never reach for
-plugin source under `domains/`, `tools/` or `extras/` to infer the shape. A
-planner that did produced a plan with every field renamed.
+plugin source under `domains/`, `tools/` or `extras/` to infer the shape:
+reading an implementation to infer the format renames every field in your plan.
 
 ## Prerequisites
 
@@ -127,10 +127,19 @@ assert_chain(build_tree(bus.get_trace_history()), ["order.cancelled", "order.ref
 ### 5. Close
 
 ```bash
-// turbo
-uv run main.py   # or: microcoreos (if you installed the package)
+microcoreos migrate   # the boot that ends: applies migrations, regenerates AI_CONTEXT.md
+```
+
+- Regenerated `AI_CONTEXT.md` matches the plan (routes, events, keys).
+  **The feature is done when AI_CONTEXT == plan.**
+
+Then, for the lint only — the one boot this workflow sanctions (`AGENTS.md`
+§ reading route). This boot **serves forever**: foreground, read, Ctrl-C.
+Never background it; a process holding port 5000 makes the next
+`microcoreos migrate` refuse to run.
+
+```bash
+microcoreos           # or: uv run main.py (identical) — Ctrl-C when done
 ```
 
 - `GET /system/lint` → no warnings, no `UNTYPED_PAYLOAD` for your events.
-- Regenerated `AI_CONTEXT.md` matches the plan (routes, events, keys).
-  **The feature is done when AI_CONTEXT == plan.**

@@ -41,15 +41,30 @@ ERRORS (IDENTICAL to PostgreSQL — same classification, same swap):
 
 PLACEHOLDERS: Plugins ALWAYS use $1, $2, $3... (PostgreSQL-style).
               This tool converts them internally to '?' for SQLite.
-              This enables direct SQLite <-> PostgreSQL swap without changing a line.
+              That is the whole of what the swap gives you for free: no plugin
+              changes a tool call, a signature or an error branch.
 
-⚠ MIGRATIONS RUN VERBATIM — NO DIALECT TRANSLATION:
-  Neither this tool nor the PostgreSQL tool translates SQL dialects. The .sql
-  files in domains/*/migrations/ are executed as-is on whichever engine is
-  active. Engine-specific SQL is a valid choice — it commits you to that
-  engine; portable SQL (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the
-  SQLite <-> PostgreSQL swap free. Either way, an engine swap includes a
-  review pass over all SQL (docs/ELASTIC_DEPLOYMENT.md, Stage 1).
+⚠ WHAT THE SWAP DOES *NOT* DO — THIS IS NOT AN ORM:
+  Neither this tool nor the PostgreSQL tool translates SQL dialects. Every
+  migration in domains/*/migrations/ and every query string in a plugin runs
+  VERBATIM on whichever engine is active. The tool normalizes the placeholder
+  and the error `kind`; the SQL you wrote is the SQL that executes.
+
+  So the swap is cheap but not automatic, and that is the deliberate trade:
+  no abstraction layer to maintain or fight, in exchange for one explicit
+  review pass per swap. The pass is finite and fully enumerable precisely
+  because nothing is generated or hidden — every table and every query is
+  somewhere you can grep:
+
+      domains/*/migrations/*.sql        every table
+      domains/*/plugins/*_plugin.py     every query (db.query, db.query_one,
+                                        db.execute, db.execute_many, tx.)
+      every `except` around a db./tx.   engine wording differs; branch on
+                                        `kind`, never on str(e)
+
+  Engine-specific SQL is a valid choice — it commits you to that engine.
+  Portable SQL (e.g. CURRENT_TIMESTAMP, not NOW()) keeps the swap free.
+  Either way the review happens: docs/ELASTIC_DEPLOYMENT.md, Stage 1.
 """
 
 import os
@@ -76,8 +91,8 @@ from tools.sqlite.migrations import run_migrations
 #
 # DatabaseError and _normalize_sql are re-exported above (imported into this
 # module's namespace) because external code imports them from
-# tools.sqlite.sqlite_tool, not from their new module — see tests/test_sqlite_tool.py
-# and tests/test_sqlite_concurrency.py.
+# tools.sqlite.sqlite_tool, not from their new module — see tests/tools/sqlite/test_sqlite_tool.py
+# and tests/tools/sqlite/test_sqlite_concurrency.py.
 #
 
 
@@ -497,7 +512,7 @@ class SqliteTool(BaseTool):
                         # schema intent. PostgreSQL makes every PK column NOT NULL,
                         # so normalizing here is what keeps describe_schema()
                         # identical across engines (see the cross-engine test in
-                        # tests/tools/test_db_parity.py).
+                        # tests/tools/db/test_db_parity.py).
                         "nullable": not col["notnull"] and not col["pk"],
                         "default": col["dflt_value"],
                         "primary_key": col["pk"] > 0,

@@ -215,7 +215,12 @@ fact seems to require reading code, it belongs in `AI_CONTEXT.md` or
 
 #### Features are black boxes — the plan is their contract
 
-An agent-written plugin is a black box: nobody reviews its internals, so the
+An agent-written plugin is a black box: what decides whether it stands is its
+contract and its test, not a reading of its internals. A feature that fails
+the contract is deleted and rebuilt by a fresh executor (Phase 3 —
+Reconstruct), which is why nobody has to read it: repairing someone else's
+generated code line by line costs more than regenerating it, and the agent
+that got it wrong the first time is not the one you ask to fix it. So the
 plan must pin down everything observable from outside — the route it serves
 (request in, response out), the events it publishes (exact payload fields),
 the events it consumes (the keys it reads), and the tables it touches (`db:`).
@@ -229,6 +234,17 @@ migrations applied, `event_bus` in-process) — the black-box style of
 runs; assert mock calls only for what the plan mocked. A feature may only read or
 write tables its own domain owns — data crosses domains as events, never as
 shared tables.
+
+**"Nobody has to read it" is not "nobody may read it."** Two things get read
+as a matter of course, and neither is a violation: reconstruction that keeps
+producing the same failure means the contract is wrong rather than the code,
+and diagnosing that means opening the file; and an engine swap runs a pass
+over every plugin query by hand (`ELASTIC_DEPLOYMENT.md` § Stage 1, step 3 —
+*"Reading is required"*). What holds during the wave is narrower and is about
+isolation, not permission: an executor never sees another feature's source,
+because a fresh context per executor is what keeps the shared prefix
+byte-stable and stops one agent's implementation from anchoring the next
+(`plans/README.md` § Step 4).
 
 #### Two failure planes
 
@@ -263,7 +279,7 @@ field that decides it:
 
 Crash *tests* split cleanly between transport and flow: redelivery itself is
 proven once, generically, by the transport's kill-and-reboot suite
-(`tests/tools/test_sqlite_driver.py`) — no feature ever writes a kill test.
+(`tests/tools/sqlite/test_sqlite_driver.py`) — no feature ever writes a kill test.
 What each flow must prove is its side of the bargain: **idempotency**. The
 `idempotency_test` delivers the same envelope twice to the consumer (same
 mocks as its unit test, still milliseconds) and asserts the final state and

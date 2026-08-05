@@ -83,7 +83,11 @@ packages = ["microcoreos", "microcoreos_dev"]
 path = "hatch_build.py"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# A tool's own tests live inside the tool's folder, so they travel with it
+# when `microcoreos add` moves it into tools/. This repo installs no extras,
+# so it collects extras/ too — a generated project collects only tests/ and
+# tools/, and an extra's tests join the suite the moment it is installed.
+testpaths = ["tests", "tools", "extras"]
 pythonpath = ["."]
 markers = [
     "migrations(*domains): apply these domains' real migrations to the `db` fixture",

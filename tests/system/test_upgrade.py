@@ -450,9 +450,10 @@ def test_content_shared_by_two_files_identifies_neither(project):
     root, template = project
     shutil.move(str(root / "extras" / "available_tools" / "postgresql"),
                 str(root / "tools" / "my-db"))
-    (root / "tools" / "my-db-backup").mkdir()
-    shutil.copy2(root / "tools" / "my-db" / "postgresql_tool.py",
-                 root / "tools" / "my-db-backup" / "postgresql_tool.py")
+    # A byte-identical second copy: the tie is the whole point, so copy the
+    # folder rather than a file out of it — a tool folder carries its own
+    # tests/ and any subset of it would be distinguishable, not ambiguous.
+    shutil.copytree(root / "tools" / "my-db", root / "tools" / "my-db-backup")
 
     assert cli.main(["upgrade"]) == 0
 

@@ -43,7 +43,7 @@ TRANSPORT MAPPING:
         ORDER BY id, so a single consumer sees each key's sequence intact.
         This used to read "no-op, the queue is totally ordered" — it was not:
         publish() is fire-and-forget and the hand-offs raced, so the row order
-        was the order threads won in. See docs/TECH_DEBT.md item 4.
+        was the order threads won in. See docs/internal/TECH_DEBT.md item 4.
     priority              → accepted but a no-op (no priority lanes) — same
         degradation as Redis Streams.
     ttl                   → enforced Bus-side at delivery (age check), so an

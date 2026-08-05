@@ -6,7 +6,7 @@ it over. pytest injects by parameter name too, so a test can use the same
 vocabulary: ask for `db`, `event_bus`, `auth`, then assert on what actually
 landed. No tool imports, no setup/teardown, no hand-rolled schema.
 
-Compare with the older style (tests/test_durable_one_shots.py): three tool
+Compare with the older style (tests/system/test_durable_one_shots.py): three tool
 imports, a hand-written stub, a MagicMock and a migration read by path.
 """
 

@@ -540,7 +540,7 @@ class PlanValidator:
     # Rules 5, 8 and 9 check only that a test is DECLARED, which is all they
     # can do while the plan is fresh and nothing is built. That leaves a hole
     # at the other end: once the wave has run, a plan may declare
-    # `tests/x.py::test_double_delivery` while the executor wrote x.py without
+    # `tests/x.py::test_double_delivery` while the executor wrote x.py without  lint:no-path
     # that function. Then `plan validate` is green, `pytest` is green — it
     # never selects a node that does not exist — and the property the plan
     # promised is neither implemented nor tested. Three checks pass and the

@@ -18,7 +18,7 @@ signal the deployment guide relies on.
 
 WHAT IT DOES *NOT* DO
 ─────────────────────
-It does not pick an engine. tests/tools/test_db_parity.py imports BOTH classes on
+It does not pick an engine. tests/tools/db/test_db_parity.py imports BOTH classes on
 purpose — its job is comparing engines side by side, which needs both at once.
 This helper is for the plugin suites, whose job is proving a feature works on
 whichever engine is installed.

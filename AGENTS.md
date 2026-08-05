@@ -27,12 +27,42 @@ Four roles do the work, and **each needs a different slice**. Reading outside
 your slice is not thoroughness, it is budget: the Planner that also loads the
 plugin templates spends ~3,000 tokens on code it will never write.
 
+They are phases, not people. Doing all of them yourself is the fifth row — the
+common case for one or two features — and it means playing the four in order,
+taking each slice as you enter it, not reading everything up front.
+
 | You are… | Read exactly this | **Write exactly this** | Not this |
 |---|---|---|---|
 | **Planner** — turning a request into a plan | **1.** `plans/active_plan.yaml` — the file you are about to overwrite. It ships as a worked example of all three feature shapes, and it is the cheapest, densest statement of the format there is. **2.** `AI_CONTEXT.md` **down to `## 🧩 Plugin Authoring Guide`** (existing tools, tables, models, routes, events). **3.** `docs/PARALLEL_DEVELOPMENT.md` **§ Phase 1** for the rules behind it | **`plans/active_plan.yaml` + `plans/active_plan.md`, overwriting them.** Never a new filename — `plans/twitter_plan.yaml` is a plan nothing will execute | The Authoring Guide, Phases 2-3, `domains/`, `tools/`, `tests/`, `extras/` |
 | **Phase 0 Builder** — migrations, models, tools | `plans/active_plan.yaml` **§ phase_0** only | Exactly the files `phase_0` names: its migrations, its models, its tools | Everything else. The plan already decided every column |
 | **Executor** — one plugin + its test | **Nothing.** Your prompt already contains `AI_CONTEXT.md` + the plan + your one task line | Exactly two files: the `file:` and `test:` your task declares | Any file at all — opening one only invites guessed paths |
 | **Coordinator** — dispatch, verify, reconstruct | `plans/active_plan.md` (the checklist/state machine) + `docs/PARALLEL_DEVELOPMENT.md` **§ Phases 2-3** | Only the checkboxes in `plans/active_plan.md` | The plan's internals; the checklist is the state |
+| **Solo** — one agent, every phase, in sequence | The row above you, as you reach it — the Planner's slice first, and nothing else until you are past planning | Everything the four rows write, in their order | Skipping the plan because it is "only two features". See below |
+
+**If you are the Solo row**, exactly two things differ from the four above.
+You may read the code **you** wrote — the black box rule is about not seeing
+*another agent's* implementation, and it does not apply to your own
+(`docs/PARALLEL_DEVELOPMENT.md` § Features are black boxes). And you run the
+union of the command rows below, each in its own phase.
+
+What does **not** differ is the plan. `plans/active_plan.yaml` is still the
+first file you write, for one feature as much as for twelve. Three reasons,
+none of which are about coordinating anybody:
+
+- **The shipped plan is a valid plan.** Leave it untouched and `microcoreos
+  status` reports the *example* domain as the active work — to you now, and to
+  whoever opens the project next.
+- **`microcoreos plan validate` is the only pre-code check there is.** Route
+  collisions, consumed events that nothing publishes, tables owned by another
+  domain, the sad-path checklist. It runs offline, in a second, before a line
+  of code commits you to any of it.
+- **It is what survives you.** A context that gets compacted, a session that
+  dies at feature two of three — the plan is the only record of what "done"
+  meant. Prose in a reply is not.
+
+The cost is the honest objection, and it is small: one feature on an existing
+domain is ~10-15 lines of YAML, no `phase_0`, and no `flows` at all unless it
+publishes or consumes events (`.agent/workflows/feature-plan.md`).
 
 If you are the Planner, the first thing you write is `plans/active_plan.yaml`
 itself — not a draft under another name that someone copies later. The copy
@@ -54,6 +84,7 @@ reviews a real file rather than a description of one.
 | Phase 0 Builder | `microcoreos migrate`, `microcoreos schema` |
 | Executor | none — write your two files and stop |
 | Coordinator | `uv run -m pytest`, `microcoreos status`, and `microcoreos` (the real boot) for the final lint |
+| Solo | All of the above — but each in its phase, and the real boot only at the end |
 
 **Never `microcoreos run` / `uv run main.py` outside that last row.** It serves
 forever: in the foreground it hangs your session, in the background it leaves a
@@ -157,10 +188,9 @@ The Kernel (ToolProxy & Container) is infrastructure-blind:
 ## 🔄 The pipeline, in five lines
 
 The methodology, the phase numbering and the executor-prompt mechanics live in
-`docs/PARALLEL_DEVELOPMENT.md` — **canonically, and only there**. This used to
-be a second copy of it, which is precisely how the copy drifted: it prescribed
-`--boot-tool db` for phase 0 long after that stopped regenerating the manifest,
-and no one compares two documents to notice.
+`docs/PARALLEL_DEVELOPMENT.md` — **canonically, and only there**. What follows
+is a five-line index, not a second copy: nobody diffs two documents, so a copy
+here would keep prescribing a stale command with every test still green.
 
 | Phase | Command | Gate |
 |---|---|---|

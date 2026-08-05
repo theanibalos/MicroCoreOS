@@ -13,7 +13,7 @@ still works if the framework's CLI ever stops forwarding.
 
 The framework imports this module lazily, from inside a function, and never at
 module level. That direction is the whole point of the split: see
-docs/DEV_PACKAGE_SPLIT.md.
+docs/internal/DEV_PACKAGE_SPLIT.md.
 """
 
 import sys

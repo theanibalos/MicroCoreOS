@@ -1,6 +1,6 @@
 # PLAN — `microcoreos-dev`, the development package
 
-> **Status: NOT STARTED.** This is the plan `docs/TECH_DEBT.md` item 9 asks for
+> **Status: NOT STARTED.** This is the plan `docs/internal/TECH_DEBT.md` item 9 asks for
 > ("a package split is the kind of change that wants its own plan"). Item 9 has
 > the measurements and the symptom; this doc has the cut.
 

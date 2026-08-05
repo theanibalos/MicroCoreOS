@@ -65,7 +65,7 @@ To swap to Kafka/RabbitMQ/Redis Streams:
        EVENT_BUS_DRIVER={name}. Discovery is generic (ready-made drivers ship
        in extras/available_tools/, e.g. rabbitmq). Explicit injection also
        works: EventBusTool(driver=KafkaDriver()).
-    5. It MUST pass the parity suite: tests/tools/test_event_bus_broker_parity.py.
+    5. It MUST pass the parity suite: tests/tools/event_bus/test_event_bus_broker_parity.py.
 
 Plugins are unaffected: same envelope, same API, same semantics.
 """

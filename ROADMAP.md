@@ -157,7 +157,7 @@ edit it and only its tests can tell you whether it still honours the contract.
 fixes.
 
 The split mirrors the kernel/distribution line drawn in `microcoreos/`
-(`tests/test_core_purity.py`):
+(`tests/core/test_core_purity.py`):
 
 - **Ships:** `conftest.py`, `tests/helpers/`, the tests of the nine default
   tools, the `devtools` linter tests and the `system` domain tests. Their
@@ -179,7 +179,7 @@ The split mirrors the kernel/distribution line drawn in `microcoreos/`
    the move in the manifest; rewriting that one import line while it moves is
    mechanical, but it is a design decision nobody has made.
 2. **Fourteen test files need external services.** They must skip cleanly, not
-   error. `tests/test_postgresql_tool.py` currently *errors* with no Postgres
+   error. `extras/available_tools/postgresql/tests/test_postgresql_tool.py` currently *errors* with no Postgres
    running (recorded in TECH_DEBT item 8's neighbourhood) — shipping that hands
    every new user a red suite on day one.
 
@@ -444,13 +444,13 @@ from the `asyncio.gather` in `_setup_tool` — the same non-determinism already
 visible in the tool ordering of a regenerated `AI_CONTEXT.md`. Today this is
 survivable because README tells you to move the replaced tool out of `tools/`
 first, by hand. With third parties publishing, a coin flip per boot is not
-survivable. `tests/test_registry_collisions.py` covers the PLUGIN case (solved
+survivable. `tests/core/test_registry_collisions.py` covers the PLUGIN case (solved
 by the domain prefix); the tool case is uncovered. Fix: fail loudly in
 `register()`. Small, and independent of everything else here.
 
 **Already in place — the acceptance gate.** The hardest part of a marketplace
 is answering "does this stranger's tool really honour the contract?", and the
-answer is already executable: `tests/tools/test_db_parity.py`,
+answer is already executable: `tests/tools/db/test_db_parity.py`,
 `test_state_parity.py`, `test_event_bus_broker_parity.py`, `test_s3_parity.py`.
 A tool published as `db` must pass the db parity suite. Written for Issue 22,
 reusable as-is.
@@ -765,7 +765,7 @@ transport nobody selected. That was a hard blocker for `uv add microcoreos`.
         `from microcoreos import ToolUnavailableError` is a package importing
         itself mid-initialization — it survives today only because `__init__`
         never reaches back into `container`.
-      - `TestPublicApi` in `tests/test_core.py` now pins both halves: the five
+      - `TestPublicApi` in `tests/core/test_core.py` now pins both halves: the five
         names are exported, and Kernel/Container/Registry are NOT — so the
         boundary cannot erode by accident.
 - [x] **5. The template/linter files.** ✅ Smaller than feared: **no linter
@@ -779,7 +779,7 @@ transport nobody selected. That was a hard blocker for `uv add microcoreos`.
       booting: it emits `from microcoreos import BasePlugin`. Boot is green,
       ToolDocDrift included.
 - [x] **6. `microcoreos new` scaffolder.** ✅ `microcoreos/scaffold.py` (~150
-      lines) + `tests/test_scaffold.py`. Decisions the checklist left open:
+      lines) + `tests/system/test_scaffold.py`. Decisions the checklist left open:
       - **Where the source comes from.** The template rides in the wheel as
         inert payload under `microcoreos/_template/` (hatch `force-include`),
         never imported from site-packages. In a checkout that directory does
@@ -823,7 +823,7 @@ the package-per-tool model rejected above.
 **Issue 34 — 🟢 ChaosControlPlugin: runtime fault injection (extras) — design 2026-07-12, shipped 2026-07-19**
 
 ✅ **Shipped complete** (`extras/available_domains/chaos/plugins/chaos_control_plugin.py`,
-suite `tests/test_chaos_control.py`): tool faults (`down`/`slow`/`flaky`,
+suite `tests/system/test_chaos_control.py`): tool faults (`down`/`slow`/`flaky`,
 global and caller-scoped, via raw-method wrapping — zero core changes) AND
 plugin pause/resume (`POST /system/chaos/off|on {plugin}`; a bare domain
 prefix pauses the whole domain). Pause mechanics as designed: private
@@ -1051,7 +1051,7 @@ and warn when the same name carries different constraints. Registry metadata
 hard gate in CI (Issue 33). Zero core changes.
 
 **Status: scope 2 shipped** (request/response fields compared within a domain —
-`tests/test_field_divergence_linter.py`). Scopes 1 (event payload keys compared
+`tests/linters/test_field_divergence_linter.py`). Scopes 1 (event payload keys compared
 fleet-wide, pairs with the event-contract linter) and 3 (opt-in list of
 system-wide names) remain open — each needs its own comparison rule, and
 shipping them as one would blur exactly the scoping distinction above.
@@ -1087,7 +1087,7 @@ with it — a declaration carries `json_schema_extra={"divergence_ok": ...}`
 with a reason, drops out of the comparison rather than silencing the field,
 and an empty reason is not honoured. That is what let a scaffolded project
 boot with zero warnings instead of a permanent one nobody would read
-(docs/TECH_DEBT.md item 1).
+(docs/internal/TECH_DEBT.md item 1).
 
 **Issue 35 — ✅ Plan `contract:` for phase-0 tools & checklist coverage (2026-07-17 session)**
 - **`contract:`** — a NEW tool in `phase_0.tools` now declares its method
@@ -1338,7 +1338,7 @@ Deferred driver optimizations — each with its written trigger, none is a gap:
   resubscribe), competing consumers claim rows atomically, broadcasts/RPC
   replies are deliberately in-memory only.
 - Proven: full parity suite parameterized over all three transports +
-  kill-and-reboot tests (`tests/tools/test_sqlite_driver.py`), and the real
+  kill-and-reboot tests (`tests/tools/sqlite/test_sqlite_driver.py`), and the real
   system booted on it end to end (`user.created` → WelcomeService with the
   causal tree intact, queue drained to zero).
 - Documented trade-off: `EVENT_BUS_SQLITE_SYNCHRONOUS=FULL` (default) is an
@@ -1371,7 +1371,7 @@ extras/, NOT tools/: the Kernel auto-discovers everything under `tools/` and
 two tools with the same name silently overwrite each other — activation is
 moving it in, PostgreSQL-style).
 - Follows the async + TTL contract from the `tools/state/state_tool.py` header.
-- Parity suite: `tests/tools/test_state_parity.py` — the same battery runs
+- Parity suite: `tests/tools/state/test_state_parity.py` — the same battery runs
   against the in-memory impl and against real Redis; Redis added as a CI service.
 - Swap validated end to end: login throttle against real Redis (counter +
   15-min TTL + 429).

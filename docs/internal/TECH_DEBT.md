@@ -139,7 +139,7 @@ workaround anyone needs.
 **Windows now runs.** A `packaged-e2e-windows` job builds the wheel and drives
 `new` → `add` → `upgrade` on `windows-latest`, asserting that no manifest path
 carries a backslash — the invariant that would otherwise break every lookup on
-Linux — plus the filesystem-facing suites. `tests/test_upgrade.py` pins the
+Linux — plus the filesystem-facing suites. `tests/system/test_upgrade.py` pins the
 same assertion so it fails locally too, though only the Windows job gives it
 teeth.
 
@@ -158,7 +158,7 @@ because there the default encoding *is* UTF-8:
   `microcoreos new` raised `UnicodeEncodeError` on its own last line.
   `cli._stdio_speaks_unicode()` reconfigures the stream at entry; a real
   Windows console already reports utf-8, so it is a no-op there and everywhere
-  else. `tests/test_cli.py` pins it against a cp1252 stream, on any platform.
+  else. `tests/system/test_cli.py` pins it against a cp1252 stream, on any platform.
 
 **Still not covered:** *booting* on Windows. The job stops at the CLI and
 filesystem surface on purpose — the boot half needs service containers Windows
@@ -202,7 +202,7 @@ dependency missing and looks exactly like a failure.
 
 ## 4. The flaky nobody could reproduce ✅ CLOSED — it was `publish()`
 
-`tests/test_chaos_control.py::test_pause_accumulates_durable_backlog_and_drains`
+`tests/system/test_chaos_control.py::test_pause_accumulates_durable_backlog_and_drains`
 failed once. It did not reproduce in 21 isolated runs, 15 full-suite runs, or
 under CPU contention.
 
@@ -337,7 +337,7 @@ opened.
 
 ## 5. 37 hand-built tools across 27 test files → 19 across 12 ✅ CLOSED
 
-`tests/conftest.py` publishes a fixture per Kernel injection key (`db`,
+`conftest.py` (repo root) publishes a fixture per Kernel injection key (`db`,
 `event_bus`, `auth`, `state`, `logger`, `config`), so a test asks for tools the
 way a plugin does. 15 files were converted; the same grep that measured 37 call
 sites in 27 files now measures **20 in 13**. Collected test count went 639 →
@@ -418,7 +418,7 @@ of these three breaks projects that already installed it.
 ## 9. The plan pipeline was development tooling that shipped inside the runtime
 
 **Phase 0 done 2026-07-31** — the code moved, the endpoint is gone, `_plan_attr`
-is deleted. `docs/DEV_PACKAGE_SPLIT.md` carries the plan and what is left of it.
+is deleted. `docs/internal/DEV_PACKAGE_SPLIT.md` carries the plan and what is left of it.
 Everything below describes the state that motivated the change; it is kept
 because the reasoning is what makes the remaining phases decidable, and because
 `RUNTIME_ENTRIES` — the line that still materializes `domains/devtools` into
@@ -458,7 +458,7 @@ imported nothing from `devtools` — the only ties were that one import in
 
 The validator, the plan schema, the offline scanners, the probe and the four
 pipeline commands are now `microcoreos_dev/`. The dependency runs one way and
-`tests/test_core_purity.py` fails if it ever turns around again — including a
+`tests/core/test_core_purity.py` fails if it ever turns around again — including a
 check that neither package statically imports `domains/` or `tools/`, which is
 the guard nothing could have expressed while the two halves shared a folder.
 `_plan_attr` is deleted. The endpoint is deleted; `microcoreos plan validate`
@@ -467,7 +467,7 @@ does the same rules offline and is the only form now.
 `RUNTIME_ENTRIES` still lists `domains/devtools`, so a new project still
 receives the seven linters. That entry moves last, and only after the linters
 have somewhere to live — see the ordering constraint in
-docs/DEV_PACKAGE_SPLIT.md, which is not optional: `EventContractLinterPlugin`
+docs/internal/DEV_PACKAGE_SPLIT.md, which is not optional: `EventContractLinterPlugin`
 owns `GET /system/lint` and `EventSchemasPlugin` (real runtime) is built from
 metadata that linter registers at boot.
 
@@ -487,7 +487,7 @@ findings that five of seven linters could have produced from the filesystem —
 the same shape `plan validate` had before it went offline, and the same
 misreading of where the data lives.
 
-**docs/DEV_PACKAGE_SPLIT.md** has the remaining phases. What made this worth
+**docs/internal/DEV_PACKAGE_SPLIT.md** has the remaining phases. What made this worth
 its own plan rather than the tail end of a long session: several frictions
 papered over one at a time — the vendoring shim, the probe needing
 `domains/devtools` present, validator metadata drifting toward the tools —

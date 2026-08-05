@@ -168,7 +168,7 @@ def _pipeline(name: str):
     `microcoreos_dev`. Hoisting it to module level would make the framework
     require its own development tooling in order to start — the same inverted
     direction as the old `pipeline.py` importing the project's vendored
-    validator, aimed at a different victim. `tests/test_core_purity.py` fails
+    validator, aimed at a different victim. `tests/core/test_core_purity.py` fails
     if it ever moves up there.
     """
     def command(argv: list[str]) -> int:

@@ -4,7 +4,7 @@ in-process, and checks it answers what it should.
 This used to attack POST /system/plan/validate over HTTP (`uv run main.py`
 had to be listening first). That endpoint is gone — an endpoint validating
 plans next to the user's business was the point of the split
-(docs/DEV_PACKAGE_SPLIT.md). The rules were always pure; only the live
+(docs/internal/DEV_PACKAGE_SPLIT.md). The rules were always pure; only the live
 snapshot needed a running system, and neither pass below carries live state,
 so this calls run_validation/validate_yaml directly: no server, no urllib,
 no port, and an iteration that used to cost a round-trip now costs a

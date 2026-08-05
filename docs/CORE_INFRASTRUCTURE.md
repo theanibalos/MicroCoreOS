@@ -253,7 +253,7 @@ The SQLite tool parses these comments and topologically sorts migrations before 
 
 ## Auth Tool
 
-**File**: `tools/auth/auth_tool.py` — after `microcoreos add auth`. It is an
+**File**: `tools/auth/auth_tool.py` — after `microcoreos add auth`. It is an  <!-- lint:no-path -->
 extra: a fresh project ships it under `extras/available_tools/auth/` and boots
 without it, with no `AUTH_SECRET_KEY` required.
 

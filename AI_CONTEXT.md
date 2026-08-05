@@ -87,22 +87,31 @@ Configuration Tool (config):
 ### 🔧 Tool: `telemetry` (Status: ✅)
 ```text
 Telemetry Tool (telemetry):
-        - PURPOSE: OpenTelemetry distributed tracing. Auto-instruments all tool calls via ToolProxy.
-          No changes needed in plugins or existing tools to get basic spans.
+        - PURPOSE: OpenTelemetry distributed tracing AND metrics. Auto-instruments all tool
+          calls via ToolProxy. No changes needed in plugins or existing tools to get basic
+          spans or metrics.
         - ACTIVATION: Set OTEL_ENABLED=true. Degrades gracefully if disabled or packages missing.
         - ENV VARS:
             - OTEL_ENABLED: "true" to activate (default: "false").
-            - OTEL_SERVICE_NAME: Service name in traces (default: "microcoreos").
-            - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP/gRPC endpoint (e.g. "http://jaeger:4317").
-              If not set, traces are printed to console (development mode).
+            - OTEL_SERVICE_NAME: Service name in traces/metrics (default: "microcoreos").
+            - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP/gRPC endpoint (e.g. "http://otel-collector:4317").
+              If not set, traces and metrics are printed to console (development mode).
         - CAPABILITIES:
             - get_tracer(scope: str) -> Tracer: Named tracer for custom spans inside a plugin.
                 Usage: tracer = self.telemetry.get_tracer("my_plugin")
                        with tracer.start_as_current_span("my_operation"): ...
                 Returns a no-op tracer if OTel is disabled — safe to use unconditionally.
+            - get_meter(scope: str) -> Meter: Named meter for custom metrics inside a plugin.
+                Usage: meter = self.telemetry.get_meter("my_plugin")
+                       counter = meter.create_counter("orders_created")
+                       counter.add(1)
+                Returns a no-op meter if OTel is disabled — safe to use unconditionally.
         - AUTO-INSTRUMENTATION (zero config):
             Every tool call (db.execute, event_bus.publish, auth.create_token, etc.)
-            gets a span automatically via ToolProxy. No plugin changes needed.
+            gets a span automatically via ToolProxy, AND is recorded as an OTel histogram
+            (tool_call_duration_ms) and counter (tool_call_total) with tool/method/success
+            attributes — the same record already exposed at registry.get_metrics() / GET
+            /system/metrics, now also exported over OTLP. No plugin changes needed.
         - DRIVER-LEVEL INSTRUMENTATION (optional, per tool):
             Tools can implement on_instrument(tracer_provider) in BaseTool to add
             framework-specific spans (SQL query text, HTTP route, etc.).
@@ -304,11 +313,11 @@ Async SQLite Persistence Tool (sqlite):
   - `GET /system/events/schemas`
     - **res**: EventSchemasData(schemas: dict)
   - `GET /system/lint`
-    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str])
+    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str], dead_path_warnings: list[str])
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
-- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
+- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DocPathLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
 
 ### `system`
 - **Tables**: none

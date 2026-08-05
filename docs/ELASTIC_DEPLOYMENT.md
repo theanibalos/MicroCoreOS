@@ -85,7 +85,7 @@ same API, so plugins are untouched at every stage.
         `tools/`). The swap moves directories, so after it the active tool
         IS the new engine — the same suite exercises it with zero extra
         configuration.
-      Sequence: `tests/tools/test_db_parity.py` first (proves the tool
+      Sequence: `tests/tools/db/test_db_parity.py` first (proves the tool
       wrapper honors the db contract — it says nothing about plugins), then
       the plugin suite against the target engine, then boot and exercise the
       endpoints. Run the parity suite with BOTH engines reachable: its

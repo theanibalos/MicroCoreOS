@@ -123,7 +123,7 @@ REPLACEMENT STANDARD (implement this to swap the backend):
 
     To create an aiohttp-based implementation:
 
-    1. Create tools/aiohttp_server/aiohttp_server_tool.py
+    1. Create tools/aiohttp_server/aiohttp_server_tool.py  lint:no-path
     2. name = "http"                               ← same injection key, plugins are unaffected
     3. Implement the public methods:
           add_endpoint(path, method, handler, tags, request_model, response_model, auth_validator, has_files)

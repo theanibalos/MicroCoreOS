@@ -32,7 +32,7 @@ KERNEL_MODULES = [
 # `project.py` is distribution: locating the project a command is being run AT,
 # and the seam `microcoreos-dev` is allowed to use. The plan pipeline used to be
 # here too, as `pipeline.py`; it now ships as its own package — see
-# docs/DEV_PACKAGE_SPLIT.md and the two direction tests at the bottom of this
+# docs/internal/DEV_PACKAGE_SPLIT.md and the two direction tests at the bottom of this
 # file, which are what keep it from coming back.
 DISTRIBUTION_MODULES = ["cli.py", "catalog.py", "scaffold.py", "upgrade.py",
                         "project.py"]

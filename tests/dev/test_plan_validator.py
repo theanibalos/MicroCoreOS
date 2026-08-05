@@ -418,7 +418,7 @@ def test_rule15_no_checklist_is_skipped():
 # ── Schema errors and YAML input, offline ─────────────────────────────────
 #
 # These used to run through POST /system/plan/validate; the endpoint is gone
-# (docs/DEV_PACKAGE_SPLIT.md — an endpoint validating plans next to the user's
+# (docs/internal/DEV_PACKAGE_SPLIT.md — an endpoint validating plans next to the user's
 # business was the point of the split), but the behaviour they pin belongs to
 # the rules, not the endpoint, so they now call run_validation/validate_yaml
 # directly. The endpoint's own input-parsing plumbing (double-wrapped JSON,
@@ -1111,7 +1111,7 @@ def test_a_wholesale_mismatch_names_the_worked_example_first():
 # ── rule 18 — a declared `::node` must exist once its file does ────────────
 #
 # The hole this closes was found by building a whole plan end to end: the plan
-# declared `tests/test_note_counter_plugin.py::test_double_delivery_created`,
+# declared `tests/test_note_counter_plugin.py::test_double_delivery_created`,  lint:no-path
 # the executor wrote the file without that function, and `plan validate`,
 # `pytest` and `GET /system/lint` were ALL green while the idempotency the plan
 # promised was neither implemented nor tested.
@@ -1180,7 +1180,7 @@ def test_rule_18_accepts_the_node_once_it_is_written(tmp_path, monkeypatch):
 
 
 def test_rule_18_ignores_a_plain_path_with_no_node(tmp_path, monkeypatch):
-    """`tests/x.py` with no `::` makes no claim about a specific function."""
+    """`tests/x.py` with no `::` makes no claim about a specific function. lint:no-path"""
     from microcoreos_dev.plan import (
         LiveSnapshot, run_validation,
     )

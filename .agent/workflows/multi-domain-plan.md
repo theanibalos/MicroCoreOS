@@ -35,8 +35,8 @@ existing vocabulary implies, put it in the YAML, and flag it in a comment.
 
 `docs/PARALLEL_DEVELOPMENT.md` § Phase 1 holds the rules behind the format.
 Read it when a validator error is unclear, not before — and never reach for
-plugin source under `domains/`, `tools/` or `extras/` to infer the shape. A
-planner that did produced a plan with every field renamed.
+plugin source under `domains/`, `tools/` or `extras/` to infer the shape:
+reading an implementation to infer the format renames every field in your plan.
 
 ## Phase 1 — The full plan (the contract, authored FIRST)
 
@@ -73,14 +73,14 @@ never patch it in code.
 ## Phases 0, 2 and 3
 
 Identical to any other plan — `docs/PARALLEL_DEVELOPMENT.md` owns them, and
-restating them here is how this file once kept prescribing a boot command that
-had stopped regenerating the manifest.
+nothing about them is restated here. A second copy of a phase is a second
+command to keep in step, and only one of the two gets updated.
 
 Two things are specific to multi-domain work and are the only reason this
 section exists:
 
 - **Migration ordering across domains.** One author for the numbering, and
-  `-- depends: other_domain/001_file.sql` wherever a table in one domain must
+  `-- depends: other_domain/001_file.sql` wherever a table in one domain must  <!-- lint:no-path -->
   exist before another's. The db tool resolves the order and prints each file
   as it applies it.
 - **Never assign two agents to the same feature**, and never let one agent

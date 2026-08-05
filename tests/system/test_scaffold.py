@@ -31,7 +31,7 @@ def test_new_materializes_a_bootable_project(tmp_path):
     assert (target / "domains" / "devtools" / "plugins").is_dir()
     assert (target / "main.py").is_file()
     assert (target / "plans").is_dir()
-    assert (target / "tests" / "conftest.py").is_file()
+    assert (target / "conftest.py").is_file()
 
     # The framework itself is NOT copied — it comes from the wheel.
     assert not (target / "microcoreos").exists()
@@ -251,7 +251,7 @@ def test_new_gives_your_own_pyproject_what_the_generated_tests_need(tmp_path):
     parsed = tomllib.loads(written)
     assert parsed["project"]["version"] == "9.9.9"
     assert parsed["tool"]["pytest"]["ini_options"]["pythonpath"] == ["."]
-    assert parsed["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
+    assert parsed["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests", "tools"]
 
 
 def test_new_leaves_a_pyproject_that_already_configures_pytest_alone(tmp_path, capsys):

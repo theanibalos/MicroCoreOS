@@ -23,6 +23,7 @@ class SystemLintData(BaseModel):
     route_collisions: list[str] = []
     table_ownership_warnings: list[str] = []
     field_divergence_warnings: list[str] = []
+    dead_path_warnings: list[str] = []
 
 
 class SystemLintResponse(BaseModel):
@@ -413,6 +414,7 @@ class EventContractLinterPlugin(BasePlugin):
                 route_collisions=meta.get("route_collisions", []),
                 table_ownership_warnings=meta.get("table_ownership_warnings", []),
                 field_divergence_warnings=meta.get("field_divergence_warnings", []),
+                dead_path_warnings=meta.get("dead_path_warnings", []),
             )
             return {"success": True, "data": payload.model_dump()}
         except Exception as e:

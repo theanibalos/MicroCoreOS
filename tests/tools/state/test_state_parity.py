@@ -9,7 +9,7 @@ The suite runs parametrized over all known implementations:
     - redis:  RedisStateTool (skips itself if no Redis server is reachable;
               start one with: docker compose -f dev_infra/docker-compose.yml up -d redis)
 
-Timings are looser than tests/test_state_tool.py because here TTLs travel
+Timings are looser than tests/tools/state/test_state_tool.py because here TTLs travel
 over a real network instead of resolving in-process.
 """
 

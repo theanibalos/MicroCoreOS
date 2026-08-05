@@ -159,21 +159,35 @@ class S3Tool(BaseTool):
         max_size_bytes: Optional[int] = None,
     ) -> str:
         """
-        Upload a file-like object (e.g. FastAPI UploadFile).
+        Upload a file-like object — the `UploadedFile` a plugin gets from
+        data["_files"], a raw Starlette UploadFile, or any open file.
         Streams data to S3 without loading everything into memory.
         """
         resolved_bucket = self._resolve_bucket(bucket)
 
-        # 1. Attempt to validate size before streaming
-        size = None
-        if hasattr(fileobj, "size"): # FastAPI UploadFile has .size
-            size = fileobj.size
-        elif hasattr(fileobj, "seek") and hasattr(fileobj, "tell"):
-            curr = fileobj.tell()
-            fileobj.seek(0, 2)
-            size = fileobj.tell()
-            fileobj.seek(curr)
+        # 1. Reach the sync file object, then size it before streaming.
+        #
+        # What arrives here is usually a wrapper, not the stream: plugins are
+        # handed an `UploadedFile` (tools/http_server/types.py), whose read and
+        # seek are async — which boto3 cannot use, and which has no `.size` to
+        # check either. Both it and Starlette's UploadFile expose the real
+        # object as `.file`, so unwrap once and use that for the size check AND
+        # for the upload. A plain file object or BytesIO unwraps to itself.
+        stream = getattr(fileobj, "file", fileobj)
 
+        size = None
+        declared = getattr(fileobj, "size", None)  # Starlette's UploadFile fills this in
+        if isinstance(declared, int):
+            size = declared
+        elif hasattr(stream, "seek") and hasattr(stream, "tell"):
+            curr = stream.tell()
+            stream.seek(0, 2)
+            size = stream.tell()
+            stream.seek(curr)
+
+        # A stream that can neither declare nor seek its length (a plain
+        # iterator) cannot be checked before the upload — the limit is a
+        # pre-flight guard, not a transfer cap.
         if size is not None:
             self._check_size(size, max_size_bytes)
 
@@ -185,7 +199,7 @@ class S3Tool(BaseTool):
             extra_args["Metadata"] = metadata
 
         async with await self._get_client() as s3:
-            await s3.upload_fileobj(fileobj, resolved_bucket, key, ExtraArgs=extra_args or None)
+            await s3.upload_fileobj(stream, resolved_bucket, key, ExtraArgs=extra_args or None)
 
         return key
 
@@ -399,8 +413,9 @@ class S3Tool(BaseTool):
             If size limit is disabled globally, max_size_bytes is also ignored.
         - All methods accept an optional bucket= param. If omitted, uses AWS_S3_DEFAULT_BUCKET.
         - CAPABILITIES:
-            - await upload_fileobj(key, fileobj, bucket?, content_type?, metadata?) -> str:
-                Upload a file-like object (e.g. FastAPI UploadFile). Streams to S3.
+            - await upload_fileobj(key, fileobj, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
+                Upload a file-like object. Streams to S3. Pass the UploadedFile
+                from data["_files"] straight in — its `.file` is unwrapped here.
             - await upload_file(key, file_path, bucket?, content_type?, metadata?, max_size_bytes?) -> str:
                 Upload a file from disk. Returns the key.
             - await upload_bytes(key, data: bytes, bucket?, content_type?, metadata?, max_size_bytes?) -> str:

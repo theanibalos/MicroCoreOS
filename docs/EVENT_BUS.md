@@ -236,7 +236,7 @@ Set `EVENT_BUS_DRIVER=redis_streams` (plus the `REDIS_*` env vars if Redis is no
 - Without `group=`, every subscriber in every replica receives every event (broadcast), matching in-process semantics.
 - Retries, backoff, DLQ, RPC and tracing keep working untouched — they live in the Bus, not the transport.
 
-To use a custom driver, instantiate `EventBusTool(driver=MyDriver())` and register it. Plugins remain 100% unaffected because they only interact with `EventBusTool`'s public API. Every driver MUST pass the parity suite (`tests/tools/test_event_bus_broker_parity.py`), which runs parametrized over all built-in transports.
+To use a custom driver, instantiate `EventBusTool(driver=MyDriver())` and register it. Plugins remain 100% unaffected because they only interact with `EventBusTool`'s public API. Every driver MUST pass the parity suite (`tests/tools/event_bus/test_event_bus_broker_parity.py`), which runs parametrized over all built-in transports.
 
 ### Capability claims (Issue 30)
 

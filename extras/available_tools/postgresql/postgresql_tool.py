@@ -703,7 +703,7 @@ class PostgresqlTool(BaseTool):
     #
     # Live schema of the active database. Frozen contract shared with the
     # SQLite tool (tools/sqlite/sqlite_tool.py) — same migration must yield
-    # the SAME dict on both engines (tests/tools/test_db_parity.py compares
+    # the SAME dict on both engines (tests/tools/db/test_db_parity.py compares
     # them with `==`). Do not add keys, do not add type vocabulary values.
     #
     # Scope: schema 'public' only, table_type='BASE TABLE' only. Anything

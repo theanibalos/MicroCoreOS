@@ -27,9 +27,10 @@ These are the most frequent errors. Check these first before writing any code.
 
 ## ⚠️ The rules
 
-The 13 **Non-Negotiable Rules** in `AGENTS.md`, there and nowhere else. This
-section held a rival list of eleven that had never heard of "schemas inline" or
-typed event payloads — an agent's constitution depended on which file it opened.
+The **Non-Negotiable Rules** in `AGENTS.md`, there and nowhere else. Never
+restate them here, and never cite them with a count: a rival copy, or a number
+that another file has to keep in step, is one more thing that can disagree with
+the list an agent is standing in front of.
 
 Event bus capabilities (`ttl`, `retries`, `backoff`, DLQ) are in `AI_CONTEXT.md`
 § Tool: `event_bus`, generated from the tool itself so they cannot drift.
@@ -63,7 +64,8 @@ domains/{name}/
 
 `AI_CONTEXT.md` § **Plugin Authoring Guide** — one complete template per
 deliverable type, regenerated on every boot from `tools/context/authoring_guide.md` and
-already inside every executor prompt. A third copy lived here and had drifted.
+already inside every executor prompt. Never copy it here: the generated one
+is the only one that tracks the code.
 
 If you are writing a plugin you are an executor: nothing in this file is for you.
 
@@ -120,7 +122,8 @@ Rules of the pattern:
 
 ## 🔧 New Tool
 
-**Location**: `tools/{name}/{name}_tool.py`
+**Location**: `tools/{name}/{name}_tool.py`, with its own tests in
+`tools/{name}/tests/` — they travel with the tool when it is installed or swapped.
 **Rule**: Stateless, isolated, self-documented. Use `EventBusDriver` pattern for new transport layers.
 
 ### The Parity Rule (Contract over Implementation)
@@ -130,9 +133,9 @@ replaces. This ensures that plugins remain infrastructure-blind and behavior
 is consistent across backends.
 
 **Canonical examples:**
-- `tests/tools/test_state_parity.py`: Verifies that `RedisStateTool` behaves
+- `tests/tools/state/test_state_parity.py`: Verifies that `RedisStateTool` behaves
   exactly like the default in-memory `StateTool`.
-- `tests/tools/test_event_bus_broker_parity.py`: Parametrized suite that
+- `tests/tools/event_bus/test_event_bus_broker_parity.py`: Parametrized suite that
   runs against both the local driver and `RedisStreamsDriver`.
 
 **Health contract (optional, only for tools with an external backend)**:
@@ -261,15 +264,15 @@ plugin against a contract the test itself declares, so if a tool's real API
 drifts the mock keeps passing. That gap is closed elsewhere, not by your test:
 the `ToolDocDriftLinter` (boot + `/system/lint`) compares each tool's
 documented interface against its implementation, and the parity suites
-(`tests/tools/test_state_parity.py`,
-`tests/tools/test_event_bus_broker_parity.py`) hold swappable tools to one
+(`tests/tools/state/test_state_parity.py`,
+`tests/tools/event_bus/test_event_bus_broker_parity.py`) hold swappable tools to one
 behaviour. Do not re-verify that in a plugin test.
 
 ### Ask for tools the way the plugin does
 
 A plugin never builds a tool: it names one in `__init__` and the Kernel hands
 it over. pytest injects by parameter name too, so **a test uses the same
-vocabulary** — `tests/conftest.py` publishes one fixture per Kernel injection
+vocabulary** — `conftest.py` (repo root) publishes one fixture per Kernel injection
 key (`db`, `event_bus`, `auth`, `state`, `logger`, `config`). No tool imports,
 no setup/teardown, no hand-built schema:
 
@@ -285,7 +288,7 @@ async def test_create_user_persists(db, event_bus, auth, logger):
     assert rows[0]["password_hash"] != "secret123"
 ```
 
-Worked example: `tests/test_plugin_di_fixtures.py`.
+Worked example: `tests/core/test_plugin_di_fixtures.py`.
 
 - `@pytest.mark.migrations("users", "system")` applies those domains' real
   migration files. **No marker = a real but empty database**, which is what a

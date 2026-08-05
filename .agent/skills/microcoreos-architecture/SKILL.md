@@ -11,14 +11,14 @@ open — a Planner that also loads the plugin templates spends ~3,000 tokens on
 code it will never write.
 
 This file deliberately holds no rules, no reading path and no checklist of its
-own. It used to hold all three, and all three had drifted: its reading path
-sent plugin authors to `INSTRUCTIONS_FOR_AI.md` for templates that live in the
-generated manifest, and its checklist was a fifth partial copy of the 13
-Non-Negotiable Rules — one that never mentioned typed event payloads.
+own. It is a routing table and nothing else: every row points at the one place
+that owns its subject. Add a rule, a path or a checklist here and it becomes a
+rival copy of something canonical — which is the one failure this file exists
+to prevent.
 
 | You need | It is in |
 |---|---|
-| The rules | `AGENTS.md` § Non-Negotiable Rules (13, canonical) |
+| The rules | `AGENTS.md` § Non-Negotiable Rules (canonical) |
 | Kernel/tool/event-bus laws | `AGENTS.md` § Core Architectural Laws |
 | The plugin template | `AI_CONTEXT.md` § Plugin Authoring Guide (regenerated every boot) |
 | What exists right now | `AI_CONTEXT.md` § Available Tools / § Domains |
