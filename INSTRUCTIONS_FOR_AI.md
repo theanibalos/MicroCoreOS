@@ -123,7 +123,8 @@ Rules of the pattern:
 ## 🔧 New Tool
 
 **Location**: `tools/{name}/{name}_tool.py`, with its own tests in
-`tools/{name}/tests/` — they travel with the tool when it is installed or swapped.
+`tools/{name}/tests/`, named `{name}_tool_test.py` — NEVER `test_{name}_tool.py`,
+which the Kernel would import at boot. They travel with the tool when it is installed or swapped.
 **Rule**: Stateless, isolated, self-documented. Use `EventBusDriver` pattern for new transport layers.
 
 ### The Parity Rule (Contract over Implementation)

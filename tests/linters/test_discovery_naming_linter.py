@@ -128,3 +128,32 @@ async def test_extras_are_scanned(tmp_path, monkeypatch):
 
     assert len(violations) == 1
     assert "MongoTool(BaseTool)" in violations[0]
+
+
+# ── The inverse mistake: a test the Kernel will import ────────────────────
+
+def test_a_test_named_after_the_discovery_suffix_is_flagged():
+    """`test_auth_tool.py` ends in `_tool.py`, so boot imports it — and pytest."""
+    plugin = make_plugin() if "make_plugin" in globals() else None
+    from unittest.mock import MagicMock
+    from domains.devtools.plugins.discovery_naming_linter_plugin import DiscoveryNamingLinterPlugin
+    plugin = plugin or DiscoveryNamingLinterPlugin(container=MagicMock(), logger=MagicMock())
+    found = plugin._scan_test_collision("tools/auth/tests/test_auth_tool.py")
+    assert len(found) == 1
+    assert "auth_tool_test.py" in found[0]
+
+
+def test_the_safe_name_is_not_flagged():
+    from unittest.mock import MagicMock
+    from domains.devtools.plugins.discovery_naming_linter_plugin import DiscoveryNamingLinterPlugin
+    plugin = DiscoveryNamingLinterPlugin(container=MagicMock(), logger=MagicMock())
+    assert plugin._scan_test_collision("tools/auth/tests/auth_tool_test.py") == []
+    assert plugin._scan_test_collision("tests/tools/state/test_state_parity.py") == []
+
+
+def test_real_repo_has_no_test_the_kernel_would_import():
+    """CI gate: this shipped once and broke `microcoreos add auth` in a packaged install."""
+    from unittest.mock import MagicMock
+    from domains.devtools.plugins.discovery_naming_linter_plugin import DiscoveryNamingLinterPlugin
+    plugin = DiscoveryNamingLinterPlugin(container=MagicMock(), logger=MagicMock())
+    assert plugin._perform_scan() == []

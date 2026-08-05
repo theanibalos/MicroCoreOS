@@ -103,6 +103,14 @@ fix as `0.1.2`.
 - **It does not update the README, the changelog or the GitHub Release.** The
   Release page is created by hand (`gh release create v0.1.1 --notes-file ...`)
   and is independent of PyPI — publishing works without one.
-- **It does not ship the tests.** `tests/` is in neither the wheel nor the
-  scaffolded project. Nobody who installs the package runs them; what covers
-  the artefact they download is the `packaged-e2e` job in CI.
+- **It does not ship the framework's own tests.** `tests/` is in neither the
+  wheel nor the scaffolded project — except `tests/helpers/`, which the Plugin
+  Authoring Guide tells every executor to import. What covers the artefact a
+  user downloads is the `packaged-e2e` job in CI.
+
+  A tool's own tests are a different thing and DO ship: they live inside the
+  tool's folder (`extras/available_tools/{name}/tests/`), so they are part of
+  the payload `hatch_build.py` derives from `RUNTIME_ENTRIES`, and
+  `microcoreos add {name}` moves them into `tools/{name}/tests/` along with the
+  tool. That is deliberate — a replacement tool has to pass the reference's
+  suite, and a project that cannot run it cannot honour the Parity Rule.

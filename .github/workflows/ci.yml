@@ -103,7 +103,11 @@ jobs:
           uv run python -c "from microcoreos import BaseTool; print('✅ BaseTool OK')"
 
       - name: Run Core Tests
-        run: uv run -m pytest tests/ -v --tb=short
+        # No path argument: `testpaths` in pyproject.toml owns the set, and it
+        # is wider than tests/ — a tool's own tests live inside the tool's
+        # folder so they travel with it when `microcoreos add` moves it.
+        # Passing `tests/` here would silently drop every one of them.
+        run: uv run -m pytest -v --tb=short
 
   # Boots the REAL system against REAL infrastructure (MinIO as S3, SQLite on
   # disk) and asserts that every tool is OK and every plugin is READY. This is

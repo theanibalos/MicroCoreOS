@@ -16,6 +16,7 @@ Registry key: devtools/discovery_naming_violations (read by GET /system/lint).
 """
 
 import ast
+import os
 from microcoreos import BasePlugin
 from domains.devtools.lint.plugin_sources import iter_source_files
 
@@ -60,7 +61,35 @@ class DiscoveryNamingLinterPlugin(BasePlugin):
         violations = []
         for filepath in iter_source_files("tools", "domains", "extras"):
             violations.extend(self._scan_file(filepath))
+            violations.extend(self._scan_test_collision(filepath))
         return violations
+
+    def _scan_test_collision(self, filepath: str) -> list[str]:
+        """
+        The inverse mistake: a file the Kernel WILL import that is a test.
+
+        A tool ships its own tests inside its folder, and the natural name for
+        one — `test_auth_tool.py` — ends in `_tool.py`, the very suffix that
+        makes the Kernel import it. Boot then imports pytest into a running
+        application. A deployed install does not have pytest, so the failure
+        appears only after `microcoreos add`, in production, on a file that is
+        not part of the system at all.
+
+        Name it `auth_tool_test.py`: pytest collects `*_test.py` by default and
+        the Kernel never looks at it.
+        """
+        name = os.path.basename(filepath)
+        if not name.startswith("test_"):
+            return []
+        for suffix in DISCOVERY_RULES.values():
+            if name.endswith(suffix):
+                stem = name[len("test_"):-len(".py")]
+                return [
+                    f"{filepath} is a test the Kernel will import at boot: it ends in "
+                    f"'{suffix}', which is the discovery suffix. Boot then needs pytest, "
+                    f"which a deployed install does not have. Rename it '{stem}_test.py'."
+                ]
+        return []
 
     def _scan_file(self, filepath: str) -> list[str]:
         violations = []

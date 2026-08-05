@@ -26,16 +26,23 @@ else about them exists so they can be swapped without touching a single plugin.
    fallback — or the import dies the moment the folder moves. Parity suites
    are the exception: they import two implementations at once, so they stay in
    `tests/tools/{name}/`.
-2. **The `name` property is the contract** — it is the DI injection key.
-3. **A tool never uses other tools.** If a capability needs `db` + `event_bus`
+2. **Name those tests `{name}_tool_test.py`, never `test_{name}_tool.py`.**
+   The Kernel imports every `*_tool.py` under `tools/`, and `test_s3_tool.py`
+   ends in exactly that: boot would import the test, and with it pytest, which
+   a deployed install does not have. pytest collects `*_test.py` by default,
+   so the safe name costs nothing. `DiscoveryNamingLinterPlugin` fails on the
+   unsafe one — this is the only place in the repo where `*_test.py` is the
+   required form.
+3. **The `name` property is the contract** — it is the DI injection key.
+4. **A tool never uses other tools.** If a capability needs `db` + `event_bus`
    + `scheduler`, it is not a tool: compose it in the plugin layer
    (precedents: DurableOneShotsPlugin, the deferred Outbox — Issue 28).
-4. **Self-documented**: every public method appears in
+5. **Self-documented**: every public method appears in
    `get_interface_description()` — the anti-drift linter warns on discrepancies.
-5. **Config via `os.getenv()`** inside the tool (the `config` tool is for plugins).
-6. **Header spec**: the tool's docstring/header documents its replacement
+6. **Config via `os.getenv()`** inside the tool (the `config` tool is for plugins).
+7. **Header spec**: the tool's docstring/header documents its replacement
    contract — the exact API and semantics a substitute must honor.
-7. **External backend?** Make its connection-error class inherit
+8. **External backend?** Make its connection-error class inherit
    `ToolUnavailableError` so ToolProxy marks it DEAD on the first
    infrastructure failure. In-memory/local tools skip this.
 
