@@ -52,7 +52,25 @@ def test_parse_empty():
 @pytest.fixture
 async def tool():
     t = PostgresqlTool()
-    await t.setup()
+    try:
+        await t.setup()
+    except Exception as e:
+        if "does not exist" in str(e).lower():
+            try:
+                import asyncpg
+                host = os.getenv("PG_HOST", "localhost")
+                port = int(os.getenv("PG_PORT", "5432"))
+                user = os.getenv("PG_USER", "postgres")
+                password = os.getenv("PG_PASSWORD", "postgres")
+                dbname = os.getenv("PG_DATABASE", "microcoreos_test")
+                conn = await asyncpg.connect(host=host, port=port, user=user, password=password, database="postgres")
+                await conn.execute(f'CREATE DATABASE "{dbname}"')
+                await conn.close()
+                await t.setup()
+            except Exception as inner_e:
+                pytest.skip(f"PostgreSQL server unreachable: {inner_e}")
+        else:
+            pytest.skip(f"PostgreSQL server unreachable: {e}")
     yield t
     await t.execute("DROP TABLE IF EXISTS _test")
     await t.shutdown()

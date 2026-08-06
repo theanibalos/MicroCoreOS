@@ -134,7 +134,23 @@ async def active_db(monkeypatch, *migration_dirs: Path):
     try:
         await tool.setup()
     except ToolUnavailableError as e:
-        pytest.skip(f"active db tool {tool_cls.__name__} is unreachable: {e}")
+        if "does not exist" in str(e).lower() and tool_cls.__name__ == "PostgresqlTool":
+            try:
+                import os
+                import asyncpg
+                host = os.getenv("PG_HOST", "localhost")
+                port = int(os.getenv("PG_PORT", "5432"))
+                user = os.getenv("PG_USER", "postgres")
+                password = os.getenv("PG_PASSWORD", "postgres")
+                dbname = os.getenv("PG_DATABASE", "microcoreos_test")
+                conn = await asyncpg.connect(host=host, port=port, user=user, password=password, database="postgres")
+                await conn.execute(f'CREATE DATABASE "{dbname}"')
+                await conn.close()
+                await tool.setup()
+            except Exception:
+                pytest.skip(f"active db tool {tool_cls.__name__} is unreachable: {e}")
+        else:
+            pytest.skip(f"active db tool {tool_cls.__name__} is unreachable: {e}")
 
     tables: list[str] = []
     try:

@@ -52,11 +52,30 @@ async def db(request, monkeypatch):
     tool = PostgresqlTool()
     try:
         await tool.setup()
-    except PGConnectionError:
-        pytest.skip(
-            "PostgreSQL not available — "
-            "docker compose -f dev_infra/docker-compose.yml up -d postgres"
-        )
+    except PGConnectionError as e:
+        if "does not exist" in str(e).lower():
+            try:
+                import os
+                import asyncpg
+                host = os.getenv("PG_HOST", "localhost")
+                port = int(os.getenv("PG_PORT", "5432"))
+                user = os.getenv("PG_USER", "postgres")
+                password = os.getenv("PG_PASSWORD", "postgres")
+                dbname = os.getenv("PG_DATABASE", "microcoreos_test")
+                conn = await asyncpg.connect(host=host, port=port, user=user, password=password, database="postgres")
+                await conn.execute(f'CREATE DATABASE "{dbname}"')
+                await conn.close()
+                await tool.setup()
+            except Exception:
+                pytest.skip(
+                    "PostgreSQL not available — "
+                    "docker compose -f dev_infra/docker-compose.yml up -d postgres"
+                )
+        else:
+            pytest.skip(
+                "PostgreSQL not available — "
+                "docker compose -f dev_infra/docker-compose.yml up -d postgres"
+            )
     yield tool
     await tool.execute("DROP TABLE IF EXISTS _parity")
     await tool.shutdown()
@@ -234,12 +253,32 @@ async def both_engines(monkeypatch):
     pg_tool = PostgresqlTool()
     try:
         await pg_tool.setup()
-    except PGConnectionError:
-        await sqlite_tool.shutdown()
-        pytest.skip(
-            "PostgreSQL not available — "
-            "docker compose -f dev_infra/docker-compose.yml up -d postgres"
-        )
+    except PGConnectionError as e:
+        if "does not exist" in str(e).lower():
+            try:
+                import os
+                import asyncpg
+                host = os.getenv("PG_HOST", "localhost")
+                port = int(os.getenv("PG_PORT", "5432"))
+                user = os.getenv("PG_USER", "postgres")
+                password = os.getenv("PG_PASSWORD", "postgres")
+                dbname = os.getenv("PG_DATABASE", "microcoreos_test")
+                conn = await asyncpg.connect(host=host, port=port, user=user, password=password, database="postgres")
+                await conn.execute(f'CREATE DATABASE "{dbname}"')
+                await conn.close()
+                await pg_tool.setup()
+            except Exception:
+                await sqlite_tool.shutdown()
+                pytest.skip(
+                    "PostgreSQL not available — "
+                    "docker compose -f dev_infra/docker-compose.yml up -d postgres"
+                )
+        else:
+            await sqlite_tool.shutdown()
+            pytest.skip(
+                "PostgreSQL not available — "
+                "docker compose -f dev_infra/docker-compose.yml up -d postgres"
+            )
 
     await pg_tool.execute("DROP TABLE IF EXISTS _parity_schema")
     for tool in (sqlite_tool, pg_tool):
