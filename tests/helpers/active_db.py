@@ -58,7 +58,7 @@ _TEST_ENV = {
     "PG_PORT": "5432",
     "PG_USER": "postgres",
     "PG_PASSWORD": "postgres",
-    "PG_DATABASE": "microcoreos",
+    "PG_DATABASE": "microcoreos_test",
     # Tests apply the migrations they need explicitly (below), so boot-time
     # auto-migration would only add unrelated domains' tables.
     "DB_AUTO_MIGRATE": "false",

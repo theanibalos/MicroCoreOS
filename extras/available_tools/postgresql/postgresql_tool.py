@@ -39,11 +39,34 @@ ERROR CONTRACT (part of the gold standard — any db tool MUST match it):
 PLACEHOLDERS: PostgreSQL uses $1, $2, $3... (NOT '?' like SQLite).
 """
 
+import asyncio
+import json
 import os
 import re
-import asyncio
+
 import asyncpg
+
 from microcoreos import BaseTool, ToolUnavailableError
+
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?(\w+)[\"'`]?", re.IGNORECASE
+)
+
+
+async def _init_postgres_connection(conn: asyncpg.Connection) -> None:
+    """Register JSON/JSONB codecs so asyncpg automatically serializes/deserializes Python dicts and lists."""
+    await conn.set_type_codec(
+        "json",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -334,7 +357,7 @@ class PostgresqlTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "postgresql"
+        return "db"
 
     # ─── CONSTRUCTOR ──────────────────────────────────────
     #
@@ -377,6 +400,7 @@ class PostgresqlTool(BaseTool):
                     max_size=self._max_pool,
                     timeout=self._connect_timeout,
                     command_timeout=self._command_timeout,
+                    init=_init_postgres_connection,
                 ),
                 timeout=self._connect_timeout,
             )
@@ -483,6 +507,8 @@ class PostgresqlTool(BaseTool):
             print(f"  [Migration] ⚠️  Circular dependency detected: {e}")
             ordered_keys = sorted(migrations.keys())
 
+        live_schema = set((await self.describe_schema()).keys())
+
         # ── 3. Apply in topological order ───────────────────────────────
         for key in ordered_keys:
             if key not in migrations:
@@ -492,19 +518,28 @@ class PostgresqlTool(BaseTool):
             domain = info["domain"]
             filename = info["filename"]
 
+            with open(info["path"], "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
+
+            declared_tables = _CREATE_TABLE_RE.findall(sql_script)
+
             # Check if already applied
             already_applied = await self.query_one(
                 "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
                 [domain, filename],
             )
             if already_applied:
-                continue
+                missing_tables = [t for t in declared_tables if t not in live_schema]
+                if not missing_tables:
+                    continue
+                print(f"  [Migration] ⚠️ Table(s) {missing_tables} declared in {key} missing from DB despite history record. Repairing...")
+                await self.execute(
+                    "DELETE FROM _migrations_history WHERE domain = $1 AND filename = $2",
+                    [domain, filename],
+                )
 
             print(f"  [Migration] Applying {key}...")
-
-            with open(info["path"], "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
 
             # Each migration in its own transaction
             async with self.transaction() as tx:
@@ -519,6 +554,7 @@ class PostgresqlTool(BaseTool):
                 except Exception as e:
                     raise DatabaseError(f"Migration failed for {key}: {e}", **_classify_error(e)) from e
 
+            live_schema.update(declared_tables)
             print(f"  [Migration] ✅ Applied {key}")
 
     # ─── LIFECYCLE: shutdown() ────────────────────────────

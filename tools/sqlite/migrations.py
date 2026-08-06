@@ -11,8 +11,13 @@ is part of, and for WHY migrations run from setup().
 """
 
 import os
+import re
 
 from tools.sqlite.errors import DatabaseError, _classify_error
+
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?(\w+)[\"'`]?", re.IGNORECASE
+)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -94,6 +99,8 @@ async def run_migrations(tool) -> None:
         # Fallback to alphabetical
         ordered_keys = sorted(migrations.keys())
 
+    live_schema = set((await tool.describe_schema()).keys())
+
     # ── 3. Apply in topological order ───────────────────────────────
     for key in ordered_keys:
         if key not in migrations:
@@ -103,19 +110,28 @@ async def run_migrations(tool) -> None:
         domain = info["domain"]
         filename = info["filename"]
 
+        with open(info["path"], "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
+
+        declared_tables = _CREATE_TABLE_RE.findall(sql_script)
+
         # Check if already applied
         already_applied = await tool.query_one(
             "SELECT 1 FROM _migrations_history WHERE domain = $1 AND filename = $2",
             [domain, filename],
         )
         if already_applied:
-            continue
+            missing_tables = [t for t in declared_tables if t not in live_schema]
+            if not missing_tables:
+                continue
+            print(f"  [Migration] ⚠️ Table(s) {missing_tables} declared in {key} missing from DB despite history record. Repairing...")
+            await tool._db.execute(
+                "DELETE FROM _migrations_history WHERE domain = ? AND filename = ?",
+                [domain, filename],
+            )
 
         print(f"  [Migration] Applying {key}...")
-
-        with open(info["path"], "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
 
         # Each migration in its own transaction
         try:
@@ -137,4 +153,5 @@ async def run_migrations(tool) -> None:
             # transaction __aexit__ will ROLLBACK
             raise DatabaseError(f"Migration failed for {key}: {e}", **_classify_error(e)) from e
 
+        live_schema.update(declared_tables)
         print(f"  [Migration] ✅ Applied {key}")

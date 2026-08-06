@@ -163,9 +163,9 @@ The system scans all tools, plugins, domains, events, and models — then writes
 
 A Tool is identified by its `name` property. The SQLite tool and the PostgreSQL tool both expose the same API (`query`, `execute`, `transaction`, `health_check`) and both use `$1, $2` placeholders. To switch databases:
 
-1. Change `name = "db"` in the SQLite tool to `name = "sqlite"`
-2. Change `name = "postgresql"` in the PostgreSQL tool to `name = "db"`
-3. Plugins don't change a single line.
+1. Move `tools/sqlite` to `extras/available_tools/sqlite`
+2. Move `extras/available_tools/postgresql` to `tools/postgresql`
+3. Plugins don't change a single line. Both tools expose the exact same `db` API.
 
 Migrations are the honest exception: the `db` tool is not an ORM — SQL files run
 **verbatim** on the active engine (no dialect translation), so an engine swap includes

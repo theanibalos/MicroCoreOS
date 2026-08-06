@@ -47,7 +47,7 @@ async def db(request, monkeypatch):
     monkeypatch.setenv("PG_PORT", "5432")
     monkeypatch.setenv("PG_USER", "postgres")
     monkeypatch.setenv("PG_PASSWORD", "postgres")
-    monkeypatch.setenv("PG_DATABASE", "microcoreos")
+    monkeypatch.setenv("PG_DATABASE", "microcoreos_test")
     monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
     tool = PostgresqlTool()
     try:
@@ -229,7 +229,7 @@ async def both_engines(monkeypatch):
     monkeypatch.setenv("PG_PORT", "5432")
     monkeypatch.setenv("PG_USER", "postgres")
     monkeypatch.setenv("PG_PASSWORD", "postgres")
-    monkeypatch.setenv("PG_DATABASE", "microcoreos")
+    monkeypatch.setenv("PG_DATABASE", "microcoreos_test")
     monkeypatch.setenv("DB_AUTO_MIGRATE", "false")
     pg_tool = PostgresqlTool()
     try:
