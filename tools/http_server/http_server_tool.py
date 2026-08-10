@@ -96,6 +96,12 @@ HttpContext API:
     context.set_header(key, value)          → Add a custom response header
     context.redirect(url, status=302)       → Redirect to another URL
     context.set_binary_response(content, media_type) → Return raw binary data
+    context.client_ip                       → Best-effort caller IP (property, not a
+                                               call) — a raw signal for the PLUGIN's own
+                                               policy (identity-aware rate limiting,
+                                               audit logging...). See INSTRUCTIONS_FOR_AI.md's
+                                               Rate Limiting Pattern: this tool never
+                                               decides a policy, it only exposes the signal.
 
 
 AUTH VALIDATOR CONTRACT:
@@ -132,7 +138,9 @@ REPLACEMENT STANDARD (implement this to swap the backend):
           add_sse_endpoint(path, generator, tags, auth_validator)
     4. Handler contract: handler(data: dict, context: HttpContext) → dict
        - data: flat merge of path params + query params + body (+ _files if applicable)
-       - context: instance of HttpContext (or a compatible duck-type)
+       - context: instance of HttpContext (or a compatible duck-type), constructed with
+         client_ip= the best-effort caller IP for this backend's own request object
+         (see pipeline.py's _extract_client_ip for the header trust order to mirror)
     5. Honor context.status_code and context.binary_content for the HTTP response.
        If the handler never called context.set_status() and the result dict has
        success: False, default to HTTP 400 instead of 200 (context._status_explicit
@@ -355,6 +363,10 @@ class HttpServerTool(BaseTool):
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
+            - context.client_ip: Best-effort caller IP (property). Raw signal only — the
+              plugin decides what to do with it (e.g. state.increment() keyed by IP for
+              an identity-aware business rule). Never security-authoritative on its own;
+              see context.py's client_ip docstring for the trust order and its limits.
         - RESPONSE CONTRACT:
             - Standard: return {"success": bool, "data": ..., "error": ...}
             - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 

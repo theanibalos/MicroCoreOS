@@ -22,11 +22,34 @@ class HttpContext:
     All mutations are applied to the response before it is sent to the client.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, client_ip: str | None = None) -> None:
         self._status_code: int = 200
         self._status_explicit: bool = False
         self._cookies: list[dict] = []
         self._headers: dict[str, str] = {}
+        self._client_ip = client_ip
+
+    @property
+    def client_ip(self) -> str | None:
+        """
+        Best-effort real caller IP — a raw signal for whatever policy the
+        PLUGIN decides (identity-aware rate limiting, audit logging,
+        fraud/abuse heuristics...). This tool never interprets it: per
+        INSTRUCTIONS_FOR_AI.md's Rate Limiting Pattern, volumetric/anonymous
+        IP throttling belongs at the edge (reverse proxy / CDN), never in
+        the monolith — but a business rule that happens to key on IP (e.g.
+        "no more than N accounts created from the same address") is exactly
+        the kind of identity-aware policy that pattern says belongs in the
+        plugin, with the `state` tool primitive. This property is what makes
+        that possible; it does not pick a policy itself.
+
+        Trust order (see pipeline.py's _extract_client_ip): Cf-Connecting-Ip,
+        then X-Forwarded-For's first hop, then the direct TCP peer. The first
+        two are only as trustworthy as whatever reverse proxy sets them —
+        this tool cannot verify one is actually in front of it. None if no
+        signal was available at all (e.g. request.client itself is None).
+        """
+        return self._client_ip
 
     def set_status(self, code: int) -> None:
         """

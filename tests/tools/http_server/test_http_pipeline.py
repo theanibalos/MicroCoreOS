@@ -8,6 +8,7 @@ from tools.http_server.pipeline import (
     _process_request,
     _extract_bearer_token,
     _extract_ws_token,
+    _extract_client_ip,
 )
 from tools.http_server.context import HttpContext
 from pydantic import BaseModel
@@ -60,6 +61,62 @@ async def test_extract_bearer_token_csrf_block():
     req.headers = Headers({"X-Requested-With": "XMLHttpRequest"})
     token = _extract_bearer_token(req)
     assert token == "cookie_jwt"
+
+
+def test_extract_client_ip_trust_order():
+    # 1. Cf-Connecting-Ip wins even if the other two are also present.
+    req = MagicMock(spec=Request)
+    req.headers = Headers({
+        "Cf-Connecting-Ip": "203.0.113.7",
+        "X-Forwarded-For": "198.51.100.1, 10.0.0.1",
+    })
+    req.client = MagicMock(host="10.0.0.99")
+    assert _extract_client_ip(req) == "203.0.113.7"
+
+    # 2. No Cf-Connecting-Ip -> first hop of X-Forwarded-For.
+    req = MagicMock(spec=Request)
+    req.headers = Headers({"X-Forwarded-For": "198.51.100.1, 10.0.0.1"})
+    req.client = MagicMock(host="10.0.0.99")
+    assert _extract_client_ip(req) == "198.51.100.1"
+
+    # 3. Neither header -> the direct TCP peer.
+    req = MagicMock(spec=Request)
+    req.headers = Headers({})
+    req.client = MagicMock(host="10.0.0.99")
+    assert _extract_client_ip(req) == "10.0.0.99"
+
+    # 4. No signal at all (request.client itself is None) -> None, not a crash.
+    req = MagicMock(spec=Request)
+    req.headers = Headers({})
+    req.client = None
+    assert _extract_client_ip(req) is None
+
+
+@pytest.mark.anyio
+async def test_process_request_exposes_client_ip_to_handler():
+    req = MagicMock(spec=Request)
+    req.query_params = {}
+    req.path_params = {}
+    req.headers = Headers({"Cf-Connecting-Ip": "203.0.113.7"})
+    req.method = "GET"
+    req.url.path = "/whoami"
+    req.client = MagicMock(host="10.0.0.99")
+
+    seen_ip = {}
+
+    async def handler(data, ctx: HttpContext):
+        seen_ip["value"] = ctx.client_ip
+        return {"success": True}
+
+    await _process_request(
+        request=req,
+        body_data=None,
+        handler=handler,
+        auth_validator=None,
+        paused_owners=set(),
+    )
+
+    assert seen_ip["value"] == "203.0.113.7"
 
 
 @pytest.mark.anyio

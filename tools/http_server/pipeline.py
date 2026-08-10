@@ -22,6 +22,44 @@ from tools.http_server.context import HttpContext
 from tools.http_server.types import UploadedFile
 
 
+def _extract_client_ip(request: Request) -> str | None:
+    """
+    Best-effort real caller IP, exposed to plugins as context.client_ip (see
+    context.py) — a raw signal, not a policy. Behind ANY reverse proxy or
+    CDN, the direct TCP peer is the proxy's own address, not the visitor's;
+    without header-based extraction every caller looks identical, which
+    would make any plugin-level policy keyed on IP (see
+    INSTRUCTIONS_FOR_AI.md's Rate Limiting Pattern) meaningless — everyone
+    sharing one bucket instead of one each.
+
+    Trust order:
+    1. Cf-Connecting-Ip: set by Cloudflare's edge, before any tunnel/proxy
+       hop — trustworthy specifically when Cloudflare is the ONLY path
+       traffic can take to reach this app (true for a Cloudflare Tunnel
+       deployment, since the origin has no other inbound route). Deployments
+       fronted by a different CDN should adjust this trust order to match.
+    2. X-Forwarded-For: set by a generic reverse proxy (Traefik, nginx,
+       an ALB...) as it forwards — first hop of the (possibly multi-value)
+       list. Fallback for setups without Cloudflare specifically in front.
+    3. request.client.host: the direct TCP peer — only correct with NO
+       proxy in front at all (bare local dev). Behind any proxy this is the
+       proxy's own address, not the caller's.
+
+    Note this is inherently spoofable by the caller UNLESS a proxy is
+    actually in front overwriting these headers — this tool has no way to
+    verify one is. Fine for rate-limiting/audit-logging use cases; do not
+    use this value for anything security-authoritative (e.g. an allowlist
+    gate) without also verifying the deployment topology guarantees it.
+    """
+    cf_ip = request.headers.get("Cf-Connecting-Ip")
+    if cf_ip:
+        return cf_ip.strip()
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 def _serialize(obj):
     """Recursively convert Pydantic models to dicts so JSONResponse can serialize them."""
     if isinstance(obj, BaseModel):
@@ -167,7 +205,7 @@ async def _process_request(
                 content={"success": False, "error": "Service temporarily unavailable (paused)"},
             )
 
-        context = HttpContext()
+        context = HttpContext(client_ip=_extract_client_ip(request))
 
         # ── Phase 3: Authentication ────────────────────────────────────────
         if auth_validator:

@@ -63,6 +63,10 @@ HTTP Server Tool (http):
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
+            - context.client_ip: Best-effort caller IP (property). Raw signal only — the
+              plugin decides what to do with it (e.g. state.increment() keyed by IP for
+              an identity-aware business rule). Never security-authoritative on its own;
+              see context.py's client_ip docstring for the trust order and its limits.
         - RESPONSE CONTRACT:
             - Standard: return {"success": bool, "data": ..., "error": ...}
             - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 
