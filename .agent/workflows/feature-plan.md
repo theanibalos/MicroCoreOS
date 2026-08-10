@@ -4,9 +4,7 @@ description: Plan and build one or more features (plugins) on an EXISTING domain
 
 # Feature Plan Workflow
 
-The smallest planning level: new plugins on a domain that already exists. No
-migrations, no new tools — if you need either, escalate to
-[new-domain.md](new-domain.md) or [multi-domain-plan.md](multi-domain-plan.md).
+The smallest planning level: new plugins or schema modifications (e.g. ALTER TABLE, column changes, indexes) on a domain that already exists. Omit `phase_0` if no schema changes or tools are needed; if modifying an existing table schema, declare the migration in `phase_0.migrations`. If creating a whole new domain or multiple domains, escalate to [new-domain.md](new-domain.md) or [multi-domain-plan.md](multi-domain-plan.md).
 
 ## Before you plan — read these two, in this order
 

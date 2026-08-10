@@ -34,7 +34,7 @@ plan:
     migrations:
       - file: catalog/001_create_catalog.sql
         tables: [products]
-        columns:                            # full schema — phase 0 is built from this
+        columns:                            # schema mapping (full table definition for CREATE, or modified/added columns for ALTER TABLE) — phase 0 is built from this
           products:
             id: "INTEGER PRIMARY KEY"       # auto-increment PK spelling is engine-specific — match the declared engine
             name: "TEXT NOT NULL"
