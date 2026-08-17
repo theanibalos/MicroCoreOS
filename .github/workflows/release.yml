@@ -25,7 +25,7 @@ permissions: {}
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
 
@@ -84,7 +84,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     # The environment is the gate: configure it in Settings → Environments and
     # only it can publish, no matter who else holds commit access. The name

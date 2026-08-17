@@ -15,7 +15,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -114,7 +114,7 @@ jobs:
   # the gate that makes boot-time validation count: a tool can only prove it is
   # alive if its backend is actually mounted.
   smoke-boot:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - uses: actions/checkout@v7
@@ -223,7 +223,7 @@ jobs:
   # track of an extra installed by hand. None of those can exist when the code
   # runs from a checkout — which is the only way the other jobs run it.
   packaged-e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - uses: actions/checkout@v7
