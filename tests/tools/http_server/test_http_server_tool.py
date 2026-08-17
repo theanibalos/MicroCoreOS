@@ -326,6 +326,14 @@ def test_mount_static_raises_on_missing_directory(tool, tmp_path):
         tool.mount_static("/static", str(tmp_path / "does_not_exist"))
 
 
+def test_mount_static_optional_skips_missing_directory(tool, tmp_path, capsys):
+    """optional=True warns and skips rather than crashing boot when directory is unbuilt."""
+    tool.mount_static("/static", str(tmp_path / "does_not_exist"), optional=True)
+    assert len(tool._pending_mounts) == 0
+    captured = capsys.readouterr()
+    assert "optional directory not found" in captured.out
+
+
 def test_mount_static_raises_when_path_is_a_file(tool, tmp_path):
     """isdir, not exists: a file is not a mountable directory."""
     f = tmp_path / "index.html"
@@ -333,6 +341,7 @@ def test_mount_static_raises_when_path_is_a_file(tool, tmp_path):
 
     with pytest.raises(ValueError, match="directory not found"):
         tool.mount_static("/static", str(f))
+
 
 
 # ─── contract boundary: no framework objects reach plugins ───────────────────

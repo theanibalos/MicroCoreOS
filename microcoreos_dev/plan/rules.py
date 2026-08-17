@@ -199,6 +199,16 @@ class PlanValidator:
 
     def _rules_3_4_event_contracts(self):
         for feature in self.plan.features:
+            if feature.tools:
+                needs_bus = bool(feature.publishes or feature.consumes)
+                if needs_bus and not any(t in ("event_bus", "bus") for t in feature.tools):
+                    verbs = "publishes/consumes" if (feature.publishes and feature.consumes) else ("publishes" if feature.publishes else "consumes")
+                    self._error(
+                        3, feature.plugin,
+                        f"feature {verbs} events but its 'tools:' list does not include 'event_bus'",
+                        fix=f"tools: {feature.tools + ['event_bus']}",
+                    )
+
             for consume in feature.consumes:
                 if consume.event.startswith(self.BUS_PUBLISHED):
                     continue
@@ -214,6 +224,7 @@ class PlanValidator:
                         self._error(4, feature.plugin,
                                     f"event '{consume.event}' payload lacks required "
                                     f"keys {missing}")
+
 
     # rule 5 — every feature has a test
     def _rule_5_feature_tests(self):

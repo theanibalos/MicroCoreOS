@@ -435,6 +435,7 @@ class HttpServerTool(BaseTool):
         directory_path: str,
         html: bool = False,
         allow_extensions: Optional[set] = None,
+        optional: bool = False,
     ) -> None:
         """Serves static files from a local directory. Deny by default.
 
@@ -450,17 +451,27 @@ class HttpServerTool(BaseTool):
         UI or SPA mounted at "/" needs. Off by default: it also makes a miss
         render '404.html' when that file exists.
 
+        optional=True skips the mount gracefully with a warning if directory_path
+        does not exist yet (e.g. unbuilt frontend in dev), instead of raising ValueError.
+
         The mount is buffered and applied in on_boot_complete(), after every
         endpoint. Starlette matches routes in registration order and a Mount
         matches its whole subtree, so mounting "/" earlier would shadow the API.
 
-        Raises ValueError if the directory does not exist.
+        Raises ValueError if the directory does not exist and optional is False.
         """
         if not os.path.isdir(directory_path):
+            if optional:
+                print(
+                    f"[HttpServer] ⚠️  mount_static: optional directory not found: {directory_path!r} "
+                    f"(skipping mount)"
+                )
+                return
             raise ValueError(
                 f"mount_static: directory not found: {directory_path!r} "
                 f"(resolved to {os.path.abspath(directory_path)!r})"
             )
+
 
         if allow_extensions is None:
             allow_extensions = DEFAULT_STATIC_EXTENSIONS

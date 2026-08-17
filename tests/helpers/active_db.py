@@ -152,22 +152,58 @@ async def active_db(monkeypatch, *migration_dirs: Path):
         else:
             pytest.skip(f"active db tool {tool_cls.__name__} is unreachable: {e}")
 
+    from graphlib import TopologicalSorter
+
+    all_migrations: dict[str, dict] = {}
+    for migrations_dir in migration_dirs:
+        domain = migrations_dir.parent.name
+        for migration in sorted(migrations_dir.glob("*.sql")):
+            key = f"{domain}/{migration.name}"
+            depends = []
+            with open(migration, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.lower().startswith("-- depends:"):
+                        dep = line.split(":", 1)[1].strip()
+                        if not dep.endswith(".sql"):
+                            dep += ".sql"
+                        depends.append(dep)
+                    elif line.startswith("--"):
+                        continue
+                    else:
+                        break
+            all_migrations[key] = {
+                "path": migration,
+                "depends": depends,
+            }
+
+    graph = {k: set(v["depends"]) for k, v in all_migrations.items()}
+    try:
+        sorter = TopologicalSorter(graph)
+        ordered_keys = [k for k in sorter.static_order() if k in all_migrations]
+    except Exception:
+        ordered_keys = list(all_migrations.keys())
+
     tables: list[str] = []
     try:
-        for migrations_dir in migration_dirs:
-            for migration in sorted(migrations_dir.glob("*.sql")):
-                sql = migration.read_text(encoding="utf-8")
-                tables.extend(_CREATE_TABLE_RE.findall(sql))
-                for statement in _statements(sql):
-                    await tool.execute(statement)
+        for key in ordered_keys:
+            migration = all_migrations[key]["path"]
+            sql = migration.read_text(encoding="utf-8")
+            tables.extend(_CREATE_TABLE_RE.findall(sql))
+            for statement in _statements(sql):
+                await tool.execute(statement)
         yield tool
     finally:
         # SQLite :memory: dies with the connection, but an engine backed by a
         # real server keeps every table between tests — drop what we created,
-        # children first (reverse creation order).
+        # children first (reverse creation order). On PostgreSQL, use CASCADE
+        # so foreign keys left by dependent tables don't prevent dropping.
+        is_pg = tool_cls.__name__ == "PostgresqlTool"
         for table in reversed(tables):
             try:
-                await tool.execute(f"DROP TABLE IF EXISTS {table}")
+                drop_sql = f"DROP TABLE IF EXISTS {table} CASCADE" if is_pg else f"DROP TABLE IF EXISTS {table}"
+                await tool.execute(drop_sql)
             except Exception:
                 pass
         await tool.shutdown()
+

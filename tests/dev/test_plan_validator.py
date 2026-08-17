@@ -1218,3 +1218,29 @@ def test_the_old_spelling_is_not_reported_as_an_unknown_key():
     found = unknown_plan_keys({"features": [{"plugin": "P", "mocks": ["db"]}]})
 
     assert not any(key == "mocks" for _where, key in found)
+
+
+def test_publishes_without_event_bus_in_tools_fails_validation():
+    plan = copy.deepcopy(VALID_PLAN)
+    plan["features"][0]["tools"] = ["http", "db", "logger"]  # publishes order.created but missing event_bus
+
+    result = run_validation(plan, LiveSnapshot())
+
+    errors = [e for e in result.errors if "event_bus" in e.detail]
+    assert len(errors) == 1
+    assert errors[0].rule == 3
+    assert errors[0].where == "CreateOrderPlugin"
+
+
+def test_consumes_without_event_bus_in_tools_fails_validation():
+    plan = copy.deepcopy(VALID_PLAN)
+    plan["features"][1]["tools"] = ["logger"]  # consumes order.created but missing event_bus
+
+    result = run_validation(plan, LiveSnapshot())
+
+    errors = [e for e in result.errors if "event_bus" in e.detail]
+    assert len(errors) == 1
+    assert errors[0].rule == 3
+    assert errors[0].where == "OrderNotifierPlugin"
+
+

@@ -429,7 +429,11 @@ PYTEST_CONFIG_BLOCK = """
 [tool.pytest.ini_options]
 testpaths = ["tests", "tools"]
 pythonpath = ["."]
+markers = [
+    "migrations(*domains): apply these domains' real migrations to the `db` fixture",
+]
 """
+
 
 PYTEST_TABLE_IS_YOURS = """
    ⚠️  Your pyproject.toml already configures pytest, so it was left alone.

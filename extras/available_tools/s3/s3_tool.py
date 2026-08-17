@@ -286,6 +286,12 @@ class S3Tool(BaseTool):
         Generate a presigned URL for private object access.
         operation: 'get' (download) or 'put' (upload).
         expires_in: seconds until expiry (default: 1 hour).
+
+        NOTE FOR BROWSER DIRECT UPLOADS (operation='put'):
+        When uploading directly from a web browser via fetch/XHR PUT, the browser
+        sends an OPTIONS preflight request. The S3 bucket MUST have CORS configured
+        (AllowedMethods: PUT, OPTIONS; AllowedOrigins: frontend origin; AllowedHeaders: *).
+        Without bucket CORS, the browser blocks the upload during preflight.
         """
         resolved_bucket = self._resolve_bucket(bucket)
         client_method = "get_object" if operation == "get" else "put_object"
@@ -296,6 +302,7 @@ class S3Tool(BaseTool):
                 ExpiresIn=expires_in,
             )
         return url
+
 
     async def delete_object(
         self,
