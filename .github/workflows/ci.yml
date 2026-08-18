@@ -77,6 +77,7 @@ jobs:
       # env vars are needed here.
       - name: Start RustFS (S3 parity tests)
         run: |
+          docker rm -f rustfs 2>/dev/null || true
           docker run -d --rm --name rustfs -p 9000:9000 \
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
@@ -109,6 +110,10 @@ jobs:
         # Passing `tests/` here would silently drop every one of them.
         run: uv run -m pytest -v --tb=short
 
+      - name: Stop RustFS
+        if: always()
+        run: docker rm -f rustfs 2>/dev/null || true
+
   # Boots the REAL system against REAL infrastructure (MinIO as S3, SQLite on
   # disk) and asserts that every tool is OK and every plugin is READY. This is
   # the gate that makes boot-time validation count: a tool can only prove it is
@@ -129,6 +134,7 @@ jobs:
       # started as a step instead.
       - name: Start RustFS (real S3 backend)
         run: |
+          docker rm -f rustfs 2>/dev/null || true
           docker run -d --rm --name rustfs -p 9000:9000 \
             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
             rustfs/rustfs:latest server /data --console-address ":9001"
@@ -207,6 +213,10 @@ jobs:
           EOF
 
           kill $APP_PID
+
+      - name: Stop RustFS
+        if: always()
+        run: docker rm -f rustfs 2>/dev/null || true
 
       - name: Show boot log on failure
         if: failure()
