@@ -246,8 +246,8 @@ jobs:
 
       - name: Install it in a venv with no access to the repo
         run: |
-          mkdir -p /tmp/e2e && cd /tmp/e2e
-          uv venv
+          rm -rf /tmp/e2e && mkdir -p /tmp/e2e && cd /tmp/e2e
+          uv venv --clear
           # [auth] matters: bcrypt and pyjwt are no longer base dependencies,
           # so this also proves the extra carries what its tool imports.
           uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler,auth]"
@@ -360,6 +360,10 @@ jobs:
         if: failure()
         run: cat /tmp/e2e/app/boot.log || true
 
+      - name: Clean up temporary e2e directory
+        if: always()
+        run: rm -rf /tmp/e2e
+
   # The same package paths on Windows. Everything above runs on Linux only, so
   # the one thing this job is here to execute is path handling: the manifest is
   # a published format whose keys are POSIX-style on every platform, and
@@ -395,7 +399,7 @@ jobs:
       - name: Install it in a venv with no access to the repo
         run: |
           mkdir -p "$RUNNER_TEMP/e2e" && cd "$RUNNER_TEMP/e2e"
-          uv venv
+          uv venv --clear
           # [auth] matters: bcrypt and pyjwt are no longer base dependencies,
           # so this also proves the extra carries what its tool imports.
           uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)[scheduler,auth]"
