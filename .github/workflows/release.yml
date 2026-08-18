@@ -58,8 +58,9 @@ jobs:
       # report, since the version cannot be republished.
       - name: The wheel must scaffold with no repo in sight
         run: |
+          rm -rf "$RUNNER_TEMP/verify" 2>/dev/null || true
           mkdir -p "$RUNNER_TEMP/verify" && cd "$RUNNER_TEMP/verify"
-          uv venv
+          uv venv --clear
           uv pip install "$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
           ./.venv/bin/microcoreos --help > /dev/null
           ./.venv/bin/microcoreos new app > /dev/null
