@@ -11,11 +11,13 @@ microcoreos [run] [--boot-tool <tool>]           Boot the Kernel
 microcoreos dev                                  Boot with auto-reload
 
 microcoreos status                               Active plan, progress, manifest age
-microcoreos plan validate [path]                 The 18 plan rules, offline
+microcoreos plan validate [path] [--fix]         The 18 plan rules, offline
+microcoreos plan sync [path]                     Sync execution checklist from plan
 microcoreos plan probe [path]                    What each feature actually touches
 microcoreos migrate                              Migrations + regenerate AI_CONTEXT.md
 microcoreos schema                               The live tables and columns
 ```
+
 
 **Every example below needs a `uv run` prefix** (or an activated venv): the
 console script lives in `.venv/bin`, so a bare `microcoreos` is "command not
@@ -203,6 +205,8 @@ observed failing.
 ```bash
 microcoreos status                   # before anything else
 microcoreos plan validate            # defaults to plans/active_plan.yaml
+microcoreos plan validate --fix      # sync checklist then validate
+microcoreos plan sync                # generate / sync plans/active_plan.md from plan
 microcoreos plan validate draft.yaml # or any path
 microcoreos migrate                  # after writing phase 0
 microcoreos schema                   # verify what landed in the database
@@ -215,6 +219,12 @@ other `plans/*.yaml` sitting there, because those are plans nothing executes,
 and any loose `.py` in the project root — every deliverable has a declared home
 under `domains/`, `tools/` or `tests/`, so one at the root is an agent's
 scratch file left behind. Reported, never deleted.
+
+**`plan sync`** — generates or updates `plans/active_plan.md` directly from
+`plans/active_plan.yaml`, preserving existing checkmarks `[x]` while generating
+exact task paths for Phase 0, Phase 2 and Phase 3. Eliminates manual checklist
+authoring and Rule 15 mismatches.
+
 
 **`plan probe`** — the other half of the question. `validate` asks whether the
 PLAN is well formed; this drives every feature with recording stand-ins for its

@@ -208,23 +208,35 @@ def scan_live_events(domains_dir: str = "domains") -> tuple[set[str], dict[str, 
                     tree = ast.parse(f.read())
             except Exception:
                 continue
+
+            # First pass: map each node to its enclosing ClassDef name if any
+            class_map = {}
             for klass in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
-                for node in ast.walk(klass):
-                    if not (isinstance(node, ast.Call)
-                            and isinstance(node.func, ast.Attribute)
-                            and node.args
-                            and isinstance(node.args[0], ast.Constant)
-                            and isinstance(node.args[0].value, str)):
-                        continue
+                for child in ast.walk(klass):
+                    class_map[child] = klass.name
+
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)):
+                    continue
+                event = None
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                     event = node.args[0].value
-                    if node.func.attr == "publish":
-                        published.add(event)
-                    elif node.func.attr == "subscribe":
-                        handler = "handler"
-                        if len(node.args) > 1 and isinstance(node.args[1], ast.Attribute):
-                            handler = node.args[1].attr
-                        subscribers.setdefault(event, []).append(f"{klass.name}.{handler}")
+                for kw in node.keywords:
+                    if kw.arg in ("event", "topic") and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        event = kw.value.value
+                if not event:
+                    continue
+                if node.func.attr == "publish":
+                    published.add(event)
+                elif node.func.attr == "subscribe":
+                    handler = "handler"
+                    if len(node.args) > 1 and isinstance(node.args[1], ast.Attribute):
+                        handler = node.args[1].attr
+                    owner = class_map.get(node, filename[:-3])
+                    subscribers.setdefault(event, []).append(f"{owner}.{handler}")
     return published, subscribers
+
 
 
 def offline_snapshot(domains_dir: str = "domains") -> LiveSnapshot:

@@ -524,13 +524,14 @@ async def test_http_server_on_boot_complete_and_shutdown(monkeypatch):
 
     # Mock uvicorn Server serve to return immediately
     class DummyUvicornServer:
-        def __init__(self):
+        def __init__(self, *args, **kwargs):
             self.should_exit = False
         async def serve(self):
             pass
 
-    t._server = DummyUvicornServer()
+    monkeypatch.setattr("uvicorn.Server", DummyUvicornServer)
     await t.on_boot_complete(None)
     assert t._server_task is not None
     await t.shutdown()
     assert t._server.should_exit is True
+

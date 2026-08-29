@@ -34,6 +34,7 @@ USAGE = """MicroCoreOS — development tooling
 Usage:
   microcoreos-dev status                  Active plan, progress, manifest age
   microcoreos-dev plan validate [path]    Validate the plan offline (no server)
+  microcoreos-dev plan sync [path]        Sync execution checklist from plan
   microcoreos-dev plan probe [path]       Drive each feature, report what it touches
   microcoreos-dev migrate                 Apply migrations + regenerate AI_CONTEXT.md
   microcoreos-dev schema                  Print the live tables and columns
@@ -42,6 +43,7 @@ Every one of these is also reachable as `microcoreos <command>`, which is the
 form the docs and workflows use. Run them from the root of a MicroCoreOS
 project (the directory holding tools/, domains/ and plans/).
 """
+
 
 
 def dispatch(name: str, argv: list[str]) -> int:

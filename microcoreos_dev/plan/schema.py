@@ -4,8 +4,15 @@ Vocabulary only: what a plan may say, and which keys no field claims. The rules
 that judge a plan live in `rules.py`; what the repo on disk already occupies
 lives in `scan.py`.
 """
-from typing import Optional, Literal, get_args
-from pydantic import BaseModel, ConfigDict, Field
+import re
+from typing import Optional, Literal, Union, get_args
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def payload_model_name(event: str) -> str:
+    """'order.paid' -> 'OrderPaidPayload' (AGENTS.md rule 10's spelling)."""
+    parts = [p for p in re.split(r"[^0-9A-Za-z]+", event) if p]
+    return ("".join(p[:1].upper() + p[1:] for p in parts) + "Payload") if parts else "EventPayload"
 
 
 class PlanRoute(BaseModel):
@@ -21,10 +28,17 @@ class PlanMigration(BaseModel):
     columns: dict[str, dict[str, str]] = {}
 
 
+class PlanTool(BaseModel):
+    name: str
+    file: str
+    contract: list[str] = []
+    infra_errors: bool = False
+
+
 class PlanPhase0(BaseModel):
     migrations: list[PlanMigration] = []
     models: list[str] = []
-    tools: list[str] = []
+    tools: list[Union[PlanTool, str]] = []
 
 
 class PlanDbContract(BaseModel):
@@ -37,10 +51,28 @@ class PlanPublish(BaseModel):
     model: Optional[str] = None
     payload: dict = {}
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_str(cls, data):
+        if isinstance(data, str):
+            return {
+                "event": data,
+                "model": payload_model_name(data),
+                "payload": {},
+            }
+        return data
+
 
 class PlanConsume(BaseModel):
     event: str
     requires: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_str(cls, data):
+        if isinstance(data, str):
+            return {"event": data, "requires": []}
+        return data
 
 
 class PlanFeature(BaseModel):
@@ -63,6 +95,16 @@ class PlanFeature(BaseModel):
     test: Optional[str] = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("publishes", "consumes", mode="before")
+    @classmethod
+    def _ensure_list(cls, data):
+        if data is None:
+            return []
+        if isinstance(data, (str, dict)):
+            return [data]
+        return data
+
 
 
 class PlanLink(BaseModel):

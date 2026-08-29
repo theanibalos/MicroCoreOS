@@ -676,3 +676,49 @@ def test_probe_accepts_the_route_and_events_the_plan_declares(tmp_path, monkeypa
     monkeypatch.chdir(_route_project(tmp_path))
 
     assert cli.main(["plan", "probe"]) == 0
+
+
+def test_plan_sync_cli_generates_active_plan_md(tmp_path, monkeypatch, capsys):
+    project = _probe_project(tmp_path)
+    monkeypatch.chdir(project)
+
+    checklist_file = project / "plans" / "active_plan.md"
+    assert not checklist_file.exists()
+
+    code = cli.main(["plan", "sync"])
+    assert code == 0
+    assert checklist_file.exists()
+
+    content = checklist_file.read_text(encoding="utf-8")
+    assert "CounterPlugin" in content
+    assert "domains/shop/plugins/counter_plugin.py" in content
+    assert "tests/test_counter_plugin.py" in content
+    assert "<!-- template: true -->" not in content
+
+
+def test_plan_validate_fix_cli_syncs_checklist(tmp_path, monkeypatch, capsys):
+    valid_plan_yaml = """
+plan:
+  domain: shop
+  features:
+    - plugin: CounterPlugin
+      file: domains/shop/plugins/counter_plugin.py
+      publishes: ["order.counted"]
+      tools: [event_bus]
+      test: tests/test_counter_plugin.py
+"""
+    project = _probe_project(tmp_path, plan=valid_plan_yaml)
+    monkeypatch.chdir(project)
+
+    # Place a template checklist
+    checklist_file = project / "plans" / "active_plan.md"
+    checklist_file.write_text("<!-- template: true -->\n- [ ] dummy", encoding="utf-8")
+
+    code = cli.main(["plan", "validate", "--fix"])
+    # Validation will pass because --fix updated the checklist with the real tasks
+    assert code == 0
+    content = checklist_file.read_text(encoding="utf-8")
+    assert "<!-- template: true -->" not in content
+    assert "counter_plugin.py" in content
+
+

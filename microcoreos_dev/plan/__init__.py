@@ -19,8 +19,10 @@ from microcoreos_dev.plan.schema import (
     PlanLanguage,
     PlanLink,
     PlanMigration,
+    PlanPhase0,
     PlanPublish,
     PlanRoute,
+    PlanTool,
     PlanViolation,
     ValidatePlanData,
     unknown_plan_keys,
@@ -40,6 +42,10 @@ from microcoreos_dev.plan.rules import (
     run_validation,
     validate_yaml,
 )
+from microcoreos_dev.plan.sync import (
+    generate_checklist,
+    sync_checklist,
+)
 
 __all__ = [
     "DURABLE_DRIVERS",
@@ -51,11 +57,14 @@ __all__ = [
     "PlanLanguage",
     "PlanLink",
     "PlanMigration",
+    "PlanPhase0",
     "PlanPublish",
     "PlanRoute",
+    "PlanTool",
     "PlanValidator",
     "PlanViolation",
     "ValidatePlanData",
+    "generate_checklist",
     "offline_snapshot",
     "parse_plan_yaml",
     "run_validation",
@@ -63,6 +72,8 @@ __all__ = [
     "scan_live_events",
     "scan_live_routes",
     "scan_live_tables",
+    "sync_checklist",
     "unknown_plan_keys",
     "validate_yaml",
 ]
+

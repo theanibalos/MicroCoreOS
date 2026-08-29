@@ -285,26 +285,58 @@ def schema(argv: list[str]) -> int:
 
 # ── plan validate ────────────────────────────────────────────────────────────
 
-PLAN_USAGE = """Usage: microcoreos plan <validate|probe> [path]
+PLAN_USAGE = """Usage: microcoreos plan <validate|probe|sync> [path] [--fix]
 
-  validate  the 19 rules, offline — is the PLAN well formed
+  validate  the 19 rules, offline — is the PLAN well formed (--fix to sync checklist first)
   probe     drive each feature and record what it touches — does the CODE
             match the plan it was written from
+  sync      generate or sync plans/active_plan.md from the active plan
 
   path      defaults to plans/active_plan.yaml
 """
 
 
 def plan(argv: list[str]) -> int:
-    if not argv or argv[0] not in ("validate", "probe"):
+    if not argv or argv[0] not in ("validate", "probe", "sync"):
         print(PLAN_USAGE)
         return 2
-    path = argv[1] if len(argv) > 1 else PLAN_PATH
-    return _plan_validate(path) if argv[0] == "validate" else _run_probe(path)
+    cmd = argv[0]
+    rest = argv[1:]
+    fix = "--fix" in rest
+    args = [a for a in rest if a != "--fix"]
+    path = args[0] if args else PLAN_PATH
+
+    if cmd == "sync":
+        return _plan_sync(path)
+    elif cmd == "validate":
+        if fix:
+            sync_res = _plan_sync(path)
+            if sync_res != 0:
+                return sync_res
+        return _plan_validate(path)
+    else:  # probe
+        return _run_probe(path)
+
+
+def _plan_sync(path: str) -> int:
+    """Generate or update plans/active_plan.md from the plan file."""
+    root = ensure_project_on_path()
+    if not require_project(root):
+        return 2
+
+    from microcoreos_dev.plan.sync import sync_checklist
+
+    success, msg = sync_checklist(path, CHECKLIST_PATH)
+    if not success:
+        print(f"\n❌ {msg}\n")
+        return 1
+    print(f"✅ {msg}")
+    return 0
 
 
 def _plan_validate(path: str) -> int:
     """Run the 16 plan rules offline — no server, no jq, no curl.
+
 
     The validator was already pure (a Plan plus a LiveSnapshot in, violations
     out); only the snapshot needed the running system, and everything in it

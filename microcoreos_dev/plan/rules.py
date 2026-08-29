@@ -19,6 +19,7 @@ from microcoreos_dev.plan.schema import (
     Plan,
     PlanFeature,
     PlanLanguage,
+    PlanTool,
     PlanViolation,
     ValidatePlanData,
     unknown_plan_keys,
@@ -388,8 +389,13 @@ class PlanValidator:
                     declared.append((flow.name, path))
         for migration in self.plan.phase_0.migrations:
             declared.append((migration.file, migration.file))
-        for path in self.plan.phase_0.models + self.plan.phase_0.tools:
+        for path in self.plan.phase_0.models:
             declared.append((path, path))
+        for tool in self.plan.phase_0.tools:
+            if isinstance(tool, PlanTool):
+                declared.append((tool.name, tool.file))
+            else:
+                declared.append((tool, tool))
 
         def covered(path: str) -> bool:
             # substring match, path or basename — no coupling to the

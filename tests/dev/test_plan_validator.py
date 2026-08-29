@@ -1244,3 +1244,245 @@ def test_consumes_without_event_bus_in_tools_fails_validation():
     assert errors[0].where == "OrderNotifierPlugin"
 
 
+def test_phase_0_tools_as_objects_validates_successfully():
+    """`phase_0.tools` can declare rich tool contracts as documented in
+    docs/PARALLEL_DEVELOPMENT.md."""
+    plan = copy.deepcopy(VALID_PLAN)
+    plan["phase_0"]["tools"] = [
+        {
+            "name": "payments",
+            "file": "tools/payments/payments_tool.py",
+            "contract": [
+                "await pay(user_id: int, amount: float, note: str) -> {success, charge_id}",
+                "await refund(charge_id: str, order_id: int, note: str) -> {success}",
+            ],
+            "infra_errors": True,
+        }
+    ]
+
+    result = run_validation(plan, LiveSnapshot())
+
+    assert result.valid
+    assert not result.errors
+
+
+def test_phase_0_tools_detects_unknown_keys():
+    """Typos in phase_0 tool contracts are flagged as unknown keys."""
+    from microcoreos_dev.plan import unknown_plan_keys
+
+    raw = {
+        "phase_0": {
+            "tools": [
+                {
+                    "name": "payments",
+                    "file": "tools/payments/payments_tool.py",
+                    "cotnract": ["await pay()"],  # typo
+                }
+            ]
+        }
+    }
+    found = unknown_plan_keys(raw)
+    assert ("plan.phase_0.tools[0]", "cotnract") in found
+
+
+def test_phase_0_tools_rule_15_checklist_coverage():
+    """Rule 15 correctly resolves tool.file for PlanTool objects in the checklist."""
+    plan = copy.deepcopy(VALID_PLAN)
+    plan["phase_0"]["tools"] = [
+        {
+            "name": "payments",
+            "file": "tools/payments/payments_tool.py",
+            "contract": ["await pay()"],
+        }
+    ]
+
+    # Checklist contains other paths from the plan, triggering auto-detect, but misses payments_tool.py
+    checklist_missing = """
+    - [ ] CreateOrderPlugin (domains/orders/plugins/create_order_plugin.py)
+    """
+    result_missing = run_validation(plan, LiveSnapshot(), checklist=checklist_missing)
+    tool_warns = [w for w in result_missing.warnings if w.rule == 15 and "payments_tool.py" in w.detail]
+    assert len(tool_warns) == 1
+    assert tool_warns[0].where == "payments"
+
+    # Checklist includes payments_tool.py
+    checklist_covered = """
+    - [ ] CreateOrderPlugin (domains/orders/plugins/create_order_plugin.py)
+    - [ ] payments (tools/payments/payments_tool.py)
+    """
+    result_covered = run_validation(plan, LiveSnapshot(), checklist=checklist_covered)
+    tool_warns_covered = [w for w in result_covered.warnings if w.rule == 15 and "payments_tool.py" in w.detail]
+    assert len(tool_warns_covered) == 0
+
+
+# ── Shorthand syntax coercion (consumes / publishes) ──────────────────────────
+
+def test_consumes_shorthand_string_list():
+    plan = plan_copy()
+    plan["features"][1]["consumes"] = ["order.created", "billing.paid"]
+    parsed = Plan(**plan)
+    assert len(parsed.features[1].consumes) == 2
+    assert parsed.features[1].consumes[0].event == "order.created"
+    assert parsed.features[1].consumes[0].requires == []
+    assert parsed.features[1].consumes[1].event == "billing.paid"
+    assert parsed.features[1].consumes[1].requires == []
+
+
+def test_consumes_shorthand_single_string():
+    plan = plan_copy()
+    plan["features"][1]["consumes"] = "llm.tokens.consumed"
+    parsed = Plan(**plan)
+    assert len(parsed.features[1].consumes) == 1
+    assert parsed.features[1].consumes[0].event == "llm.tokens.consumed"
+    assert parsed.features[1].consumes[0].requires == []
+
+
+def test_publishes_shorthand_string_list():
+    plan = plan_copy()
+    plan["features"][0]["publishes"] = ["order.placed", "inventory.reserved"]
+    parsed = Plan(**plan)
+    assert len(parsed.features[0].publishes) == 2
+    assert parsed.features[0].publishes[0].event == "order.placed"
+    assert parsed.features[0].publishes[0].model == "OrderPlacedPayload"
+    assert parsed.features[0].publishes[0].payload == {}
+    assert parsed.features[0].publishes[1].event == "inventory.reserved"
+    assert parsed.features[0].publishes[1].model == "InventoryReservedPayload"
+
+
+def test_publishes_shorthand_single_string():
+    plan = plan_copy()
+    plan["features"][0]["publishes"] = "order.placed"
+    parsed = Plan(**plan)
+    assert len(parsed.features[0].publishes) == 1
+    assert parsed.features[0].publishes[0].event == "order.placed"
+    assert parsed.features[0].publishes[0].model == "OrderPlacedPayload"
+
+
+def test_plan_validate_shorthand_yaml_success():
+    yaml_text = """
+plan:
+  domain: orders
+  features:
+    - plugin: CreateOrderPlugin
+      file: domains/orders/plugins/create_order_plugin.py
+      function: "Create an order"
+      route: { method: POST, path: /orders }
+      publishes: ["order.created"]
+      tools: [http, event_bus]
+      test: tests/test_create_order.py
+
+    - plugin: OrderNotifierPlugin
+      file: domains/orders/plugins/order_notifier_plugin.py
+      function: "Notify order"
+      consumes: ["order.created"]
+      tools: [event_bus]
+      test: tests/test_order_notifier.py
+
+  flows:
+    - name: order-flow
+      durability: ephemeral
+      happy_path: "order.created -> notify"
+      e2e_test: tests/test_order_flow.py
+      links:
+        - consumes: order.created
+          consumer: OrderNotifierPlugin
+"""
+    result, err = validate_yaml(yaml_text)
+    assert err is None
+    assert result.valid, result.errors
+
+
+# ── Cross-Domain Events in Plan & Static Validation ──────────────────────────
+
+def test_cross_domain_events_in_plan():
+    """Domain B consumes event published by Domain A declared in the same plan."""
+    plan_dict = {
+        "features": [
+            {
+                "plugin": "CreateUserPlugin",
+                "file": "domains/users/plugins/create_user_plugin.py",
+                "function: ": "Create user",
+                "publishes": ["user.created"],
+                "tools": ["event_bus"],
+                "test": "tests/test_create_user.py",
+            },
+            {
+                "plugin": "SendWelcomeEmailPlugin",
+                "file": "domains/notifications/plugins/send_welcome_email_plugin.py",
+                "function: ": "Send email",
+                "consumes": ["user.created"],
+                "tools": ["event_bus"],
+                "test": "tests/test_send_email.py",
+            },
+        ],
+        "flows": [
+            {
+                "name": "user-welcome",
+                "durability": "ephemeral",
+                "e2e_test": "tests/test_user_welcome_chain.py",
+                "links": [
+                    {
+                        "consumes": "user.created",
+                        "consumer": "SendWelcomeEmailPlugin",
+                    }
+                ],
+            }
+        ],
+    }
+    result = run_validation(plan_dict, LiveSnapshot())
+    assert result.valid, result.errors
+    assert not rule_hits(result, 3)
+
+
+# ── Checklist generation and synchronization ─────────────────────────────────
+
+def test_generate_checklist_from_plan():
+    from microcoreos_dev.plan import generate_checklist
+
+    plan = Plan(**plan_copy())
+    md = generate_checklist(plan)
+
+    assert "<!-- template: true -->" not in md
+    assert "## 🛠️ Phase 0: Foundation" in md
+    assert "orders/001_create_orders.sql" in md
+    assert "domains/orders/models/order.py" in md
+    assert "## 💻 Phase 2: Plugins & Features" in md
+    assert "domains/orders/plugins/create_order_plugin.py" in md
+    assert "tests/test_create_order.py" in md
+    assert "domains/orders/plugins/order_notifier_plugin.py" in md
+    assert "tests/test_order_notifier.py" in md
+    assert "## 🚦 Phase 3: Integration & Flow Verification" in md
+    assert "tests/test_order_lifecycle_chain.py" in md
+    assert "tests/test_order_lifecycle_dlq.py" in md
+    assert "tests/test_order_notifier.py::test_delivered_twice" in md
+
+    # Passing the generated checklist to validator eliminates Rule 15 warnings
+    result = run_validation(plan_copy(), LiveSnapshot(), checklist=md)
+    assert result.valid
+    assert not rule_hits(result, 15, "WARNING")
+    assert not rule_hits(result, 0, "ERROR")
+
+
+def test_generate_checklist_preserves_completed_tasks():
+    from microcoreos_dev.plan import generate_checklist
+
+    plan = Plan(**plan_copy())
+    existing = """
+    # Active Integration Plan
+    - [x] Task M_001: SQL Migration (`orders/001_create_orders.sql`)
+    - [X] Task P1: Feature Plugin `CreateOrderPlugin` (`domains/orders/plugins/create_order_plugin.py`)
+    - [ ] Task P1_Test: Unit Test (`tests/test_create_order.py`)
+    """
+    md = generate_checklist(plan, existing_checklist=existing)
+    lines = md.splitlines()
+
+    # The completed items should be marked [x]
+    assert any("- [x]" in line and "001_create_orders.sql" in line for line in lines)
+    assert any("- [x]" in line and "create_order_plugin.py" in line for line in lines)
+    # The unfinished items should be marked [ ]
+    assert any("- [ ]" in line and "test_create_order.py" in line for line in lines)
+
+
+
+
+
