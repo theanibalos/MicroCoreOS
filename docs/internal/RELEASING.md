@@ -4,16 +4,22 @@ The whole release is one tag. Everything else is automated in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
 ```bash
-# 1. Bump the version — this is the only file that carries it
-$EDITOR pyproject.toml          # version = "0.1.1"
+# 1. Bump the version and sync lockfile
+$EDITOR pyproject.toml          # version = "0.4.3"
+uv lock
 
 # 2. Commit it and let CI go green on main. Do not skip this:
 #    the release workflow does NOT run the test suite.
-git commit -am "Release 0.1.1" && git push
+git add pyproject.toml uv.lock
+git commit -m "chore: bump version to 0.4.3" && git push
 
-# 3. Tag and push the tag. That is the release.
-git tag -a v0.1.1 -m "MicroCoreOS 0.1.1"
-git push origin v0.1.1
+# 3. Tag and push the tag. That triggers the PyPI release workflow.
+git tag -a v0.4.3 -m "Release 0.4.3"
+git push origin v0.4.3
+
+# 4. Create the GitHub Release with generated notes and binary assets
+uv build
+gh release create v0.4.3 dist/* --title "v0.4.3" --generate-notes
 ```
 
 The tag triggers the workflow. It verifies the tag matches `pyproject.toml`,
@@ -101,7 +107,7 @@ fix as `0.1.2`.
 - **It does not run the tests.** CI does, on push. Releasing from a red `main`
   publishes a red `main`.
 - **It does not update the README, the changelog or the GitHub Release.** The
-  Release page is created by hand (`gh release create v0.1.1 --notes-file ...`)
+  Release page is created by hand (`gh release create v0.4.3 dist/* --title "v0.4.3" --generate-notes`)
   and is independent of PyPI — publishing works without one.
 - **It does not ship the framework's own tests.** `tests/` is in neither the
   wheel nor the scaffolded project — except `tests/helpers/`, which the Plugin

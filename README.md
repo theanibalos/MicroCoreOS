@@ -83,7 +83,8 @@ Use that rather than `uv add 'microcoreos[auth]'`. The extra is only the **depen
 | Command | Purpose |
 |---|---|
 | `microcoreos status` | Reports active plan progress and `AI_CONTEXT.md` freshness |
-| `microcoreos plan validate` | Validates active plan YAML (`plans/active_plan.yaml`) offline against 18 rules |
+| `microcoreos plan validate` | Validates active plan YAML (`plans/active_plan.yaml`) offline against 19 rules (`--fix` to sync checklist first) |
+| `microcoreos plan sync` | Generates or updates execution checklist (`plans/active_plan.md`) preserving progress |
 | `microcoreos migrate` | Applies SQL migrations AND regenerates `AI_CONTEXT.md` (the AI context manifest) |
 | `microcoreos schema` | Inspects live database schema and normalized tables |
 
