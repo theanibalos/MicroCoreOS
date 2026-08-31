@@ -91,3 +91,29 @@ def test_sink_receives_error_level(tool):
     tool.add_sink(lambda level, msg, ts, identity: received.append(level))
     tool.error("boom")
     assert received[0] == "ERROR"
+
+
+def test_sink_receives_trace_id_from_event_id_var(tool):
+    from microcoreos import current_event_id_var
+    received = []
+    tool.add_sink(lambda level, msg, ts, identity, trace_id: received.append((msg, trace_id)))
+    
+    token = current_event_id_var.set("evt-12345")
+    try:
+        tool.info("traced operation")
+    finally:
+        current_event_id_var.reset(token)
+        
+    assert len(received) == 1
+    assert received[0] == ("traced operation", "evt-12345")
+
+
+def test_legacy_4_arg_sink_backwards_compatible(tool):
+    received = []
+    def legacy_sink(level, msg, ts, identity):
+        received.append((level, msg, identity))
+    
+    tool.add_sink(legacy_sink)
+    tool.info("legacy message")
+    assert len(received) == 1
+    assert received[0][1] == "legacy message"

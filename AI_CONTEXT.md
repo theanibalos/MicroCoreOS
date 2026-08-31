@@ -321,7 +321,7 @@ Async SQLite Persistence Tool (sqlite):
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
-- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DocPathLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
+- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
 
 ### `system`
 - **Tables**: none
