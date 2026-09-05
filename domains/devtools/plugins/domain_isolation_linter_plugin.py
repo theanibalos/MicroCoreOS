@@ -33,9 +33,9 @@ class DomainIsolationLinterPlugin(BasePlugin):
         if violations:
             self.registry.register_domain_metadata("devtools", "arch_violations", violations)
             for v in violations:
-                self.logger.warning(f"[DomainIsolationLinter] {v}")
+                self.logger.warning(f"[DomainIsolationLinter] ⚠️  {v}")
         else:
-            self.logger.info("[DomainIsolationLinter] Domain isolation verified. No violations found.")
+            self.logger.info("[DomainIsolationLinter] ✅ Domain isolation verified. No violations found.")
 
     def _perform_scan(self) -> list[str]:
         violations = []
@@ -50,23 +50,31 @@ class DomainIsolationLinterPlugin(BasePlugin):
                 tree = ast.parse(f.read())
 
             for node in ast.walk(tree):
-                # 1. Detect 'import domains.X' or 'from domains.X import ...'
+                # 1. Detect 'import domains.X' or 'import tools.X'
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         if self._is_illegal_import(domain, alias.name):
                             violations.append(f"Illegal cross-domain import in {filepath}: {alias.name}")
+                        elif self._is_tool_import(alias.name):
+                            violations.append(f"Illegal hardcoded tool import in {filepath}: import {alias.name}")
 
+                # 2. Detect 'from domains.X import ...' or 'from tools.X import ...'
                 elif isinstance(node, ast.ImportFrom):
                     if node.level == 0 and node.module:  # Absolute import
                         if self._is_illegal_import(domain, node.module):
                             violations.append(f"Illegal cross-domain import in {filepath}: from {node.module}")
-                        elif node.module.startswith("tools."):
+                        elif self._is_tool_import(node.module):
                             violations.append(f"Illegal hardcoded tool import in {filepath}: from {node.module}")
 
         except Exception as e:
             violations.append(f"Error linting {filepath}: {e}")
 
         return violations
+
+    def _is_tool_import(self, module_name: str) -> bool:
+        """Returns True if the imported module is or starts with 'tools'."""
+        parts = module_name.split(".")
+        return bool(parts and parts[0] == "tools")
 
     def _is_illegal_import(self, current_domain: str, target_module: str) -> bool:
         """

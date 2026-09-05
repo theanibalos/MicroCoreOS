@@ -29,6 +29,20 @@ way to attach a token from the UI. `auto_error=False` keeps this dependency pure
 never rejects a request on its own — the real check still happens in `_process_request` via the
 `auth_validator` you passed to `add_endpoint`/`add_sse_endpoint`.
 
+### 4. Explicit Trusted Proxies for `context.client_ip`
+Direct TCP peer address is the default authority. Forwarding headers are ignored unless the direct peer is explicitly listed in `HTTP_TRUSTED_PROXIES`:
+- **No Trust by Default**: Direct callers cannot spoof their IP by sending fabricated forwarding headers.
+- **CIDR & Multi-hop Chains**: When proxied through authorized reverse proxies (e.g. `127.0.0.1, 10.0.0.0/8`), `X-Forwarded-For` is parsed from right to left across trusted proxies to reliably find the first untrusted external client.
+- **Custom Edge Headers**: If an edge proxy or CDN injects an alternative single-IP header (e.g. `X-Real-IP`, `True-Client-IP`), set `HTTP_CUSTOM_CLIENT_IP_HEADER` to that header name. It is only honored when received from an authorized proxy.
+- **Migration Note**: Existing deployments behind reverse proxies must configure `HTTP_TRUSTED_PROXIES` with their proxy IPs/CIDRs to continue resolving external client addresses.
+
+### 5. WebSocket Origin Policy (CSWSH Protection)
+Cross-Site WebSocket Hijacking (CSWSH) protection for WebSocket endpoints:
+- Configured via `HTTP_WS_ORIGIN_POLICY=off|allowlist`. Default is `off` for backward compatibility.
+- In `allowlist` mode, explicit origins are required in `HTTP_WS_ORIGINS` (comma-separated, scheme/host/port exact match, no wildcards allowed).
+- Connections from unlisted or malformed origins, multiple Origin headers, or opaque `null` origins are closed immediately with WebSocket code `1008` (Policy Violation) **before** handshake acceptance and **before** calling `auth_validator` or `on_connect`.
+- `HTTP_WS_ALLOW_MISSING_ORIGIN=true|false` controls whether non-browser clients (which omit `Origin`) are permitted in allowlist mode (default: `false`).
+
 ---
 
 ## The Request Pipeline

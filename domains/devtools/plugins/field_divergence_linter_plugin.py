@@ -70,9 +70,9 @@ class FieldDivergenceLinterPlugin(BasePlugin):
         if warnings:
             self.registry.register_domain_metadata("devtools", "field_divergence_warnings", warnings)
             for w in warnings:
-                self.logger.warning(f"[FieldDivergenceLinter] {w}")
+                self.logger.warning(f"[FieldDivergenceLinter] ⚠️  {w}")
         else:
-            self.logger.info("[FieldDivergenceLinter] Field constraints verified. No drift found.")
+            self.logger.info("[FieldDivergenceLinter] ✅ Field constraints verified. No drift found.")
 
     def _check_field_divergence(self) -> list[str]:
         # domain → field → constraint → value → [locations]
@@ -83,7 +83,7 @@ class FieldDivergenceLinterPlugin(BasePlugin):
                 with open(filepath, "r", encoding="utf-8") as f:
                     tree = ast.parse(f.read())
             except Exception as e:
-                self.logger.warning(f"[FieldDivergenceLinter] Could not parse {filepath}: {e}")
+                self.logger.warning(f"[FieldDivergenceLinter] ⚠️  Could not parse {filepath}: {e}")
                 continue
 
             filename = os.path.basename(filepath)

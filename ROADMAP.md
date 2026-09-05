@@ -13,9 +13,9 @@
 
 | Area | Status / next work |
 |---|---|
-| Core lifecycle | No kernel redesign proposed; tool-owned setup cleanup: 49 |
-| Harness/devtools | Import gap 46, optional event types 47, signatures 50, unified check report 53; remaining scopes 14/37/38 |
-| HTTP tool | Optional WS Origin policy 48; trusted proxy resolution 51 |
+| Core lifecycle | Issue 49 shipped (see ROADMAP_DONE.md) |
+| Harness/devtools | Optional event types 47, unified check report 53; import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
+| HTTP tool | Issues 48 & 51 shipped (see ROADMAP_DONE.md) |
 | Distribution | Packaged tools 44, demo 43, test distribution 42 (partial), marketplace 40 (deferred) |
 | Event infrastructure | TLS/auth 45; ACL 16 and runtime contracts 23 still unimplemented |
 | Integrity | Outbox 28 requires a confirmed transport handoff first |
@@ -33,15 +33,6 @@ These checks help agents and application developers; they are NOT kernel or
 business features. Keep their analyzers offline in the devtools/dev-package
 migration (docs/internal/DEV_PACKAGE_SPLIT.md). The framework CI tests the
 checkers; applications choose their own CI provider and blocking policy.
-
-**Issue 46 — 🟡 Close the absolute tool-import spelling gap**
-
-`DomainIsolationLinterPlugin._scan_file()` rejects `from tools.x import Y`,
-but its `ast.Import` branch checks only cross-domain imports and misses
-`import tools.x`. Apply the existing no-hardcoded-tool-import rule equally
-to both spellings, including aliases and nested imports. No new restriction,
-no sandbox, no kernel change. Tests must reject both spellings while retaining
-legal same-domain imports. Dynamic imports remain outside this scoped fix.
 
 **Issue 47 — 🟡 Optional, conservative event type compatibility**
 
@@ -64,22 +55,6 @@ fields tolerated; optional/null distinctions preserved; dynamic/custom paths
 remain explicitly unverifiable. This is independent of Issue 23's runtime guard.
 
 ---
-
-**Issue 50 — 🟡 Derive tool signatures; retain human-written semantics**
-
-Current `ToolDocDriftLinterPlugin` checks public method NAMES in prose, not
-parameters/defaults. `ContextTool` regenerates the file but copies tool interface
-text from `get_interface_description()`. Generate a canonical signature block
-from real public methods (using raw tools, not generic proxy wrappers), while
-keeping semantics, examples and replacement guarantees in authored descriptions.
-Do not build a general prose parser. Decide the explicit public-method inventory
-and treatment of wrappers, annotations and unavailable signatures first.
-
-Tests: changed required/default/keyword-only parameters update the manifest;
-removed methods disappear; lifecycle/private methods stay excluded; existing
-name-coverage warnings remain meaningful. Opaque callables report unavailable
-signatures rather than inventing them. No core change. Small scoped improvement,
-not a claim that prose semantics become automatically verifiable.
 
 **Issue 53 — 🟡 Unified checker report, application-owned CI policy**
 
@@ -107,73 +82,6 @@ Still deferred: event-field constraint comparison across instances (coordinate
 with 47/23), and opt-in cross-domain vocabulary constraints. Never equate a
 shared field NAME with a shared business CONCEPT. Keep these pending scopes
 visible here even though the original implementation is archived as complete.
-
----
-
-## 🧱 Monolith Track — active
-
-**Issue 49 — 🟡 Tool-owned cleanup when setup fails**
-
-Lifecycle contract: if `setup()` fails or is cancelled after acquiring resources,
-the tool releases what it acquired before propagating the failure. `shutdown()`
-must tolerate partial initialization and repeated calls. Preserve the original
-failure if cleanup also fails; report cleanup errors separately. Handle task
-cancellation explicitly, with bounded cleanup appropriate to each resource.
-No kernel retry, rollback mechanism or automatic process termination.
-
-Concrete audit target: `tools/sqlite/sqlite_tool.py` opens a connection before
-running migrations; a migration error exits setup before container registration,
-so the normal registered-tool shutdown loop does not own that instance. Start
-with its contract and regression tests, then audit DB pools, broker clients and
-background tasks in other resource-acquiring tools/drivers. Do not assume every
-tool leaks; verify each failure path before changing it.
-
-Acceptance: inject failure after each acquisition (including SQLite migration
-failure), prove connections/tasks are closed, original error is retained, and
-shutdown after failed setup is safe. Include cancellation and cleanup-failure
-cases. Implement in tools and their own tests; kernel stays infrastructure-blind.
-
-**Issue 51 — 🟡 Explicit trusted proxies for context.client_ip**
-
-The property already exists and remains unchanged. Today `pipeline.py` extracts
-Cf-Connecting-Ip, then the first X-Forwarded-For value, then the peer, without
-checking proxy trust. Extraction is not validation of the source.
-
-Design one authority for forwarded-address handling with Uvicorn: preserve a
-trustworthy original peer or delegate resolution fully to configured server
-middleware; never reinterpret an already rewritten peer as the original socket.
-Proposed `HTTP_TRUSTED_PROXIES` accepts explicit IPs/CIDRs, no trust by default.
-Only authorized proxies may supply forwarding headers. Cloudflare-specific
-headers require an explicit topology policy; no universal header precedence.
-
-No rate limiter or CORS change. Migration note required: direct callers can no
-longer override client_ip with headers, and existing proxied deployments must
-configure trust. Test direct spoofing, authorized chains, untrusted intermediate
-hops, IPv4/IPv6, malformed headers and real server middleware integration (ASGI
-unit tests alone do not prove the Uvicorn path).
-
-**Issue 48 — 🟡 Configurable WebSocket Origin policy (HTTP tool only)**
-
-No auth-tool dependency and no kernel changes. Browser-origin authorization
-is distinct from token validation. Proposed config:
-`HTTP_WS_ORIGIN_POLICY=off|allowlist`, `HTTP_WS_ORIGINS` (explicit origins),
-`HTTP_WS_ALLOW_MISSING_ORIGIN=true|false`. Preserve compatibility with policy
-`off`; document allowlist mode for browser-facing endpoints, especially cookie
-auth. In allowlist mode missing Origin is rejected unless explicitly allowed.
-
-Validate configuration in setup; reject an empty allowlist or wildcard in
-allowlist mode. Compare exact origins (scheme/host/port), not substrings or
-suffixes; define normalization and reject malformed/multiple Origin headers.
-Reject opaque `null` origins. Check before token validation and handshake
-acceptance; a rejection never invokes the user callback. Non-browser clients
-may omit Origin under the explicit policy, but Origin is never proof of identity.
-
-Scope: `tools/http_server/http_server_tool.py`, its private pipeline helper if
-needed, HTTP tests, `.env.example`, interface description and `docs/HTTP_SERVER.md`.
-Tests: allowed/rejected origin, missing Origin under both policies, malformed
-origin, cookie auth, public endpoint, sync/async validator, and no callback on
-rejection. CORS remains separate: its HTTP middleware does not enforce WS Origin.
-Delegate implementation as HTTP infrastructure work, not an application plugin.
 
 ---
 

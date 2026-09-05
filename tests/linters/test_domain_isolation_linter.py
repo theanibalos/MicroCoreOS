@@ -55,19 +55,68 @@ async def test_same_domain_import_is_allowed(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_detects_hardcoded_tool_import(tmp_path, monkeypatch):
+async def test_detects_hardcoded_tool_import_from_syntax(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "domains" / "users" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "create_user_plugin.py").write_text(
-        "from tools.sqlite.sqlite_tool import SqliteTool\n",
+        "from tools.sqlite.sqlite_tool import SqliteTool\n"
+        "from tools import db\n",
         encoding="utf-8",
     )
 
     monkeypatch.chdir(tmp_path)
     violations = make_plugin()._perform_scan()
 
-    assert len(violations) == 1
-    assert "Illegal hardcoded tool import" in violations[0]
+    assert len(violations) == 2
+    assert all("Illegal hardcoded tool import" in v for v in violations)
+    assert any("from tools.sqlite.sqlite_tool" in v for v in violations)
+    assert any("from tools" in v for v in violations)
+
+
+@pytest.mark.anyio
+async def test_detects_hardcoded_tool_import_statement_syntax(tmp_path, monkeypatch):
+    """
+    Issue 46: 'import tools.x' and 'import tools.x as alias' must be rejected
+    equally alongside 'from tools.x import ...'.
+    """
+    plugins_dir = tmp_path / "domains" / "users" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "create_user_plugin.py").write_text(
+        "import tools.sqlite.sqlite_tool\n"
+        "import tools.db as db\n"
+        "import tools\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    violations = make_plugin()._perform_scan()
+
+    assert len(violations) == 3
+    assert all("Illegal hardcoded tool import" in v for v in violations)
+    assert any("import tools.sqlite.sqlite_tool" in v for v in violations)
+    assert any("import tools.db" in v for v in violations)
+    assert any("import tools" in v for v in violations)
+
+
+@pytest.mark.anyio
+async def test_third_party_and_stdlib_imports_allowed(tmp_path, monkeypatch):
+    """
+    Standard library (os, json) and third-party libraries (httpx, pydantic)
+    are permitted and not treated as tool imports.
+    """
+    plugins_dir = tmp_path / "domains" / "users" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "create_user_plugin.py").write_text(
+        "import os\n"
+        "import json\n"
+        "import httpx\n"
+        "from pydantic import BaseModel\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    violations = make_plugin()._perform_scan()
+    assert violations == []
 
 
 @pytest.mark.anyio

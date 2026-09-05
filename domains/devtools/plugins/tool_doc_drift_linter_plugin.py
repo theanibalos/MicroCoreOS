@@ -38,9 +38,9 @@ class ToolDocDriftLinterPlugin(BasePlugin):
         if drift_warnings:
             self.registry.register_domain_metadata("devtools", "drift_warnings", drift_warnings)
             for w in drift_warnings:
-                self.logger.warning(f"[ToolDocDriftLinter] {w}")
+                self.logger.warning(f"[ToolDocDriftLinter] ⚠️  {w}")
         else:
-            self.logger.info("[ToolDocDriftLinter] Tool documentation verified. No drift found.")
+            self.logger.info("[ToolDocDriftLinter] ✅ Tool documentation verified. No drift found.")
 
     def _check_tool_drift(self) -> list[str]:
         warnings = []

@@ -372,10 +372,10 @@ class EventContractLinterPlugin(BasePlugin):
         warnings = [f for f in findings if f["severity"] == "warning"]
         infos = [f for f in findings if f["severity"] != "warning"]
         for w in warnings:
-            self.logger.warning(f"[EventLinter] {w['code']} {w['event']}: {w['detail']}")
+            self.logger.warning(f"[EventLinter] ⚠️  {w['code']} {w['event']}: {w['detail']}")
         if not warnings:
             self.logger.info(
-                f"[EventLinter] Event contracts verified. "
+                f"[EventLinter] ✅ Event contracts verified. "
                 f"No incompatibilities found ({len(infos)} informational)."
             )
 
@@ -401,7 +401,7 @@ class EventContractLinterPlugin(BasePlugin):
                     with open(os.path.join(plugins_dir, filename), "r", encoding="utf-8") as f:
                         analyzer.add_source(domain, filename, f.read())
                 except Exception as e:
-                    self.logger.warning(f"[EventLinter] Could not read {filename}: {e}")
+                    self.logger.warning(f"[EventLinter] ⚠️  Could not read {filename}: {e}")
         return analyzer.check()
 
     async def get_lint(self, data: dict, context=None):
@@ -418,5 +418,5 @@ class EventContractLinterPlugin(BasePlugin):
             )
             return {"success": True, "data": payload.model_dump()}
         except Exception as e:
-            self.logger.error(f"[EventLinter] Failed to read lint metadata: {e}")
+            self.logger.error(f"[EventLinter] ❌ Failed to read lint metadata: {e}")
             return {"success": False, "error": "Could not retrieve lint results"}

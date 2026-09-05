@@ -841,3 +841,56 @@ for instance-local concerns. Validated with 2 real replicas.
 XACK happens AFTER the handler (and its retries) finishes; if a replica dies
 mid-handler another replica reclaims via XAUTOCLAIM (idle >
 `EVENT_BUS_CLAIM_IDLE_MS`). Handlers must be idempotent (bus contract).
+
+### HTTP Security Hardening
+
+**Issue 51 — ✅ Explicit trusted proxies for context.client_ip**
+- Shipped. `tools/http_server/pipeline.py` implements right-to-left traversal of
+  `X-Forwarded-For` with explicit CIDR and IP trust checking (`HTTP_TRUSTED_PROXIES`).
+- Wildcard `*` supported for zero-friction local development (e.g. Vite dev server, Docker bridge),
+  with console security warning emitted if exposed on `0.0.0.0` with `*`.
+- Generic `HTTP_CUSTOM_CLIENT_IP_HEADER` allows trusted reverse proxies / CDN headers
+  (e.g. `X-Real-IP`, `True-Client-IP`) without vendor-specific code in core or tools.
+- Uvicorn configured with `proxy_headers=False` to preserve socket peer integrity and
+  keep MicroCoreOS as the sole authority for client IP resolution.
+- Tests: `tests/tools/http_server/test_trusted_proxies_and_ws_origin.py`.
+
+**Issue 48 — ✅ Configurable WebSocket Origin policy (HTTP tool only)**
+- Shipped. Implemented `HTTP_WS_ORIGIN_POLICY=off|allowlist`, `HTTP_WS_ORIGINS`,
+  and `HTTP_WS_ALLOW_MISSING_ORIGIN=true|false` in `HttpServerTool.setup()` and pipeline.
+- In `allowlist` mode, unauthorized origins are closed immediately with WebSocket code
+  1008 (Policy Violation) before the handshake acceptance, auth validator, or user callback.
+- Enforces strict canonical origin normalization (`scheme://host[:port]`), rejects wildcards
+  and `null` origins in allowlist mode.
+- Tests: `tests/tools/http_server/test_trusted_proxies_and_ws_origin.py`.
+
+### Lifecycle & Tool Hardening
+
+**Issue 49 — ✅ Tool-owned cleanup when setup fails**
+- Shipped. Implemented lifecycle teardown contracts in `SqliteTool`, `PostgresqlTool`,
+  `EventBusTool`, `RedisStreamsDriver`, and `RedisStateTool`.
+- If `setup()` fails (e.g. during connection, PRAGMAs, migrations) or is cancelled via
+  `asyncio.CancelledError`, resources acquired (database connections, connection pools,
+  background tasks, redis clients) are released immediately via `shutdown()` before
+  propagating the original exception.
+- Cleanup errors during teardown are reported separately without masking the original
+  failure, and `shutdown()` methods are strictly idempotent and safe on partial initialization.
+- Tests: `tests/tools/test_tool_setup_cleanup.py`.
+
+**Issue 50 — ✅ Derive tool signatures; retain human-written semantics**
+- Shipped. `renderers._generate_tool_signatures(raw_tool)` introspects real public methods
+  on raw tools (bypassing generic `ToolProxy` wrappers), deriving canonical Python method
+  signatures with parameter names, defaults, keyword-only args, and return annotations.
+- Embedded as a dedicated `**Public Signatures:**` block in `AI_CONTEXT.md` per tool while
+  retaining full authored semantics, examples, and replacement notes from
+  `get_interface_description()`.
+- Excludes private methods (`_*`) and lifecycle plumbing (`setup`, `shutdown`, etc.).
+  Opaque callables report `<signature unavailable>` without inventing false signatures.
+- Tests: `tests/tools/context/test_tool_signatures.py`.
+
+**Issue 46 — ✅ Close the absolute tool-import spelling gap**
+- Shipped. `DomainIsolationLinterPlugin._scan_file()` now applies the no-hardcoded-tool-import
+  rule equally to both `ast.Import` (`import tools.x`, `import tools.x as y`, `import tools`)
+  and `ast.ImportFrom` (`from tools.x import ...`, `from tools import ...`).
+- Retains legal same-domain imports and external third-party/stdlib imports (`httpx`, `pydantic`, `os`).
+- Tests: `tests/linters/test_domain_isolation_linter.py`.

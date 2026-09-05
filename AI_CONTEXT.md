@@ -16,6 +16,16 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
 Check method signatures before implementation.
 
 ### 🔧 Tool: `http` (Status: ✅)
+
+**Public Signatures:**
+```python
+def add_endpoint(path: str, method: str, handler: Callable, tags: Optional[list] = None, request_model=None, response_model=None, auth_validator: Optional[Callable] = None, has_files: bool = False) -> None
+def add_sse_endpoint(path: str, generator: Callable, tags: Optional[list] = None, auth_validator: Optional[Callable] = None) -> None
+def add_ws_endpoint(path: str, on_connect: Callable, on_disconnect: Optional[Callable] = None, auth_validator: Optional[Callable] = None) -> None
+def mount_static(path: str, directory_path: str, html: bool = False, allow_extensions: Optional[set] = None, optional: bool = False) -> None
+def register_pre_mount_hook(hook: Callable[[list[dict]], NoneType]) -> None
+```
+
 ```text
 HTTP Server Tool (http):
         - PURPOSE: FastAPI-powered HTTP gateway. Supports REST, static files, WebSockets and SSE.
@@ -28,6 +38,11 @@ HTTP Server Tool (http):
         - SECURITY DEFAULTS:
             - Cookies set via context.set_cookie are 'Secure=True', 'HttpOnly=True', 'SameSite=Lax'.
             - CSRF Guard: Mutations (POST/PUT/DELETE) using cookie auth REQUIRE 'X-Requested-With' header.
+            - WebSocket Origin Policy: Configurable via HTTP_WS_ORIGIN_POLICY=off|allowlist.
+              In allowlist mode, connections from unlisted origins are closed with 1008 before handshake.
+            - Trusted Proxies: Forwarding headers (X-Forwarded-For or custom edge header)
+              are only evaluated if the direct peer is in HTTP_TRUSTED_PROXIES. Otherwise direct peer IP
+              is used. An optional custom edge header is configurable via HTTP_CUSTOM_CLIENT_IP_HEADER.
             - Swagger UI (/docs): endpoints with auth_validator show a lock icon and accept
               tokens via the "Authorize" button (documentation-only; real check unaffected).
         - CAPABILITIES:
@@ -46,6 +61,7 @@ HTTP Server Tool (http):
             - add_ws_endpoint(path, on_connect, on_disconnect=None, auth_validator=None):
                 WebSocket support. on_connect receives a WebSocketConnection: send_text,
                 send_json, receive_text, receive_json, close, query_params, path_params.
+                WebSocket Origin policy (HTTP_WS_ORIGIN_POLICY) is enforced first.
                 With auth_validator the token is read from the Authorization header, the
                 `token` query param, then the access_token cookie; an invalid one is
                 closed with 1008 BEFORE the handshake and on_connect takes (conn, payload).
@@ -63,10 +79,15 @@ HTTP Server Tool (http):
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
-            - context.client_ip: Best-effort caller IP (property). Raw signal only — the
-              plugin decides what to do with it (e.g. state.increment() keyed by IP for
-              an identity-aware business rule). Never security-authoritative on its own;
-              see context.py's client_ip docstring for the trust order and its limits.
+            - context.raw_body: Exact inbound HTTP request body bytes. Use for webhook
+              signature verification; providers sign bytes, not a re-serialized dict.
+            - context.get_header(key, default=None): Read inbound request headers
+              case-insensitively (e.g. X-Signature for signed webhooks).
+            - context.client_ip: Best-effort caller IP (property). Resolved against
+              HTTP_TRUSTED_PROXIES (no trust by default). Direct callers cannot spoof
+              forwarding headers. When proxied, right-to-left X-Forwarded-For evaluation
+              determines the first untrusted caller. Custom edge header configurable via
+              HTTP_CUSTOM_CLIENT_IP_HEADER. Never security-authoritative on its own.
         - RESPONSE CONTRACT:
             - Standard: return {"success": bool, "data": ..., "error": ...}
             - WARNING: All values in 'data' must be JSON-serializable. Pydantic model 
@@ -74,6 +95,13 @@ HTTP Server Tool (http):
 ```
 
 ### 🔧 Tool: `config` (Status: ✅)
+
+**Public Signatures:**
+```python
+def get(key: str, default: Optional[str] = None, required: bool = False) -> Optional[str]
+def require(*keys: str) -> None
+```
+
 ```text
 Configuration Tool (config):
         - PURPOSE: Validated access to environment variables for plugins.
@@ -89,6 +117,13 @@ Configuration Tool (config):
 ```
 
 ### 🔧 Tool: `telemetry` (Status: ✅)
+
+**Public Signatures:**
+```python
+def get_meter(scope: str)
+def get_tracer(scope: str)
+```
+
 ```text
 Telemetry Tool (telemetry):
         - PURPOSE: OpenTelemetry distributed tracing AND metrics. Auto-instruments all tool
@@ -124,6 +159,19 @@ Telemetry Tool (telemetry):
 ```
 
 ### 🔧 Tool: `event_bus` (Status: ✅)
+
+**Public Signatures:**
+```python
+def add_failure_listener(cb)
+def add_listener(cb)
+def get_subscribers() -> dict
+def get_trace_history() -> List[tools.event_bus.envelope.TraceNode]
+async def publish(event_name: str, data: dict, **kwargs)
+async def request(event_name: str, data: dict, timeout: float = 5)
+async def subscribe(event_name: str, callback: Callable, group: Optional[str] = None, retries: int = 0, backoff: float = 0.5, broadcast: bool = False)
+async def unsubscribe(event_name: str, callback: Callable)
+```
+
 ```text
 Universal Event Bus (event_bus):
         - publish(event_name, data, **kwargs): Broadcast an event.
@@ -191,6 +239,15 @@ Context Manager Tool (context_manager):
 ```
 
 ### 🔧 Tool: `logger` (Status: ✅)
+
+**Public Signatures:**
+```python
+def add_sink(callback: Callable[[str, str, str], NoneType])
+def error(message: str)
+def info(message: str)
+def warning(message: str)
+```
+
 ```text
 Logging Tool (logger):
         - PURPOSE: Record system events and business activity for audit and debugging.
@@ -205,6 +262,19 @@ Logging Tool (logger):
 ```
 
 ### 🔧 Tool: `state` (Status: ✅)
+
+**Public Signatures:**
+```python
+async def clear(namespace: str = 'default') -> None
+async def delete(key: str, namespace: str = 'default') -> None
+async def get(key: str, default=None, namespace: str = 'default')
+async def get_all(namespace: str = 'default') -> dict
+async def has(key: str, namespace: str = 'default') -> bool
+async def increment(key: str, amount: int | float = 1, namespace: str = 'default', ttl: float | None = None) -> int | float
+async def keys(namespace: str = 'default') -> list
+async def set(key: str, value, namespace: str = 'default', ttl: float | None = None) -> None
+```
+
 ```text
 Key-Value State Tool (state):
         - PURPOSE: Share volatile global data between plugins safely.
@@ -226,6 +296,16 @@ Key-Value State Tool (state):
 ```
 
 ### 🔧 Tool: `registry` (Status: ✅)
+
+**Public Signatures:**
+```python
+def add_metrics_sink(callback)
+def get_domain_metadata() -> dict
+def get_metrics() -> list
+def get_system_dump() -> dict
+def update_tool_status(name: str, status: str, message: str = None)
+```
+
 ```text
 Systems Registry Tool (registry):
         - PURPOSE: Introspection and discovery of the system's architecture at runtime.
@@ -264,6 +344,18 @@ Systems Registry Tool (registry):
 ```
 
 ### 🔧 Tool: `db` (Status: ✅)
+
+**Public Signatures:**
+```python
+async def describe_schema() -> dict
+async def execute(sql: str, params: list | None = None) -> int | None
+async def execute_many(sql: str, params_list: list[list]) -> None
+async def health_check() -> bool
+async def query(sql: str, params: list | None = None) -> list[dict]
+async def query_one(sql: str, params: list | None = None) -> dict | None
+def transaction() -> tools.sqlite.transaction.Transaction
+```
+
 ```text
 Async SQLite Persistence Tool (sqlite):
         - PURPOSE: PostgreSQL-compatible relational storage (drop-in swap at the

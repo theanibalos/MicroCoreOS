@@ -51,10 +51,10 @@ class DiscoveryNamingLinterPlugin(BasePlugin):
                 "devtools", "discovery_naming_violations", violations
             )
             for v in violations:
-                self.logger.warning(f"[DiscoveryNamingLinter] {v}")
+                self.logger.warning(f"[DiscoveryNamingLinter] ⚠️  {v}")
         else:
             self.logger.info(
-                "[DiscoveryNamingLinter] Every tool and plugin class is in a discoverable file."
+                "[DiscoveryNamingLinter] ✅ Every tool and plugin class is in a discoverable file."
             )
 
     def _perform_scan(self) -> list[str]:

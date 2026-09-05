@@ -9,6 +9,7 @@ from tools.http_server.pipeline import (
     _extract_bearer_token,
     _extract_ws_token,
     _extract_client_ip,
+    _parse_trusted_proxies,
 )
 from tools.http_server.context import HttpContext
 from pydantic import BaseModel
@@ -63,37 +64,74 @@ async def test_extract_bearer_token_csrf_block():
     assert token == "cookie_jwt"
 
 
-def test_extract_client_ip_trust_order():
-    # 1. Cf-Connecting-Ip wins even if the other two are also present.
-    req = MagicMock(spec=Request)
-    req.headers = Headers({
+def test_extract_client_ip_trust_and_anti_spoofing():
+    trusted = _parse_trusted_proxies("10.0.0.0/8, 127.0.0.1, ::1")
+
+    # 1. Direct caller with NO trusted proxies configured cannot spoof headers
+    direct_req = MagicMock(spec=Request)
+    direct_req.headers = Headers({
         "Cf-Connecting-Ip": "203.0.113.7",
         "X-Forwarded-For": "198.51.100.1, 10.0.0.1",
     })
-    req.client = MagicMock(host="10.0.0.99")
-    assert _extract_client_ip(req) == "203.0.113.7"
+    direct_req.client = MagicMock(host="203.0.113.99")
+    assert _extract_client_ip(direct_req, trusted_proxies=None) == "203.0.113.99"
 
-    # 2. No Cf-Connecting-Ip -> first hop of X-Forwarded-For.
-    req = MagicMock(spec=Request)
-    req.headers = Headers({"X-Forwarded-For": "198.51.100.1, 10.0.0.1"})
-    req.client = MagicMock(host="10.0.0.99")
-    assert _extract_client_ip(req) == "198.51.100.1"
+    # 2. Untrusted peer cannot spoof headers even if trusted proxies exist elsewhere
+    assert _extract_client_ip(direct_req, trusted_proxies=trusted) == "203.0.113.99"
 
-    # 3. Neither header -> the direct TCP peer.
-    req = MagicMock(spec=Request)
-    req.headers = Headers({})
-    req.client = MagicMock(host="10.0.0.99")
-    assert _extract_client_ip(req) == "10.0.0.99"
+    # 3. Trusted proxy with Cloudflare enabled -> Cf-Connecting-Ip honored
+    cf_req = MagicMock(spec=Request)
+    cf_req.headers = Headers({
+        "Cf-Connecting-Ip": "203.0.113.7",
+        "X-Forwarded-For": "198.51.100.1, 10.0.0.1",
+    })
+    cf_req.client = MagicMock(host="10.0.0.99")
+    assert _extract_client_ip(cf_req, trusted_proxies=trusted, trust_cloudflare=True) == "203.0.113.7"
 
-    # 4. No signal at all (request.client itself is None) -> None, not a crash.
-    req = MagicMock(spec=Request)
-    req.headers = Headers({})
-    req.client = None
-    assert _extract_client_ip(req) is None
+    # 4. Trusted proxy with Cloudflare disabled -> X-Forwarded-For evaluated, not Cf-Connecting-Ip
+    assert _extract_client_ip(cf_req, trusted_proxies=trusted, trust_cloudflare=False) == "198.51.100.1"
+
+    # 5. Multi-hop trusted proxy chain (client -> proxy1 -> proxy2 -> server)
+    chain_req = MagicMock(spec=Request)
+    chain_req.headers = Headers({
+        "X-Forwarded-For": "198.51.100.42, 10.0.0.2, 10.0.0.3",
+    })
+    chain_req.client = MagicMock(host="10.0.0.1")
+    assert _extract_client_ip(chain_req, trusted_proxies=trusted) == "198.51.100.42"
+
+    # 6. Untrusted intermediate hop in chain (attacker -> untrusted_proxy -> trusted_proxy -> server)
+    # The rightmost hop before our trusted proxy is 198.51.100.5 (untrusted). It cannot be trusted
+    # when it claims the client was 1.2.3.4. The true untrusted origin is 198.51.100.5.
+    untrusted_hop_req = MagicMock(spec=Request)
+    untrusted_hop_req.headers = Headers({
+        "X-Forwarded-For": "1.2.3.4, 198.51.100.5",
+    })
+    untrusted_hop_req.client = MagicMock(host="10.0.0.1")
+    assert _extract_client_ip(untrusted_hop_req, trusted_proxies=trusted) == "198.51.100.5"
+
+    # 7. IPv6 support in peer and trusted proxies
+    ipv6_trusted = _parse_trusted_proxies("2001:db8::/32")
+    ipv6_req = MagicMock(spec=Request)
+    ipv6_req.headers = Headers({"X-Forwarded-For": "2001:db8:ffff::1"})
+    ipv6_req.client = MagicMock(host="2001:db8::1")
+    assert _extract_client_ip(ipv6_req, trusted_proxies=ipv6_trusted) == "2001:db8:ffff::1"
+
+    # 8. Malformed header (invalid IP strings)
+    bad_req = MagicMock(spec=Request)
+    bad_req.headers = Headers({"X-Forwarded-For": "not-an-ip, <script>alert(1)</script>"})
+    bad_req.client = MagicMock(host="10.0.0.1")
+    assert _extract_client_ip(bad_req, trusted_proxies=trusted) == "10.0.0.1"
+
+    # 9. No signal at all (request.client is None) -> None, not a crash
+    no_client_req = MagicMock(spec=Request)
+    no_client_req.headers = Headers({})
+    no_client_req.client = None
+    assert _extract_client_ip(no_client_req, trusted_proxies=trusted) is None
 
 
 @pytest.mark.anyio
 async def test_process_request_exposes_client_ip_to_handler():
+    trusted = _parse_trusted_proxies("10.0.0.0/8")
     req = MagicMock(spec=Request)
     req.query_params = {}
     req.path_params = {}
@@ -115,6 +153,8 @@ async def test_process_request_exposes_client_ip_to_handler():
         handler=handler,
         auth_validator=None,
         paused_owners=set(),
+        trusted_proxies=trusted,
+        trust_cloudflare=True,
     )
 
     assert seen_ip["value"] == "203.0.113.7"

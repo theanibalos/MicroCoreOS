@@ -46,6 +46,6 @@ class RouteCollisionLinterPlugin(BasePlugin):
         if collisions:
             self.registry.register_domain_metadata("devtools", "route_collisions", collisions)
             for c in collisions:
-                self.logger.warning(f"[RouteCollisionLinter] {c}")
+                self.logger.warning(f"[RouteCollisionLinter] ⚠️  {c}")
         else:
-            self.logger.info("[RouteCollisionLinter] No route collisions found.")
+            self.logger.info("[RouteCollisionLinter] ✅ No route collisions found.")

@@ -389,45 +389,52 @@ class PostgresqlTool(BaseTool):
         print(f"[System] PostgresqlTool: Connecting to {self._host}:{self._port}/{self._database}...")
 
         try:
-            self._pool = await asyncio.wait_for(
-                asyncpg.create_pool(
-                    host=self._host,
-                    port=self._port,
-                    user=self._user,
-                    password=self._password,
-                    database=self._database,
-                    min_size=self._min_pool,
-                    max_size=self._max_pool,
+            try:
+                self._pool = await asyncio.wait_for(
+                    asyncpg.create_pool(
+                        host=self._host,
+                        port=self._port,
+                        user=self._user,
+                        password=self._password,
+                        database=self._database,
+                        min_size=self._min_pool,
+                        max_size=self._max_pool,
+                        timeout=self._connect_timeout,
+                        command_timeout=self._command_timeout,
+                        init=_init_postgres_connection,
+                    ),
                     timeout=self._connect_timeout,
-                    command_timeout=self._command_timeout,
-                    init=_init_postgres_connection,
-                ),
-                timeout=self._connect_timeout,
-            )
-        except asyncio.TimeoutError:
-            raise DatabaseConnectionError(
-                f"Timeout connecting to PostgreSQL at {self._host}:{self._port}/{self._database} "
-                f"(>{self._connect_timeout}s)"
-            )
-        except (asyncpg.PostgresError, OSError, ConnectionRefusedError) as e:
-            raise DatabaseConnectionError(
-                f"Cannot connect to PostgreSQL at {self._host}:{self._port}/{self._database}: {e}"
-            ) from e
+                )
+            except asyncio.TimeoutError:
+                raise DatabaseConnectionError(
+                    f"Timeout connecting to PostgreSQL at {self._host}:{self._port}/{self._database} "
+                    f"(>{self._connect_timeout}s)"
+                )
+            except (asyncpg.PostgresError, OSError, ConnectionRefusedError) as e:
+                raise DatabaseConnectionError(
+                    f"Cannot connect to PostgreSQL at {self._host}:{self._port}/{self._database}: {e}"
+                ) from e
 
-        # Create internal migrations table
-        await self.execute("""
-            CREATE TABLE IF NOT EXISTS _migrations_history (
-                id          SERIAL PRIMARY KEY,
-                domain      TEXT NOT NULL,
-                filename    TEXT NOT NULL,
-                applied_at  TIMESTAMPTZ DEFAULT NOW(),
-                UNIQUE(domain, filename)
-            )
-        """)
+            # Create internal migrations table
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS _migrations_history (
+                    id          SERIAL PRIMARY KEY,
+                    domain      TEXT NOT NULL,
+                    filename    TEXT NOT NULL,
+                    applied_at  TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(domain, filename)
+                )
+            """)
 
-        print(f"[System] PostgresqlTool: Pool ready (min={self._min_pool}, max={self._max_pool}).")
+            print(f"[System] PostgresqlTool: Pool ready (min={self._min_pool}, max={self._max_pool}).")
 
-        await self._run_migrations()
+            await self._run_migrations()
+        except BaseException as setup_err:
+            try:
+                await self.shutdown()
+            except Exception as cleanup_err:
+                print(f"[PostgresqlTool] ⚠️  Cleanup error during failed setup teardown: {cleanup_err}")
+            raise setup_err
 
     # ─── MIGRATIONS: run from setup(), NOT from on_boot_complete() ──
     #
@@ -565,9 +572,12 @@ class PostgresqlTool(BaseTool):
 
     async def shutdown(self) -> None:
         if self._pool is not None:
-            await self._pool.close()
+            pool = self._pool
             self._pool = None
-            print("[PostgresqlTool] Connection pool closed.")
+            try:
+                await pool.close()
+            finally:
+                print("[PostgresqlTool] Connection pool closed.")
 
     # ─── PUBLIC API: query() ──────────────────────────────
     #

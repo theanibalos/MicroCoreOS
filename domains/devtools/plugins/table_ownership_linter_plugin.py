@@ -29,9 +29,9 @@ class TableOwnershipLinterPlugin(BasePlugin):
         if table_warnings:
             self.registry.register_domain_metadata("devtools", "table_ownership_warnings", table_warnings)
             for w in table_warnings:
-                self.logger.warning(f"[TableOwnershipLinter] {w}")
+                self.logger.warning(f"[TableOwnershipLinter] ⚠️  {w}")
         else:
-            self.logger.info("[TableOwnershipLinter] Table ownership verified. No duplicate declarations found.")
+            self.logger.info("[TableOwnershipLinter] ✅ Table ownership verified. No duplicate declarations found.")
 
     def _check_table_ownership(self) -> list[str]:
         table_owners: dict[str, set[str]] = {}
@@ -50,7 +50,7 @@ class TableOwnershipLinterPlugin(BasePlugin):
                     with open(os.path.join(migrations_dir, filename), "r", encoding="utf-8") as f:
                         sql = f.read()
                 except Exception as e:
-                    self.logger.warning(f"[TableOwnershipLinter] Could not read {filename}: {e}")
+                    self.logger.warning(f"[TableOwnershipLinter] ⚠️  Could not read {filename}: {e}")
                     continue
                 for match in re.finditer(
                     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?(\w+)[\"'`]?",

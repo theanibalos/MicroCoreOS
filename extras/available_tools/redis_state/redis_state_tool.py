@@ -105,18 +105,28 @@ class RedisStateTool(BaseTool):
             decode_responses=True,
         )
         try:
-            await self._redis.ping()
-        except (redis_exceptions.RedisError, OSError) as e:
-            raise StateConnectionError(
-                f"Cannot connect to Redis at {self._host}:{self._port}/{self._db}: {e}"
-            ) from e
+            try:
+                await self._redis.ping()
+            except (redis_exceptions.RedisError, OSError) as e:
+                raise StateConnectionError(
+                    f"Cannot connect to Redis at {self._host}:{self._port}/{self._db}: {e}"
+                ) from e
+        except BaseException as setup_err:
+            try:
+                await self.shutdown()
+            except Exception as cleanup_err:
+                print(f"[RedisStateTool] ⚠️  Cleanup error during failed setup teardown: {cleanup_err}")
+            raise setup_err
         print("[System] RedisStateTool: Distributed store ready.")
 
     async def shutdown(self) -> None:
         if self._redis is not None:
-            await self._redis.aclose()
+            r = self._redis
             self._redis = None
-            print("[RedisStateTool] Connection closed.")
+            try:
+                await r.aclose()
+            finally:
+                print("[RedisStateTool] Connection closed.")
 
     def get_interface_description(self) -> str:
         return """
