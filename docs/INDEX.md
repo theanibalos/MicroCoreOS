@@ -7,6 +7,12 @@
 - `.agent/workflows/` — Scale ladder: feature-plan → new-domain → multi-domain-plan → new-tool
 - `plans/` — The active plan: `active_plan.yaml` (contract) + `active_plan.md` (checklist)
 
+## Framework maintainer roadmap
+
+In the framework checkout (not an application execution plan):
+- [Active roadmap](../ROADMAP.md) — proposals, partial delivery and remaining work.
+- [Completed decisions](../ROADMAP_DONE.md) — historical implementation and rationale.
+
 ## Deep reference docs
 
 | Document | What it covers |

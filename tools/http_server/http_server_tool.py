@@ -363,6 +363,10 @@ class HttpServerTool(BaseTool):
             - context.set_cookie(key, value, max_age=3600, ...): Set secure response cookie.
             - context.set_header(key, value): Add custom response header.
             - context.set_binary_response(content: bytes, media_type: str): Return raw file.
+            - context.raw_body: Exact inbound HTTP request body bytes. Use for webhook
+              signature verification; providers sign bytes, not a re-serialized dict.
+            - context.get_header(key, default=None): Read inbound request headers
+              case-insensitively (e.g. X-Signature for signed webhooks).
             - context.client_ip: Best-effort caller IP (property). Raw signal only — the
               plugin decides what to do with it (e.g. state.increment() keyed by IP for
               an identity-aware business rule). Never security-authoritative on its own;

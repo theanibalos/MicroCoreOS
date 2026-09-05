@@ -361,10 +361,12 @@ Quick Start · First Plugin Tutorial · Plugin Reference · Tools Reference · O
 
 ## Roadmap
 
-Two tracks — see [ROADMAP.md](ROADMAP.md) for the full plan and decision log:
+See [ROADMAP.md](ROADMAP.md) for active runtime and development-tooling work,
+and [ROADMAP_DONE.md](ROADMAP_DONE.md) for completed decisions and implementation history:
 
-- **Monolith track**: route-collision & table-ownership linters, automatic test
-  generation. `uv add microcoreos` shipped in 0.1.0 (ROADMAP Issue 39)
+- **Monolith / tooling**: packaged tools, test distribution and optional
+  checker improvements. Route-collision and table-ownership linters already
+  shipped, as did `uv add microcoreos` (historical Issue 39).
 - **Distributed track**: event ACLs (Redis Streams, RabbitMQ, Kafka and the
   durable SQLite transport already shipped, all with crash-safe native
   delay via capability claims), runtime contracts via the schema catalog,

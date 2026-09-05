@@ -101,6 +101,7 @@ async def test_process_request_exposes_client_ip_to_handler():
     req.method = "GET"
     req.url.path = "/whoami"
     req.client = MagicMock(host="10.0.0.99")
+    req.body = AsyncMock(return_value=b"")
 
     seen_ip = {}
 
@@ -117,6 +118,45 @@ async def test_process_request_exposes_client_ip_to_handler():
     )
 
     assert seen_ip["value"] == "203.0.113.7"
+
+
+@pytest.mark.anyio
+async def test_process_request_exposes_raw_body_and_headers_to_handler():
+    req = MagicMock(spec=Request)
+    req.query_params = {}
+    req.path_params = {}
+    req.headers = Headers({
+        "Content-Type": "application/json",
+        "X-Signature": "signed_payload",
+    })
+    req.method = "POST"
+    req.url.path = "/webhook"
+    req.client = MagicMock(host="10.0.0.99")
+    req.body = AsyncMock(return_value=b'{"event":"order_created"}')
+    req.json = AsyncMock(return_value={"event": "order_created"})
+
+    captured = {}
+
+    async def handler(data, ctx: HttpContext):
+        captured["data"] = data
+        captured["raw_body"] = ctx.raw_body
+        captured["signature"] = ctx.get_header("x-signature")
+        captured["missing"] = ctx.get_header("x-missing", "fallback")
+        return {"success": True}
+
+    res = await _process_request(
+        request=req,
+        body_data=None,
+        handler=handler,
+        auth_validator=None,
+        paused_owners=set(),
+    )
+
+    assert res.status_code == 200
+    assert captured["data"] == {"event": "order_created"}
+    assert captured["raw_body"] == b'{"event":"order_created"}'
+    assert captured["signature"] == "signed_payload"
+    assert captured["missing"] == "fallback"
 
 
 @pytest.mark.anyio

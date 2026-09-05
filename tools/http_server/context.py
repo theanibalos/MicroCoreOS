@@ -6,7 +6,7 @@ See http_server_tool.py's module docstring for the full public contract
 (HttpContext API section) and the response contract it participates in.
 """
 
-from typing import Any
+from typing import Any, Mapping
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -22,12 +22,37 @@ class HttpContext:
     All mutations are applied to the response before it is sent to the client.
     """
 
-    def __init__(self, client_ip: str | None = None) -> None:
+    def __init__(
+        self,
+        client_ip: str | None = None,
+        request_headers: Mapping[str, str] | None = None,
+        raw_body: bytes | None = None,
+    ) -> None:
         self._status_code: int = 200
         self._status_explicit: bool = False
         self._cookies: list[dict] = []
         self._headers: dict[str, str] = {}
         self._client_ip = client_ip
+        self._request_headers = {
+            str(k).lower(): str(v)
+            for k, v in (request_headers or {}).items()
+        }
+        self._raw_body = raw_body or b""
+
+    @property
+    def raw_body(self) -> bytes:
+        """
+        Exact inbound HTTP body bytes.
+
+        Needed for webhook signature verification (Stripe, Lemon Squeezy,
+        GitHub, Slack, etc.), where providers sign the original byte stream,
+        not a JSON object re-serialized by the application.
+        """
+        return self._raw_body
+
+    def get_header(self, key: str, default: str | None = None) -> str | None:
+        """Case-insensitive access to inbound request headers."""
+        return self._request_headers.get(key.lower(), default)
 
     @property
     def client_ip(self) -> str | None:

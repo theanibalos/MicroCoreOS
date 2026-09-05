@@ -137,6 +137,14 @@ async def _process_request(
         5. Response        — serialize result as JSONResponse with the correct status code
     """
     # ── Phase 1: Data Assembly ─────────────────────────────────────────────
+    # Keep the exact inbound bytes available to plugins that need cryptographic
+    # verification (payment webhooks). Starlette caches the body in ordinary
+    # JSON requests. If an upstream multipart/form parser already consumed the
+    # stream, do not fail the request: file endpoints do not use raw_body.
+    try:
+        raw_body = await request.body()
+    except RuntimeError:
+        raw_body = b""
     data: dict = {}
     # 1. Query parameters always come from the request object
     data.update(request.query_params)
@@ -205,7 +213,11 @@ async def _process_request(
                 content={"success": False, "error": "Service temporarily unavailable (paused)"},
             )
 
-        context = HttpContext(client_ip=_extract_client_ip(request))
+        context = HttpContext(
+            client_ip=_extract_client_ip(request),
+            request_headers=request.headers,
+            raw_body=raw_body,
+        )
 
         # ── Phase 3: Authentication ────────────────────────────────────────
         if auth_validator:
