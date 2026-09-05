@@ -556,3 +556,43 @@ def _ago(seconds: float) -> str:
     return f"{int(seconds // 86400)} days ago"
 
 
+def check(argv: list[str]) -> int:
+    """Run architecture linters offline (Issue 53: Unified checker report)."""
+    root = ensure_project_on_path()
+    if not require_project(root):
+        return 2
+
+    strict = "--strict" in argv
+    fmt = "text"
+    checkers = None
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("--format="):
+            fmt = arg.split("=", 1)[1]
+        elif arg == "--format" and i + 1 < len(argv):
+            i += 1
+            fmt = argv[i]
+        elif arg.startswith("--checker="):
+            checkers = [c.strip() for c in arg.split("=", 1)[1].split(",")]
+        elif arg == "--checker" and i + 1 < len(argv):
+            i += 1
+            checkers = [c.strip() for c in argv[i].split(",")]
+        elif arg in ("-h", "--help"):
+            print("Usage: microcoreos check [--strict] [--format text|json] [--checker <name>]")
+            return 0
+        i += 1
+
+    from microcoreos_dev.lint import format_json, format_text, run_checks
+
+    report = run_checks(root=root, checkers=checkers, strict=strict)
+
+    if fmt == "json":
+        print(format_json(report))
+    else:
+        print(format_text(report))
+
+    return report.exit_code(strict=strict)
+
+

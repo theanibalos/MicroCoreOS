@@ -48,6 +48,7 @@ Usage:
 The plan pipeline (docs/PARALLEL_DEVELOPMENT.md):
   microcoreos status                              Active plan, progress, manifest age
   microcoreos plan validate [path]                Validate the plan offline (no server)
+  microcoreos check [--strict] [--format text|json] Run architecture linters offline (CI gate)
   microcoreos migrate                             Apply migrations + regenerate AI_CONTEXT.md
   microcoreos schema                              Print the live tables and columns
 
@@ -147,7 +148,7 @@ def dev(argv: list[str]) -> int:
 # keep the names they always had: AGENTS.md, four workflows and eight docs spell
 # them this way, and agents read those files as instructions. Renaming them
 # would mean rewriting that corpus for nothing. See docs/internal/DEV_PACKAGE_SPLIT.md.
-PIPELINE_COMMANDS = ("status", "plan", "migrate", "schema")
+PIPELINE_COMMANDS = ("status", "plan", "migrate", "schema", "check", "lint")
 
 MISSING_DEV_PACKAGE = """\
 [MicroCoreOS] `microcoreos {name}` lives in the development package.

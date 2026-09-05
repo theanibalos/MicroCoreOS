@@ -14,6 +14,7 @@ microcoreos status                               Active plan, progress, manifest
 microcoreos plan validate [path] [--fix]         The 18 plan rules, offline
 microcoreos plan sync [path]                     Sync execution checklist from plan
 microcoreos plan probe [path]                    What each feature actually touches
+microcoreos check [--strict] [--format=json]     The 7 architecture linters, offline
 microcoreos migrate                              Migrations + regenerate AI_CONTEXT.md
 microcoreos schema                               The live tables and columns
 ```
@@ -269,6 +270,22 @@ that fixes them. Exit code 1 on errors, 0 on valid.
 There is no server-side form. A `dlq_watcher` or a compensation consumer that
 exists only at runtime is invisible to a disk scan, and the command says so in
 its own output rather than pointing at something to boot.
+
+**`check`** — the architecture CI gate. Runs all 7 architecture linters offline
+in milliseconds using pure AST and file scans, without booting the server or
+opening any network port:
+  - `discovery_naming`: Classes inheriting `BaseTool` or `BasePlugin` must live in discoverable files (`*_tool.py`, `*_plugin.py`), test naming collisions.
+  - `domain_isolation`: No cross-domain imports, no hardcoded tool imports.
+  - `event_contracts`: Published payload keys match consumer requirements.
+  - `field_divergence`: Pydantic `Field(...)` constraints across sibling plugins in a domain (with `divergence_ok` waiver support).
+  - `route_collisions`: No duplicate `(method, path)` registrations.
+  - `table_ownership`: Single domain owner per database table across migrations.
+  - `tool_doc_drift`: Every public method documented in `get_interface_description()`.
+
+Flags:
+  - `--strict`: Escalates warnings to failing exit code 1 (ideal for strict CI).
+  - `--format=json`: Emits machine-readable JSON report with duration and counts.
+  - `--checker <name>`: Runs only the specified checker.
 
 **`migrate`** — the boot with an ending. `uv run main.py` regenerates the
 manifest too, but never returns: in the foreground it hangs the agent's

@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import os
 from typing import Optional
@@ -25,12 +26,9 @@ class EventSchemasPlugin(BasePlugin):
     distributed broker (Kafka — Roadmap Issue 18), these are exactly the
     schemas the registry ingests, with zero plugin changes.
 
-    Sources the (event -> model, file) map that EventContractLinterPlugin
-    registers in the registry metadata at boot, imports each publisher plugin
-    file, and calls model_json_schema() on the real Pydantic class. Loading a
-    plugin module only defines classes (plugins act via instances the Kernel
-    creates), so re-importing here is side-effect free by convention. Results
-    are cached after the first request.
+    Self-contained and independent: reads metadata from the registry if available,
+    or directly discovers models from domain plugins via AST. It never breaks
+    if a linter is absent or deleted.
     """
 
     def __init__(self, container, http, logger):
@@ -57,7 +55,10 @@ class EventSchemasPlugin(BasePlugin):
 
     def _build_catalog(self) -> dict:
         meta = self.registry.get_domain_metadata().get("devtools", {})
-        entries = meta.get("event_payload_models", [])
+        entries = meta.get("event_payload_models")
+        if not entries:
+            entries = self._discover_payload_models()
+
         catalog: dict[str, list] = {}
         for entry in entries:
             model = self._load_model(entry["domain"], entry["file"], entry["model"])
@@ -92,3 +93,72 @@ class EventSchemasPlugin(BasePlugin):
         except Exception as e:
             self.logger.warning(f"[EventSchemas] Could not load {class_name} from {path}: {e}")
         return None
+
+    def _discover_payload_models(self) -> list[dict]:
+        """Discover event payload models directly from domain plugins via AST.
+
+        Guarantees that EventSchemasPlugin works independently without depending
+        on any devtools linter running at boot.
+        """
+        entries = []
+        domains_dir = os.path.abspath("domains")
+        if not os.path.isdir(domains_dir):
+            return entries
+
+        for domain in sorted(os.listdir(domains_dir)):
+            plugins_dir = os.path.join(domains_dir, domain, "plugins")
+            if not os.path.isdir(plugins_dir):
+                continue
+            for filename in sorted(os.listdir(plugins_dir)):
+                if not filename.endswith(".py"):
+                    continue
+                filepath = os.path.join(plugins_dir, filename)
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        tree = ast.parse(f.read())
+                except Exception:
+                    continue
+
+                models = {
+                    node.name for node in tree.body
+                    if isinstance(node, ast.ClassDef)
+                    and any(
+                        (isinstance(b, ast.Name) and b.id == "BaseModel")
+                        or (isinstance(b, ast.Attribute) and b.attr == "BaseModel")
+                        for b in node.bases
+                    )
+                }
+                if not models:
+                    continue
+
+                for node in ast.walk(tree):
+                    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                        continue
+                    if node.func.attr not in ("publish", "request") or not node.args:
+                        continue
+                    event_node = node.args[0]
+                    if not (isinstance(event_node, ast.Constant) and isinstance(event_node.value, str)):
+                        continue
+                    event = event_node.value
+                    if len(node.args) < 2:
+                        continue
+                    payload_node = node.args[1]
+
+                    model_name = None
+                    if (isinstance(payload_node, ast.Call)
+                            and isinstance(payload_node.func, ast.Attribute)
+                            and payload_node.func.attr == "model_dump"):
+                        val = payload_node.func.value
+                        if isinstance(val, ast.Call) and isinstance(val.func, ast.Name) and val.func.id in models:
+                            model_name = val.func.id
+
+                    if model_name:
+                        entries.append({
+                            "event": event,
+                            "model": model_name,
+                            "domain": domain,
+                            "file": filename,
+                        })
+
+        return entries
+

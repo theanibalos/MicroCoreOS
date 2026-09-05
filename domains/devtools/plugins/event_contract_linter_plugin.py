@@ -17,6 +17,7 @@ class LintFinding(BaseModel):
 
 
 class SystemLintData(BaseModel):
+    discovery_naming_violations: list[str] = []
     arch_violations: list[str] = []
     drift_warnings: list[str] = []
     event_contract_violations: list[LintFinding] = []
@@ -408,6 +409,7 @@ class EventContractLinterPlugin(BasePlugin):
         try:
             meta = self.registry.get_domain_metadata().get("devtools", {})
             payload = SystemLintData(
+                discovery_naming_violations=meta.get("discovery_naming_violations", []),
                 arch_violations=meta.get("arch_violations", []),
                 drift_warnings=meta.get("drift_warnings", []),
                 event_contract_violations=meta.get("event_contract_violations", []),

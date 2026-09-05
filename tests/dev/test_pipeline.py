@@ -59,7 +59,7 @@ def _free_port() -> str:
 
 def test_pipeline_commands_refuse_to_run_outside_a_project(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    for argv in (["status"], ["migrate"], ["schema"], ["plan", "validate"]):
+    for argv in (["status"], ["migrate"], ["schema"], ["plan", "validate"], ["check"]):
         assert cli.main(list(argv)) == 2, argv
     assert "No tools/ or domains/" in capsys.readouterr().out
 

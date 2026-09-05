@@ -894,3 +894,26 @@ mid-handler another replica reclaims via XAUTOCLAIM (idle >
   and `ast.ImportFrom` (`from tools.x import ...`, `from tools import ...`).
 - Retains legal same-domain imports and external third-party/stdlib imports (`httpx`, `pydantic`, `os`).
 - Tests: `tests/linters/test_domain_isolation_linter.py`.
+
+### Architecture & CI Tooling
+
+**Issue 53 — ✅ Unified checker report, application-owned CI policy (`microcoreos check`)**
+- Shipped. Moved linter analysis offline into `microcoreos_dev.lint` with a unified findings
+  and report data model (`CheckFinding`, `CheckerStatus`, `CheckReport`).
+- Covers all 7 linters offline without booting the Kernel or requiring an HTTP server:
+  1. `discovery_naming`: `BaseTool` in `*_tool.py`, `BasePlugin` in `*_plugin.py`, test suffix collisions.
+  2. `domain_isolation`: Illegal cross-domain imports and hardcoded tool imports.
+  3. `event_contracts`: Event publishers vs subscribers payload analysis.
+  4. `field_divergence`: Pydantic `Field(...)` constraints across sibling plugins with `divergence_ok` waiver.
+  5. `route_collisions`: Duplicate `(method, path)` endpoint registrations across plugins.
+  6. `table_ownership`: Duplicate `CREATE TABLE` across domain migrations.
+  7. `tool_doc_drift`: Public methods in raw tools documented in `get_interface_description()`.
+- Added `microcoreos check` (and `microcoreos-dev check` / `microcoreos lint`) CLI commands:
+  - Supports `--format=text|json`.
+  - Supports `--strict` (escalates warnings to exit code 1).
+  - Supports `--checker <name>` to filter specific checkers.
+  - Standard exit codes: `0` (clean/pass), `1` (errors or strict warnings), `2` (usage/outside project).
+- Execution/completeness guarantees: A crashing or missing checker reports status `"error"` and produces
+  an error finding rather than silently reporting empty findings.
+- Runtime endpoint `GET /system/lint` now includes `discovery_naming_violations` in `SystemLintData`.
+- Tests: `tests/dev/test_lint_runner.py`, `tests/dev/test_pipeline.py`.

@@ -83,7 +83,7 @@ reviews a real file rather than a description of one.
 | Planner | `microcoreos status`, `microcoreos plan validate` |
 | Phase 0 Builder | `microcoreos migrate`, `microcoreos schema` |
 | Executor | none — write your two files and stop |
-| Coordinator | `uv run -m pytest`, `microcoreos status`, and `microcoreos` (the real boot) for the final lint |
+| Coordinator | `uv run -m pytest`, `microcoreos check`, `microcoreos status`, and `microcoreos` (the real boot) for the final lint |
 | Solo | All of the above — but each in its phase, and the real boot only at the end |
 
 **Never `microcoreos run` / `uv run main.py` outside that last row.** It serves
@@ -136,6 +136,7 @@ The plan pipeline — prefix with `uv run` if the package is installed in a venv
 ```bash
 microcoreos status                  # Active plan, progress, manifest freshness
 microcoreos plan validate           # The 18 plan rules, OFFLINE (no server, no jq, no curl)
+microcoreos check                   # The 7 architecture linters, OFFLINE (--strict, --format=json)
 microcoreos migrate                 # Apply migrations AND regenerate AI_CONTEXT.md
 microcoreos schema                  # The live tables and columns, read by the db tool itself
 ```

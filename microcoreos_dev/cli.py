@@ -20,11 +20,13 @@ import sys
 
 from microcoreos.project import stdio_speaks_unicode
 
-from microcoreos_dev.pipeline import migrate, plan, schema, status
+from microcoreos_dev.pipeline import check, migrate, plan, schema, status
 
 COMMANDS = {
     "status": status,
     "plan": plan,
+    "check": check,
+    "lint": check,
     "migrate": migrate,
     "schema": schema,
 }
@@ -36,6 +38,7 @@ Usage:
   microcoreos-dev plan validate [path]    Validate the plan offline (no server)
   microcoreos-dev plan sync [path]        Sync execution checklist from plan
   microcoreos-dev plan probe [path]       Drive each feature, report what it touches
+  microcoreos-dev check [--strict]        Run architecture linters offline (CI gate)
   microcoreos-dev migrate                 Apply migrations + regenerate AI_CONTEXT.md
   microcoreos-dev schema                  Print the live tables and columns
 

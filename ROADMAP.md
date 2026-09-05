@@ -14,7 +14,7 @@
 | Area | Status / next work |
 |---|---|
 | Core lifecycle | Issue 49 shipped (see ROADMAP_DONE.md) |
-| Harness/devtools | Optional event types 47, unified check report 53; import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
+| Harness/devtools | Optional event types 47; unified check report 53, import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
 | HTTP tool | Issues 48 & 51 shipped (see ROADMAP_DONE.md) |
 | Distribution | Packaged tools 44, demo 43, test distribution 42 (partial), marketplace 40 (deferred) |
 | Event infrastructure | TLS/auth 45; ACL 16 and runtime contracts 23 still unimplemented |
@@ -56,23 +56,9 @@ remain explicitly unverifiable. This is independent of Issue 23's runtime guard.
 
 ---
 
-**Issue 53 — 🟡 Unified checker report, application-owned CI policy**
+**Issue 53 — ✅ Unified checker report, application-owned CI policy (shipped; see [ROADMAP_DONE.md](ROADMAP_DONE.md))**
 
-Continue the split in `docs/internal/DEV_PACKAGE_SPLIT.md`, but use the actual
-current baseline: `microcoreos_dev` already exists in the same wheel; the old
-plan's NOT STARTED / separate-distribution framing is historical, not the next
-step. Linters still live in `domains/devtools`; move their analysis offline
-without breaking runtime event-schema metadata.
-
-One structured finding/report contract for CLI and optional runtime diagnostics.
-Include checker execution/completeness status: a missing checker must not look
-like an empty findings list. Today the endpoint gate reads arch/tool-doc/event
-warnings; real-repo tests additionally cover naming, tables and field divergence.
-Route collisions are not checked by that endpoint gate, and discovery findings
-are not included in its response. Add end-to-end tests proving configured
-violations really produce a failing exit code. Applications choose severities,
-waivers and CI provider; framework CI tests the checker itself. No mandatory
-GitHub Actions, HTTP server or authentication for application linting.
+---
 
 **Issue 37 — 🟡 Remaining scopes only (scope 2 shipped)**
 

@@ -97,6 +97,16 @@ The linters in `domains/devtools/` run on every boot and report architecture
 violations, event contract mismatches, route collisions and table ownership
 conflicts — so a mistake surfaces at boot, not in production.
 
+You can also run all architecture checks and plan validations offline anytime:
+
+```bash
+microcoreos check             # 7 architecture linters offline (CI gate, --strict)
+microcoreos status            # active plan progress and manifest freshness
+microcoreos plan validate     # validate active plan offline
+microcoreos migrate           # apply migrations and regenerate AI_CONTEXT.md
+microcoreos schema            # inspect live database schema
+```
+
 ## Upgrading the Kernel
 
 ```bash

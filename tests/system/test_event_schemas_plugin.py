@@ -102,3 +102,34 @@ async def test_duplicate_entries_are_collapsed(fixture_domain):
     plugin = make_plugin([entry, dict(entry)])
     result = await plugin.get_schemas({})
     assert len(result["data"]["schemas"]["sample.created"]) == 1
+
+
+@pytest.mark.anyio
+async def test_catalog_auto_discovers_without_linter_metadata(tmp_path, monkeypatch):
+    """Proves EventSchemasPlugin is independent: works with zero linter metadata."""
+    plugins_dir = tmp_path / "domains" / "fixture" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    source = (
+        "from pydantic import BaseModel\n"
+        "class OrderPayload(BaseModel):\n"
+        "    order_id: int\n"
+        "    total: float\n"
+        "class CreateOrderPlugin:\n"
+        "    async def on_boot(self):\n"
+        "        await self.event_bus.publish('order.created', OrderPayload(order_id=1, total=9.9).model_dump())\n"
+    )
+    (plugins_dir / "create_order_plugin.py").write_text(source, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    # Empty registry metadata (as if EventContractLinterPlugin was never run or deleted)
+    container = MagicMock()
+    container.registry.get_domain_metadata.return_value = {}
+    plugin = EventSchemasPlugin(container=container, http=MagicMock(), logger=MagicMock())
+
+    result = await plugin.get_schemas({})
+    assert result["success"] is True
+    catalog = result["data"]["schemas"]
+    assert "order.created" in catalog
+    assert catalog["order.created"][0]["model"] == "OrderPayload"
+    assert "order_id" in catalog["order.created"][0]["json_schema"]["properties"]
+
