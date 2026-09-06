@@ -306,7 +306,7 @@ class EventContractAnalyzer:
 def check_event_contracts(
     root: str = ".",
     domains_dir: str = "domains",
-) -> tuple[list[CheckFinding], list[dict]]:
+) -> tuple[list[CheckFinding], list[dict], list[dict]]:
     """Scan plugins for event contract compatibility."""
     analyzer = EventContractAnalyzer()
     base = os.path.join(root, domains_dir) if not os.path.isabs(domains_dir) else domains_dir
@@ -357,4 +357,4 @@ def check_event_contracts(
         for p in analyzer.publishers if p.get("model")
     ]
 
-    return findings, publishers_meta
+    return findings, publishers_meta, raw_findings

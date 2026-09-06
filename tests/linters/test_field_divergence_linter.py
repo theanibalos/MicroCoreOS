@@ -3,13 +3,12 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.devtools.plugins.field_divergence_linter_plugin import FieldDivergenceLinterPlugin
+from microcoreos_dev.lint.checkers.divergence import check_field_divergence
+from domains.devtools.plugins.system_lint_plugin import SystemLintPlugin
 
 
-def make_plugin():
-    container = MagicMock()
-    container.registry = MagicMock()
-    return FieldDivergenceLinterPlugin(container=container, logger=MagicMock())
+def _scan(root="."):
+    return [f.message for f in check_field_divergence(root=str(root))]
 
 
 def _write_plugin(root, domain, filename, source):
@@ -39,10 +38,9 @@ ACCEPTED_DIVERGENCES = {
 }
 
 
-@pytest.mark.anyio
-async def test_real_repo_has_no_unaccepted_field_divergence():
+def test_real_repo_has_no_unaccepted_field_divergence():
     """CI gate: no divergence in the actual codebase beyond the accepted ones."""
-    findings = make_plugin()._check_field_divergence()
+    findings = _scan()
     unexpected = [
         w for w in findings
         if not any(f"'{accepted}'" in w for accepted in ACCEPTED_DIVERGENCES)
@@ -50,8 +48,7 @@ async def test_real_repo_has_no_unaccepted_field_divergence():
     assert unexpected == []
 
 
-@pytest.mark.anyio
-async def test_detects_divergent_constraint_between_sibling_plugins(tmp_path, monkeypatch):
+def test_detects_divergent_constraint_between_sibling_plugins(tmp_path):
     _write_plugin(tmp_path, "users", "create_user_plugin.py", CREATE_SRC)
     _write_plugin(tmp_path, "users", "update_user_plugin.py", """
 from pydantic import BaseModel, Field
@@ -60,8 +57,7 @@ class UpdateUserRequest(BaseModel):
     password: str | None = Field(default=None, min_length=6)
 """)
 
-    monkeypatch.chdir(tmp_path)
-    warnings = make_plugin()._check_field_divergence()
+    warnings = _scan(tmp_path)
 
     assert len(warnings) == 1
     assert "'password.min_length'" in warnings[0]
@@ -69,8 +65,7 @@ class UpdateUserRequest(BaseModel):
     assert "update_user_plugin.py:UpdateUserRequest" in warnings[0]
 
 
-@pytest.mark.anyio
-async def test_agreeing_constraints_are_silent(tmp_path, monkeypatch):
+def test_agreeing_constraints_are_silent(tmp_path):
     _write_plugin(tmp_path, "users", "create_user_plugin.py", CREATE_SRC)
     _write_plugin(tmp_path, "users", "update_user_plugin.py", """
 from pydantic import BaseModel, Field
@@ -79,12 +74,10 @@ class UpdateUserRequest(BaseModel):
     password: str | None = Field(default=None, min_length=8)
 """)
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_field_divergence() == []
+    assert _scan(tmp_path) == []
 
 
-@pytest.mark.anyio
-async def test_same_name_in_different_domains_is_not_compared(tmp_path, monkeypatch):
+def test_same_name_in_different_domains_is_not_compared(tmp_path):
     """A shared NAME is not a shared CONCEPT: `name` in users and `name` in
     products legitimately differ (ROADMAP Issue 37, scoping rule 2)."""
     _write_plugin(tmp_path, "users", "create_user_plugin.py", """
@@ -100,12 +93,10 @@ class CreateProductRequest(BaseModel):
     name: str = Field(max_length=300)
 """)
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_field_divergence() == []
+    assert _scan(tmp_path) == []
 
 
-@pytest.mark.anyio
-async def test_non_literal_constraints_are_never_guessed(tmp_path, monkeypatch):
+def test_non_literal_constraints_are_never_guessed(tmp_path):
     """A constraint built from a variable cannot be compared statically — the
     linter stays silent instead of reporting a false divergence."""
     _write_plugin(tmp_path, "users", "create_user_plugin.py", CREATE_SRC)
@@ -118,12 +109,10 @@ class UpdateUserRequest(BaseModel):
     password: str | None = Field(default=None, min_length=MIN)
 """)
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_field_divergence() == []
+    assert _scan(tmp_path) == []
 
 
-@pytest.mark.anyio
-async def test_cosmetic_keywords_are_not_compared(tmp_path, monkeypatch):
+def test_cosmetic_keywords_are_not_compared(tmp_path):
     """description/examples differ per endpoint by design — comparing them
     would drown the real signal."""
     _write_plugin(tmp_path, "users", "create_user_plugin.py", """
@@ -139,8 +128,7 @@ class UpdateUserRequest(BaseModel):
     password: str | None = Field(default=None, min_length=8, description="Replacement password")
 """)
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_field_divergence() == []
+    assert _scan(tmp_path) == []
 
 
 @pytest.mark.anyio
@@ -157,20 +145,23 @@ class UpdateUserRequest(BaseModel):
     container = MagicMock()
     registry = MagicMock()
     container.registry = registry
-    plugin = FieldDivergenceLinterPlugin(container=container, logger=MagicMock())
+    plugin = SystemLintPlugin(container=container, logger=MagicMock(), http=MagicMock())
 
     await plugin.on_boot()
 
-    registry.register_domain_metadata.assert_called_once()
-    domain, key, warnings = registry.register_domain_metadata.call_args[0]
+    calls = [
+        call.args for call in registry.register_domain_metadata.call_args_list
+        if call.args[0] == "devtools" and call.args[1] == "field_divergence_warnings"
+    ]
+    assert len(calls) == 1
+    domain, key, warnings = calls[0]
     assert (domain, key) == ("devtools", "field_divergence_warnings")
     assert len(warnings) == 1
 
 
 # ─── Waivers: recording "confirmed, on purpose" ───────────────────────
 
-@pytest.mark.anyio
-async def test_waived_declaration_drops_out_of_the_comparison(tmp_path, monkeypatch):
+def test_waived_declaration_drops_out_of_the_comparison(tmp_path):
     """The linter says 'confirm it is on purpose'. Confirming has to be
     recordable, or the warning is permanent and the linter gets tuned out."""
     plugins = tmp_path / "domains" / "users" / "plugins"
@@ -189,12 +180,10 @@ async def test_waived_declaration_drops_out_of_the_comparison(tmp_path, monkeypa
         encoding="utf-8",
     )
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_field_divergence() == []
+    assert _scan(tmp_path) == []
 
 
-@pytest.mark.anyio
-async def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path, monkeypatch):
+def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path):
     """Waiving login must not silence create-vs-update disagreeing."""
     plugins = tmp_path / "domains" / "users" / "plugins"
     plugins.mkdir(parents=True)
@@ -218,8 +207,7 @@ async def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path, monkey
         encoding="utf-8",
     )
 
-    monkeypatch.chdir(tmp_path)
-    warnings = make_plugin()._check_field_divergence()
+    warnings = _scan(tmp_path)
 
     assert len(warnings) == 1
     assert "create_user_plugin.py" in warnings[0]
@@ -227,8 +215,7 @@ async def test_a_waiver_does_not_blind_the_linter_to_the_others(tmp_path, monkey
     assert "login_plugin.py" not in warnings[0]
 
 
-@pytest.mark.anyio
-async def test_a_waiver_with_no_reason_is_not_honoured(tmp_path, monkeypatch):
+def test_a_waiver_with_no_reason_is_not_honoured(tmp_path):
     """An unexplained silence is the failure mode this linter exists to catch."""
     plugins = tmp_path / "domains" / "users" / "plugins"
     plugins.mkdir(parents=True)
@@ -245,5 +232,4 @@ async def test_a_waiver_with_no_reason_is_not_honoured(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    monkeypatch.chdir(tmp_path)
-    assert len(make_plugin()._check_field_divergence()) == 1
+    assert len(_scan(tmp_path)) == 1

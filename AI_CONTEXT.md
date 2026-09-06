@@ -406,20 +406,20 @@ Async SQLite Persistence Tool (sqlite):
 ### `devtools`
 - **Tables**: none
 - **Endpoints**:
-  - `GET /system/events/schemas`
-    - **res**: EventSchemasData(schemas: dict)
   - `GET /system/lint`
-    - **res**: SystemLintData(arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str], dead_path_warnings: list[str])
+    - **res**: SystemLintData(discovery_naming_violations: list[str], arch_violations: list[str], drift_warnings: list[str], event_contract_violations: list[LintFinding(code: str, severity: str, event: Optional[str], publisher: Optional[str], consumer: Optional[str], detail: str)], route_collisions: list[str], table_ownership_warnings: list[str], field_divergence_warnings: list[str], dead_path_warnings: list[str])
 - **Events emitted**: none
 - **Events consumed**: none
 - **Dependencies**: container, http, logger
-- **Plugins**: devtools.DiscoveryNamingLinterPlugin, devtools.DomainIsolationLinterPlugin, devtools.EventContractLinterPlugin, devtools.EventSchemasPlugin, devtools.FieldDivergenceLinterPlugin, devtools.RouteCollisionLinterPlugin, devtools.TableOwnershipLinterPlugin, devtools.ToolDocDriftLinterPlugin
+- **Plugins**: devtools.SystemLintPlugin
 
 ### `system`
 - **Tables**: none
 - **Endpoints**:
   - `GET /system/events`
     - **res**: SystemEventsData(events: list[EventEntry(event: str, subscribers: list[str], last_emitters: list[str], times_fired: int)])
+  - `GET /system/events/schemas`
+    - **res**: EventSchemasData(schemas: dict)
   - `GET /system/metrics`
     - **res**: list[MetricRecord(tool: str, method: str, duration_ms: float, success: bool, timestamp: float)]
   - `GET /system/status`
@@ -435,7 +435,7 @@ Async SQLite Persistence Tool (sqlite):
 - **Events emitted**: `event.delivery.failed` (attempts, error, event, event_id, subscriber)
 - **Events consumed**: none
 - **Dependencies**: config, container, event_bus, http, logger, registry
-- **Plugins**: system.EventDeliveryMonitorPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
+- **Plugins**: system.EventDeliveryMonitorPlugin, system.EventSchemasPlugin, system.SystemEventsPlugin, system.SystemEventsStreamPlugin, system.SystemLogsStreamPlugin, system.SystemMetricsPlugin, system.SystemStatusPlugin, system.SystemTracesPlugin, system.SystemTracesStreamPlugin, system.ToolHealthPlugin
 
 ## 🧩 Plugin Authoring Guide
 

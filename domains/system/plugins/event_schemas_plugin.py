@@ -161,4 +161,3 @@ class EventSchemasPlugin(BasePlugin):
                         })
 
         return entries
-

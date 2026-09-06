@@ -1,13 +1,8 @@
-import pytest
-from unittest.mock import MagicMock
-
-from domains.devtools.plugins.table_ownership_linter_plugin import TableOwnershipLinterPlugin
+from microcoreos_dev.lint.checkers.tables import check_table_ownership
 
 
-def make_plugin():
-    container = MagicMock()
-    container.registry = MagicMock()
-    return TableOwnershipLinterPlugin(container=container, logger=MagicMock())
+def _scan(root="."):
+    return [f.message for f in check_table_ownership(root=str(root))]
 
 
 def _write_migration(root, domain, filename, sql):
@@ -16,8 +11,7 @@ def _write_migration(root, domain, filename, sql):
     (migrations / filename).write_text(sql, encoding="utf-8")
 
 
-@pytest.mark.anyio
-async def test_real_repo_has_no_duplicate_tables():
+def test_real_repo_has_no_duplicate_tables():
     """CI gate: table ownership over the actual codebase must be clean.
 
     Runs the same scan the linter performs at boot (CREATE TABLE names across
@@ -25,17 +19,15 @@ async def test_real_repo_has_no_duplicate_tables():
     table declared by more than one domain here fails the suite instead of
     only warning at boot.
     """
-    assert make_plugin()._check_table_ownership() == []
+    assert _scan() == []
 
 
-@pytest.mark.anyio
-async def test_detects_table_collision(tmp_path, monkeypatch):
+def test_detects_table_collision(tmp_path):
     ddl = "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY);"
     _write_migration(tmp_path, "domain_a", "001_create_widgets.sql", ddl)
     _write_migration(tmp_path, "domain_b", "001_create_widgets.sql", ddl)
 
-    monkeypatch.chdir(tmp_path)
-    warnings = make_plugin()._check_table_ownership()
+    warnings = _scan(tmp_path)
 
     assert len(warnings) == 1
     assert "widgets" in warnings[0]
@@ -43,12 +35,10 @@ async def test_detects_table_collision(tmp_path, monkeypatch):
     assert "domain_b" in warnings[0]
 
 
-@pytest.mark.anyio
-async def test_no_collision_between_different_tables(tmp_path, monkeypatch):
+def test_no_collision_between_different_tables(tmp_path):
     _write_migration(tmp_path, "domain_a", "001_create_widgets.sql",
                      "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY);")
     _write_migration(tmp_path, "domain_b", "001_create_gadgets.sql",
                      "CREATE TABLE IF NOT EXISTS gadgets (id INTEGER PRIMARY KEY);")
 
-    monkeypatch.chdir(tmp_path)
-    assert make_plugin()._check_table_ownership() == []
+    assert _scan(tmp_path) == []

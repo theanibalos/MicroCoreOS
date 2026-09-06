@@ -1,10 +1,11 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.devtools.plugins.event_contract_linter_plugin import (
+from microcoreos_dev.lint.checkers.events import (
     EventContractAnalyzer,
-    EventContractLinterPlugin,
+    check_event_contracts,
 )
+from domains.devtools.plugins.system_lint_plugin import SystemLintPlugin
 
 
 @pytest.fixture
@@ -347,7 +348,7 @@ class SamplePublisherPlugin:
     logger = MagicMock()
     http = MagicMock()
 
-    plugin = EventContractLinterPlugin(container=container, logger=logger, http=http)
+    plugin = SystemLintPlugin(container=container, logger=logger, http=http)
     await plugin.on_boot()
 
     registered = {
@@ -369,13 +370,8 @@ class SamplePublisherPlugin:
 @pytest.mark.anyio
 async def test_real_repo_produces_no_false_warnings():
     """The linter must not raise warnings on the current, known-good codebase."""
-    container = MagicMock()
-    container.registry = MagicMock()
-    plugin = EventContractLinterPlugin(container=container, logger=MagicMock(), http=MagicMock())
-
-    findings = plugin._run_scan()
-
-    warnings = [f for f in findings if f["severity"] == "warning"]
+    findings, _, _ = check_event_contracts(root=".")
+    warnings = [f for f in findings if f.severity == "warning"]
     assert warnings == []
     # Sanity: it actually analyzed the repo (user.created exists and is consumed).
-    assert any(f.get("event") for f in findings) or findings == []
+    assert any(f.message for f in findings) or findings == []

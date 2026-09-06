@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from domains.devtools.plugins.event_schemas_plugin import EventSchemasPlugin
+from domains.system.plugins.event_schemas_plugin import EventSchemasPlugin
 
 # A synthetic domain/plugin pair, isolated from any real business domain.
 # devtools tests must never depend on a specific domain existing on disk —
