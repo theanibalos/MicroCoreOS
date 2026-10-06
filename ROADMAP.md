@@ -208,11 +208,17 @@ invocations across the docs are worth a sweep.
 
 **Issue 42 — 🟡 Ship the tests with the code they test (PARTIALLY DELIVERED)**
 
-**Current source check:** `scaffold.RUNTIME_ENTRIES` now ships `tests/helpers`,
-and tool-local tests travel in extras. Generated pyproject configures pytest and
-anyio when the scaffolder creates it. The full default-tool/system/linter suites
-and root `conftest.py` are not all in the scaffold allowlist. Do not redo helper
-shipping; scope the remaining fixture and suite distribution explicitly.
+**Current source check:** `scaffold.RUNTIME_ENTRIES` now ships unified root `conftest.py`
+and `tests/helpers` directly, with tool-local tests traveling in extras. Generated pyproject
+configures pytest, anyio and domain migration markers. Root fixtures provide standard injection
+for `db`, `event_bus`, `auth`, `state`, `logger`, `config`, `anyio_backend`, and mocks.
+Remaining scope: tool/suite distribution across extras moves and external-service skip modes.
+
+**Fixture modularization design (future trigger):** Today `conftest.py` is maintained
+as a single unified root file (~180 lines) for zero-indirection efficiency with AI agents.
+As the tool catalog expands significantly (or when Issue 44 packages default tools),
+split into cohesive modules under `tests/fixtures/` (`db_fixtures.py`, `event_bus_fixtures.py`, etc.)
+loaded via `pytest_plugins` in root `conftest.py`.
 
 Original motivation: a scaffolded project got `pytest` configured and nothing
 to run: no `tests/`, no `conftest.py`, no fixtures. Yet the testing model is documented as a

@@ -116,6 +116,9 @@ dev = [
 # travel with it, so installing an extra adds its tests to your suite.
 testpaths = ["tests", "tools"]
 pythonpath = ["."]
+markers = [
+    "migrations(*domains): apply these domains' real migrations to the `db` fixture",
+]
 
 # Vendored tools under tools/ (e.g. telemetry_tool.py) use broad
 # `except Exception` on purpose, to degrade gracefully when a swappable

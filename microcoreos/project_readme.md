@@ -10,8 +10,8 @@ you can read them, edit them and replace them.
 ## Run it
 
 ```bash
-microcoreos              # boot        (or: uv run main.py)
-microcoreos dev          # boot with auto-reload on .py changes
+uv run microcoreos              # boot        (or: uv run main.py)
+uv run microcoreos dev          # boot with auto-reload on .py changes
 ```
 
 Then open <http://localhost:5000/docs> for the auto-generated API, and
@@ -67,13 +67,13 @@ Tool names and exact signatures: `AI_CONTEXT.md`. Rules and anti-patterns:
 ## Activate an extra
 
 ```bash
-microcoreos add postgres
+uv run microcoreos add postgres
 ```
 
 One command, three acts: installs the dependency (`uv add
 'microcoreos[postgres]'`), moves the source out of `extras/` into `tools/`
 (and `domains/` when the extra is a pair), and appends its settings to `.env`
-— never overwriting a value you already chose. `microcoreos add` with no
+— never overwriting a value you already chose. `uv run microcoreos add` with no
 argument lists what is available.
 
 The three are separate acts because they fail in different places: without the
@@ -100,11 +100,11 @@ conflicts — so a mistake surfaces at boot, not in production.
 You can also run all architecture checks and plan validations offline anytime:
 
 ```bash
-microcoreos check             # 7 architecture linters offline (CI gate, --strict)
-microcoreos status            # active plan progress and manifest freshness
-microcoreos plan validate     # validate active plan offline
-microcoreos migrate           # apply migrations and regenerate AI_CONTEXT.md
-microcoreos schema            # inspect live database schema
+uv run microcoreos check             # 7 architecture linters offline (CI gate, --strict)
+uv run microcoreos status            # active plan progress and manifest freshness
+uv run microcoreos plan validate     # validate active plan offline
+uv run microcoreos migrate           # apply migrations and regenerate AI_CONTEXT.md
+uv run microcoreos schema            # inspect live database schema
 ```
 
 ## Upgrading the Kernel
