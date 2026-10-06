@@ -58,7 +58,9 @@ For each feature declared in `features:`:
 2. **Write its Test**: `tests/domains/{domain}/test_{feature}_plugin.py`.
    - Black-box integration tests using `@pytest.mark.migrations("{domain}")`.
    - Assert status codes, response envelope, and DB side effects.
-3. **Mark Checklist**: Check off the task in `plans/active_plan.md`.
+3. **Track implementation**: Keep verification checkboxes pending in
+   `plans/active_plan.md` until the corresponding tests and gates pass.
+   Writing the files is not proof that the feature works.
 
 ---
 
@@ -67,8 +69,25 @@ For each feature declared in `features:`:
    ```bash
    uv run -m pytest
    ```
-2. **Boot verification**:
+2. **Run the offline architecture gate**:
    ```bash
-   microcoreos migrate   # regenerates AI_CONTEXT.md and validates system integrity
+   microcoreos check --strict
    ```
-3. Done!
+   Resolve errors and warnings; migration success does not replace this check.
+3. **Refresh and compare the manifest**:
+   ```bash
+   microcoreos migrate
+   microcoreos schema
+   microcoreos status
+   ```
+   Confirm that tables, routes, events and tool interfaces match the plan and
+   that the manifest is fresh. These commands terminate; they do not prove
+   that the HTTP endpoints behave correctly.
+4. **Final runtime verification**: After the offline gates pass, start
+   `microcoreos` for the final integration check. Verify `GET /system/lint`
+   is clean and exercise the endpoints/events declared by the plan. Stop the
+   server with Ctrl-C when finished; do not leave a background server running.
+   If runtime verification cannot run, record the blocker rather than claiming
+   it passed. Likewise, report skipped infrastructure tests explicitly.
+5. **Close the checklist**: Mark only verified tasks/gates as complete in
+   `plans/active_plan.md`. Report commands, results and remaining limitations.

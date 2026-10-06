@@ -133,7 +133,7 @@ for Redis) MUST pass the **Parity Suite** of the reference implementation it
 replaces. This ensures that plugins remain infrastructure-blind and behavior
 is consistent across backends.
 
-**Canonical examples:**
+**Framework-maintainer references (not shipped in generated applications):**
 - `tests/tools/state/test_state_parity.py`: Verifies that `RedisStateTool` behaves
   exactly like the default in-memory `StateTool`.
 - `tests/tools/event_bus/test_event_bus_broker_parity.py`: Parametrized suite that
@@ -267,29 +267,25 @@ the `ToolDocDriftLinter` (boot + `/system/lint`) compares each tool's
 documented interface against its implementation, and the parity suites
 (`tests/tools/state/test_state_parity.py`,
 `tests/tools/event_bus/test_event_bus_broker_parity.py`) hold swappable tools to one
-behaviour. Do not re-verify that in a plugin test.
+behaviour. Those parity suites live in the framework repository, not in a
+scaffolded application's `tests/`. They cover their declared cases, not every
+SQL construct or every integration path. Plugin tests must still verify their
+own persistence and HTTP security behavior.
 
 ### Ask for tools the way the plugin does
 
 A plugin never builds a tool: it names one in `__init__` and the Kernel hands
 it over. pytest injects by parameter name too, so **a test uses the same
-vocabulary** — `conftest.py` (repo root) publishes one fixture per Kernel injection
-key (`db`, `event_bus`, `auth`, `state`, `logger`, `config`). No tool imports,
-no setup/teardown, no hand-built schema:
+vocabulary**. The generated root `conftest.py` provides `db`, `event_bus`,
+`auth`, `state`, `config`, `mock_logger` and `mock_state`, plus `anyio_backend`.
+Inject `mock_logger` as the plugin's `logger` argument; do not assume a real
+`logger` fixture exists in generated applications. The framework's own
+conftest has a different fixture set.
 
-```python
-@pytest.mark.migrations("users")          # the domain's REAL migrations
-async def test_create_user_persists(db, event_bus, auth, logger):
-    plugin = CreateUserPlugin(http=MagicMock(), db=db,
-                              event_bus=event_bus, auth=auth, logger=logger)
-    result = await plugin.execute({"name": "Ana", "email": "a@b.com", "password": "secret123"})
-
-    assert result["success"] is True
-    rows = await db.query("SELECT name, email, password_hash FROM users")
-    assert rows[0]["password_hash"] != "secret123"
-```
-
-Worked example: `tests/core/test_plugin_di_fixtures.py`.
+For a complete application example, see **Black-Box Integration Testing** below.
+No tool imports, manual setup/teardown or hand-built schema are needed.
+Framework maintainers can additionally consult
+`tests/core/test_plugin_di_fixtures.py`; that file is not shipped to applications.
 
 - `@pytest.mark.migrations("users", "system")` applies those domains' real
   migration files. **No marker = a real but empty database**, which is what a
@@ -326,63 +322,50 @@ drops out of the comparison — the others are still compared with each other.
 | `tests/helpers/async_wait.py` | `wait_until(...)` instead of a fixed sleep. Pass `describe=` so a rare timeout reports the observed state, not `<lambda at 0x...>` |
 | `tests/helpers/trace_chains.py` | Asserting a full event chain across domains |
 
-### 1. Black-Box Integration Testing (Recommended for DB/State/Events)
-To prevent fragile mocks and ensure database queries actually run and pass syntax and dialect checks:
-- Do NOT mock `db`, `event_bus`, or `state` tools unless absolutely necessary.
-- Use the real `SqliteTool` configured with `:memory:` (fast, self-contained, no external database files needed).
-- Apply migrations dynamically to the in-memory database to establish the real schema.
-- Assert on the final state of the database and event bus (Black-Box) rather than internal mock call assertions.
+### 1. Black-Box Integration Testing (For DB/State/Event Effects)
 
-Example of a Black-Box Integration Test:
+Use real fixtures when asserting persisted rows, state or actual event delivery.
+The `db` fixture selects the active backend and the migrations marker applies
+real domain migrations through its runner. Do not hardcode SQLite, set private
+DB attributes, or pass a whole migration file to `db.execute()`.
+
+Complete example for a generated application **after `microcoreos add auth`**,
+with the generated root `conftest.py` and its dependencies installed. Save at
+the `test:` path declared by the plan (for example,
+`tests/domains/users/test_create_user_plugin.py`):
+
 ```python
+from unittest.mock import MagicMock
+
 import pytest
-from tools.sqlite.sqlite_tool import SqliteTool
-from tools.event_bus.event_bus_tool import EventBusTool
-from tools.auth.auth_tool import AuthTool
+
 from domains.users.plugins.create_user_plugin import CreateUserPlugin
 
-@pytest.fixture
-async def test_env():
-    # Setup real db in memory
-    db = SqliteTool()
-    db._db_path = ":memory:"
-    await db.setup()
-    
-    # Run the migrations needed for this domain
-    with open("domains/<your_domain>/migrations/001_create_<table>.sql", "r") as f:
-        await db.execute(f.read())
-        
-    bus = EventBusTool()
-    await bus.setup()
-    
-    auth = AuthTool()
-    await auth.setup()
-    
-    yield db, bus, auth
-    
-    await db.shutdown()
-    await bus.shutdown()
+pytestmark = pytest.mark.anyio
 
-@pytest.mark.anyio
-async def test_create_user_integration(test_env):
-    db, bus, auth = test_env
-    plugin = CreateUserPlugin(http=None, db=db, event_bus=bus, logger=None, auth=auth)
-    
-    # Input
-    data = {"name": "John Doe", "email": "john@example.com", "password": "password123"}
-    
-    # Execute (Black Box)
-    result = await plugin.execute(data)
-    
-    # Output Verification
+
+@pytest.mark.migrations("users")
+async def test_create_user_persists(db, event_bus, auth, mock_logger):
+    plugin = CreateUserPlugin(
+        http=MagicMock(), db=db, event_bus=event_bus,
+        auth=auth, logger=mock_logger,
+    )
+    result = await plugin.execute({
+        "name": "Ana", "email": "a@b.com", "password": "secret123",
+    })
     assert result["success"] is True
-    assert result["data"]["email"] == "john@example.com"
-    
-    # Database Verification (No Mocks!)
-    users = await db.query("SELECT * FROM users WHERE email = $1", ["john@example.com"])
-    assert len(users) == 1
-    assert users[0]["name"] == "John Doe"
+    rows = await db.query(
+        "SELECT name, email, password_hash FROM users WHERE email = $1",
+        ["a@b.com"],
+    )
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Ana"
+    assert await auth.verify_password("secret123", rows[0]["password_hash"])
 ```
+
+This tests persistence, not HTTP middleware. Authentication, cookie/CSRF
+behavior and HTTP status codes need tests through the registered HTTP endpoint;
+calling `plugin.execute()` directly bypasses that pipeline.
 
 ### Waiting for Async Delivery (Events, Retries, DLQ)
 
@@ -454,13 +437,24 @@ source out of `extras/` into `tools/` (and `domains/` for a pair), and appends
 the extra's settings to `.env` without overwriting values already there. Run
 `microcoreos add` with no argument to list what is available.
 
-By hand it is the same three acts, and each one fails in a different place:
+For a replacement, **also move the previous implementation outside `tools/`**
+before booting. `microcoreos add postgres` does not remove SQLite: keep exactly
+one active tool with the `db` name. Preserve its source and database for rollback.
+Review every migration and plugin SQL statement for the target engine before
+switching; see `docs/ELASTIC_DEPLOYMENT.md`, Stage 1.
+
+Manual equivalent (run from the project root, with no server running):
 
 ```bash
 uv add 'microcoreos[postgres]'                     # 1. the library
-mv extras/available_tools/postgresql tools/        # 2. the source you now own
-# 3. the settings — see the table below
+mkdir -p retired_tools
+mv tools/sqlite retired_tools/                    # preserve, outside discovery
+mv extras/available_tools/postgresql tools/        # 2. the replacement source
+# 3. set PG_HOST, PG_PORT, PG_USER, PG_PASSWORD and PG_DATABASE in .env
 ```
+
+Set these variables to your actual PostgreSQL connection settings; the tool
+does not read `DATABASE_URL`. Retiring SQLite does not migrate its data.
 
 Skipping step 1 does not fail quietly — the Kernel reports a load error for
 that file at boot (`No module named 'asyncpg'`). Skipping step 2 does nothing
@@ -468,7 +462,7 @@ at all: the Kernel only discovers what is under `tools/` and `domains/`.
 
 | Extra | Package step | Folder step |
 |---|---|---|
-| **PostgreSQL** — takes over the `db` key; set `DATABASE_URL` in `.env` | `uv add 'microcoreos[postgres]'` | `mv extras/available_tools/postgresql tools/` |
+| **PostgreSQL** — replaces `db`; retire SQLite and set `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` | `uv add 'microcoreos[postgres]'` | `mv extras/available_tools/postgresql tools/` |
 | **Redis State** — swaps in-memory `state` for a distributed one | `uv add 'microcoreos[redis]'` | `mv extras/available_tools/redis_state tools/` |
 | **S3** — object storage, private bucket + presigned URLs | `uv add 'microcoreos[s3]'` | `mv extras/available_tools/s3 tools/` |
 | **Scheduler** — cron + in-memory one-shots | `uv add 'microcoreos[scheduler]'` | `mv extras/available_tools/scheduler tools/` |

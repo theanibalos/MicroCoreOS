@@ -159,9 +159,12 @@ microcoreos           # or: uv run main.py (identical) — Ctrl-C when done
 
 ### 6. Generate tests
 
-Create `tests/test_{name}_plugin.py` with one test per plugin. Mock exactly
-the tools the plan's `tools:` field lists; run the rest as real in-memory
-instances (`INSTRUCTIONS_FOR_AI.md` § Testing).
+Create each plugin's test at the exact `test:` path declared by the plan.
+Use the generated `db` fixture and `@pytest.mark.migrations("{domain}")` for
+persistence assertions, and real event/state fixtures for delivery/state effects.
+Use mocks for branch logic and controlled failures, not as evidence of persisted
+rows (`INSTRUCTIONS_FOR_AI.md` § Testing). The example below tests only the
+handler's returned result and error handling.
 
 **Configure the method, not the mock.** A plugin awaits `self.db.execute(...)`,
 never `self.db(...)` — so `AsyncMock(return_value=1)` and
@@ -198,10 +201,10 @@ async def test_create_{name}_db_error():
     assert "DB down" not in result["error"]  # Safe Errors: technical detail never reaches the client
 ```
 
-`pytest.mark.anyio` needs an `anyio_backend` fixture; the generated
-the generated root `conftest.py` already ships one, along with `mock_logger` and
-`mock_state`. The richer alternative — the real db tool with this domain's
-migrations applied, asserting on rows instead of on mock calls — is the
-black-box style of `tests/domains/users/test_create_user_plugin.py`.
+`pytest.mark.anyio` needs an `anyio_backend` fixture; the generated root
+`conftest.py` already ships one, along with `mock_logger` and `mock_state`.
+For persistence, copy the complete fixture-based example in
+`INSTRUCTIONS_FOR_AI.md` § Black-Box Integration Testing. Framework tests under
+`tests/domains/users/` are not shipped to generated applications.
 
-Run with `uv run -m pytest tests/test_{name}_plugin.py`.
+Run `uv run -m pytest` with the plan's exact `test:` path.

@@ -223,11 +223,13 @@ When writing a new feature, read these specific files under demand to copy their
 | **Minimal Plugin (No DB)** | `extras/available_domains/ping/plugins/ping_plugin.py` |
 | **Database Migrations** | `extras/available_domains/users/migrations/001_create_users.sql` |
 | **Dynamic Introspection** | `domains/system/plugins/system_status_plugin.py` |
-| **Black-Box Integration Tests** | `tests/domains/users/test_login_plugin.py` |
+| **Black-Box Integration Tests** | `INSTRUCTIONS_FOR_AI.md` § Black-Box Integration Testing — complete fixture-based example |
 
-Both point into `extras/` because both are extras: readable in any project,
-and `microcoreos add auth` / `add ping` is what moves them into `domains/`.
-Reading them needs no install — the files are there either way.
+Plugin and migration examples under `extras/` are readable in generated
+projects; `microcoreos add auth` / `add ping` installs the corresponding extra.
+The testing example is embedded in the shipped guide and states its install
+prerequisites. Framework-repository tests such as `tests/domains/users/` and
+`tests/core/` are maintainer references, not files shipped by `microcoreos new`.
 
 ---
 

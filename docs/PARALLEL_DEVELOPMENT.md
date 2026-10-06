@@ -58,14 +58,16 @@ in the plan** (`phase_0:` section, every table with its `columns`) and
 
 Tasks 1 and 2 are independent at write time — disjoint files, neither reads
 the other (plugins compose tools; migrations don't) — so they can be two
-agents, in any order or in parallel. The one hard ordering rule is the boot:
+agents, in any order or in parallel. The one hard ordering rule is the foundation gate:
 
-3. **Boot once** (`uv run main.py`, or `microcoreos` if you installed the
-   package), only after EVERYTHING above is written.
-   This regenerates `AI_CONTEXT.md` with the real tables, models and tool
-   interfaces — the ground truth every wave agent receives (a tool missing at
-   boot means a tool missing from every executor's prefix). Only then do
-   features begin.
+3. **Run `microcoreos migrate`, then `microcoreos schema`**, only after
+   EVERYTHING above is written (prefix with `uv run` when needed).
+   `migrate` applies migrations and regenerates `AI_CONTEXT.md` with the real
+   tables, models and tool interfaces, then exits; `schema` verifies the live
+   tables and columns. This is the ground truth every wave agent receives.
+   Only then do features begin. Do not use `uv run main.py` or a bare
+   `microcoreos` here: those start a long-running server. Reserve the real
+   server boot for final verification.
 
 ### Phase 1 — The Plan (the contract — authored before anything is built)
 

@@ -12,6 +12,7 @@ is part of, and for WHY migrations run from setup().
 
 import os
 import re
+import sqlite3
 
 from tools.sqlite.errors import DatabaseError, _classify_error
 
@@ -42,6 +43,23 @@ _CREATE_TABLE_RE = re.compile(
 # is now visible in /system/status instead of a printed line.
 #
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _statements(sql_script: str):
+    """Use SQLite's completeness check; preserve SQL text, including comments.
+
+    Do not use executescript(): its implicit commit would break the surrounding
+    per-file transaction. A final statement need not end in a semicolon;
+    execute() validates that remainder (and accepts comment-only tails).
+    """
+    start = 0
+    for match in re.finditer(";", sql_script):
+        end = match.end()
+        if sqlite3.complete_statement(sql_script[start:end]):
+            yield sql_script[start:end]
+            start = end
+    if sql_script[start:].strip():
+        yield sql_script[start:]
+
 
 async def run_migrations(tool) -> None:
     # Issue 20: in production, replicas must NOT race to migrate at boot.
@@ -111,8 +129,7 @@ async def run_migrations(tool) -> None:
         filename = info["filename"]
 
         with open(info["path"], "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            sql_script = "\n".join(line for line in lines if not line.strip().startswith("--"))
+            sql_script = f.read()
 
         declared_tables = _CREATE_TABLE_RE.findall(sql_script)
 
@@ -136,12 +153,9 @@ async def run_migrations(tool) -> None:
         # Each migration in its own transaction
         try:
             async with tool.transaction():
-                # Manually split and execute to ensure atomicity via our Transaction CM
-                # This handles triggers if we are careful, but for now we split by ';'
-                # which is what the user originally had but now inside our safe TX.
-                statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-                for statement in statements:
-                    await tool._db.execute(statement)
+                for statement in _statements(sql_script):
+                    async with tool._db.execute(statement):
+                        pass
 
                 # Register successful migration
                 await tool._db.execute(

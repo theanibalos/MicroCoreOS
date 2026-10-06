@@ -120,3 +120,51 @@ async def test_migration_transaction_safety_intent(db, tmp_path, monkeypatch):
     # No trace may remain in the history
     history = await db.query("SELECT * FROM _migrations_history WHERE domain='blog'")
     assert len(history) == 0
+
+
+@pytest.mark.parametrize("suffix", ["", "\nINSERT INTO missing_table VALUES (1);"])
+async def test_migration_preserves_trigger_and_rolls_back_on_failure(db, tmp_path, suffix):
+    from tools.sqlite.errors import DatabaseError
+
+    folder = tmp_path / "domains" / "audit" / "migrations"
+    folder.mkdir(parents=True)
+    (folder / "001_trigger.sql").write_text(
+        "CREATE TABLE source (value TEXT); CREATE TABLE audit_log (value TEXT);\n"
+        "CREATE TRIGGER record_insert AFTER INSERT ON source BEGIN\n"
+        "  INSERT INTO audit_log VALUES (NEW.value);\n"
+        "  INSERT INTO audit_log VALUES ('trigger; ran');\n"
+        "END;\n"
+        "INSERT INTO source VALUES ('hello; world');" + suffix,
+        encoding="utf-8",
+    )
+    if suffix:
+        with pytest.raises(DatabaseError, match="missing_table"):
+            await db._run_migrations()
+        assert await db.query("SELECT name FROM sqlite_master WHERE name IN "
+                              "('source', 'audit_log', 'record_insert')") == []
+        assert await db.query("SELECT * FROM _migrations_history WHERE domain='audit'") == []
+    else:
+        await db._run_migrations()
+        assert await db.query("SELECT value FROM audit_log ORDER BY rowid") == [
+            {"value": "hello; world"}, {"value": "trigger; ran"},
+        ]
+        await db._run_migrations()
+        assert len(await db.query("SELECT * FROM audit_log")) == 2
+        assert len(await db.query("SELECT * FROM _migrations_history WHERE domain='audit'")) == 1
+
+
+@pytest.mark.parametrize("ending", ["", "; -- trailing comment;\n/* another; comment */"])
+async def test_migration_preserves_literals_and_comments(db, tmp_path, ending):
+    folder = tmp_path / "domains" / "messages" / "migrations"
+    folder.mkdir(parents=True)
+    (folder / "001_messages.sql").write_text(
+        "-- leading comment;\nCREATE TABLE messages (value TEXT);\n"
+        "/* between statements; */ INSERT INTO messages VALUES ('it''s; valid');\n"
+        "INSERT INTO messages VALUES ('first\n-- literal, not comment;\nlast')" + ending,
+        encoding="utf-8",
+    )
+    await db._run_migrations()
+    assert await db.query("SELECT value FROM messages ORDER BY rowid") == [
+        {"value": "it's; valid"},
+        {"value": "first\n-- literal, not comment;\nlast"},
+    ]

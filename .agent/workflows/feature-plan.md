@@ -105,8 +105,11 @@ Publish with `XxxPayload(...).model_dump()` — bare call, no arguments.
 
 - One test per plugin proving the black-box contract: input → output, DB
   effects on the declared tables, published payloads with the declared fields.
-  Mock exactly the tools the plan's `tools:` lists; run the rest as real
-  in-memory instances (`INSTRUCTIONS_FOR_AI.md` § Testing).
+  Use the generated `db` fixture with `@pytest.mark.migrations("{domain}")`
+  for persisted rows, and real event/state fixtures for delivery/state effects.
+  Mock only branch logic and controlled failures, not the persistence being
+  asserted (`INSTRUCTIONS_FOR_AI.md` § Testing). Save tests at the plan's
+  declared paths; tool dependencies are not a list of tools to mock.
 - One double-delivery test per idempotent link (same envelope twice → same
   final state), at the path declared in `idempotency_test`.
 - One chain test per flow, using the helper:

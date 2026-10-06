@@ -65,8 +65,13 @@ No imports from other tools, no plugin imports, stateless where possible.
 
 The same test battery runs against the reference implementation AND yours:
 
-- Canonical examples: `tests/tools/state/test_state_parity.py`,
-  `tests/tools/event_bus/test_event_bus_broker_parity.py` (parameterized over transports).
+- Framework-maintainer examples (in the framework repository, not shipped to
+  generated applications): `tests/tools/state/test_state_parity.py` and
+  `tests/tools/event_bus/test_event_bus_broker_parity.py`.
+- In an application repository, create the parity suite locally: parameterize
+  the same contract assertions over reference and replacement implementations,
+  isolate their state, and exercise success, failure and cleanup behavior.
+  Do not assume the framework's test files exist in the scaffold.
 - If the backend needs a server, the suite skips itself when unavailable and
   the server is added to CI services (`dev_infra/docker-compose.yml`).
 - **A replacement that does not pass the reference's parity suite is not a

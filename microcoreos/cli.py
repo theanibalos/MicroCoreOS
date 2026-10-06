@@ -66,8 +66,8 @@ async def _boot_forever():
 
     loop = asyncio.get_running_loop()
     if sys.platform != "win32":
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stop_signal_handler)
+        loop.add_signal_handler(signal.SIGINT, stop_signal_handler)
+        loop.add_signal_handler(signal.SIGTERM, stop_signal_handler)
 
     try:
         await app.boot()

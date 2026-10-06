@@ -17,7 +17,7 @@
 | Harness/devtools | Optional event types 47; unified check report 53, import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
 | HTTP tool | Issues 48 & 51 shipped (see ROADMAP_DONE.md) |
 | Distribution | Packaged tools 44, demo 43, test distribution 42 (partial), marketplace 40 (deferred) |
-| Event infrastructure | TLS/auth 45; ACL 16 and runtime contracts 23 still unimplemented |
+| Event infrastructure | TLS/auth 45; ACL 16 and runtime contracts 23 still unimplemented; Context isolation & explicit emitter 54 |
 | Integrity | Outbox 28 requires a confirmed transport handoff first |
 | Exploratory | Starlette 10, event locality 24, driver optimizations 36, payload encryption 52 |
 
@@ -810,3 +810,40 @@ RPC replies, metadata leakage and local trace/listener exposure. Current Bus
 listeners see plaintext before driver publication: driver-only encryption
 would NOT protect those sinks. No cipher/key storage/API is selected yet;
 require a concrete confidentiality threat model and parity/failure tests.
+
+---
+
+**Issue 54 — 🟡 Tool background task context isolation & explicit event emitters**
+
+Background listeners, long-lived workers, and event-ingesting tools (WebSockets,
+message brokers, RTMP, Webhooks) currently suffer from context leakage in
+asynchronous runtimes:
+
+1. **Context inheritance in background tasks**: When a plugin triggers an async
+   connection during `on_boot()` (e.g., `RestoreSessionPlugin` initiating
+   a WebSocket client), any long-lived background task created via
+   `asyncio.create_task()` inherits `current_identity_var` set to that plugin's
+   boot phase. Even after `on_boot()` completes and resets its local token, the
+   background loop permanently retains the creator's identity. Any subsequent
+   events published by or via that loop are falsely attributed to the initialization
+   plugin.
+2. **Forced emitter override in `EventBus.publish()`**: `publish()` currently executes
+   `kwargs.pop("emitter", None)` and forces `emitter = current_identity_var.get() or "system"`.
+   Tools and background workers have no supported mechanism to provide their true
+   identity (e.g., `tools.<tool_name>`) or to pass an explicit emitter when dispatching
+   external notifications.
+
+### Contract and implementation scope
+
+- **Allow explicit `emitter` in `EventBus.publish()`**: If an explicit `emitter: str`
+  is passed in `kwargs`, honor it instead of stripping it and defaulting to
+  `current_identity_var.get()`. Fall back to `current_identity_var.get() or "system"`
+  only when omitted.
+- **Context isolation guidelines for tools**: Document and standardize tool worker
+  execution so long-lived loops run in an isolated context (`contextvars.copy_context()`
+  with cleared identity, or default to `tools.<name>`).
+- **Callback dispatch attribution**: When an ingesting tool dispatches incoming
+  network events to registered plugin callbacks, the tool dispatcher must set
+  `current_identity_var` to the receiving plugin callback (`<plugin_identity>.<method>`)
+  during invocation and reset it in `finally`, guaranteeing downstream `bus.publish()`
+  calls within that callback reflect the true processing plugin.
