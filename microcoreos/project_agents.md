@@ -1,6 +1,6 @@
-# MicroCoreOS — AI Agent & Architecture Guide
+# MicroCoreOS — App Developer & AI Agent Guide
 
-This file is the single, absolute entry point for any AI agent (Gemini, Claude, GPT, etc.) working in this codebase. All development must strictly adhere to these principles to maintain the integrity of the Elastic Monolith.
+This file is the single, absolute entry point for any AI agent (Gemini, Claude, GPT, etc.) working in this application codebase. All development must strictly adhere to these principles to maintain the integrity of the Elastic Monolith.
 
 ---
 
@@ -99,8 +99,7 @@ what it would have said: that is the search the manifest exists to replace, and
 it costs an order of magnitude more to arrive at less.
 
 Read on demand, never up front: `INSTRUCTIONS_FOR_AI.md` (building tools,
-testing in depth, kernel internals) · `docs/internal/TECH_DEBT.md` (only when scoping
-work that may overlap an open item) · `domains/{domain}/models/{name}.py` (its
+testing in depth) · `domains/{domain}/models/{name}.py` (its
 fields are already in `AI_CONTEXT.md`).
 
 **Size the plan to the request** — over-planning a small one is a failure mode.

@@ -4,6 +4,25 @@ This file is the single, absolute entry point for any AI agent (Gemini, Claude, 
 
 ---
 
+## 🛠️ Maintainer Mandate: Framework Core vs Downstream Application Guides
+
+You are working in the **MicroCoreOS framework repository**.
+
+### 1. Two Guides, Two Audiences
+- **`AGENTS.md` (this file)**: The guide for AI agents developing the **MicroCoreOS Framework itself** (Kernel, Base Tools, Devtools, CLI, Packaging).
+- **`microcoreos/project_agents.md`**: The template guide shipped into downstream user applications created via `microcoreos new`.
+
+### 2. Synchronization Rule (MANDATORY)
+Whenever you introduce, update, or refactor:
+- Application conventions or rules (plugins, event contracts, HTTP endpoints, auth validators, DI)
+- CLI commands intended for application developers (`microcoreos plan validate`, `migrate`, `check`, `schema`, `add`)
+- Testing patterns, fixtures, or mocks in `conftest.py`
+
+**YOU MUST KEEP `microcoreos/project_agents.md` UPDATED IN LOCKSTEP.**
+Never let `microcoreos/project_agents.md` drift from the canonical application patterns. Any change to how developers or their agents write apps must immediately be reflected in `microcoreos/project_agents.md`.
+
+---
+
 ## 🚦 Start here: `microcoreos status`
 
 One command, before anything else. It answers the three questions that

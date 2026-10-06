@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from unittest.mock import AsyncMock, MagicMock
 from tests.helpers.active_db import active_db as _active_db
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 @pytest.fixture(autouse=True)
@@ -139,7 +145,10 @@ async def event_bus():
 
 @pytest.fixture
 async def auth(monkeypatch):
-    from extras.available_tools.auth.auth_tool import AuthTool
+    try:
+        from tools.auth.auth_tool import AuthTool
+    except ImportError:
+        from extras.available_tools.auth.auth_tool import AuthTool
     # The tool refuses a key under 32 chars — a real rule, not test noise.
     monkeypatch.setenv("AUTH_SECRET_KEY", "test-secret-key-0123456789abcdefghij")
     tool = AuthTool()
@@ -173,3 +182,55 @@ async def config():
     await _lifecycle(tool, "setup")
     yield tool
     await _lifecycle(tool, "shutdown")
+
+
+@pytest.fixture
+def mock_logger():
+    logger = MagicMock()
+    logger.info = MagicMock()
+    logger.error = MagicMock()
+    logger.warning = MagicMock()
+    return logger
+
+
+@pytest.fixture
+def mock_state():
+    """
+    Stand-in for the `state` tool, matching its real contract:
+
+    - Every method is async. The tool's public API is async top to bottom
+      (`tools/state/state_tool.py`), so a sync fixture dies on the first
+      `await self.state.get(...)` with "object is not awaitable".
+    - Every method takes `namespace=`, and `set`/`increment` take `ttl=` —
+      real call sites pass them by keyword (see the users domain's
+      `login_plugin.py` throttle), and a mock without them raises TypeError.
+    - `increment` exists and returns the new value.
+
+    `ttl` is accepted and ignored: nothing expires in this fixture. A test
+    about expiry wants the real StateTool, not a mock of it.
+    """
+    store = {}
+    state = MagicMock()
+
+    async def _set(key, value, namespace="default", ttl=None):
+        store[(namespace, key)] = value
+
+    async def _get(key, default=None, namespace="default"):
+        return store.get((namespace, key), default)
+
+    async def _delete(key, namespace="default"):
+        store.pop((namespace, key), None)
+
+    async def _has(key, namespace="default"):
+        return (namespace, key) in store
+
+    async def _increment(key, amount=1, namespace="default", ttl=None):
+        store[(namespace, key)] = store.get((namespace, key), 0) + amount
+        return store[(namespace, key)]
+
+    state.set = AsyncMock(side_effect=_set)
+    state.get = AsyncMock(side_effect=_get)
+    state.delete = AsyncMock(side_effect=_delete)
+    state.has = AsyncMock(side_effect=_has)
+    state.increment = AsyncMock(side_effect=_increment)
+    return state
