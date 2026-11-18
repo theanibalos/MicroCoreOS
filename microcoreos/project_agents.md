@@ -128,6 +128,8 @@ microcoreos                                              # Same, if you installe
 uv run -m pytest                                        # Run all tests (always -m: the pytest binary is not exposed)
 uv run -m pytest tests/test_file.py                     # Run a single test
 docker compose -f dev_infra/docker-compose.yml up -d    # Start dev infrastructure (PostgreSQL)
+microcoreos extra install <source> [--ref REF]          # Stage an external extra, inactive
+microcoreos extra enable <name> [--no-install]          # Copy it into active tool/domain paths
 ```
 
 The plan pipeline — prefix with `uv run` if the package is installed in a venv:
@@ -139,6 +141,19 @@ microcoreos check                   # The 7 architecture linters, OFFLINE (--str
 microcoreos migrate                 # Apply migrations AND regenerate AI_CONTEXT.md
 microcoreos schema                  # The live tables and columns, read by the db tool itself
 ```
+
+An external extra source must provide `microcoreos-extra.toml` at its root.
+The manifest declares `name`, optional `python_dependencies`, optional
+`[environment]` string defaults, and one or more `[[components]]` tables with
+`kind = "tool" | "domain" | "driver"`, a repository-relative `source`, and an
+active `target`. Install accepts a local directory or Git URL and stages only
+those declared components under `extras/installed/<name>/`; it does not execute
+the code or activate it. Git refs are optional and the resolved commit is
+recorded. Enable preflights active destinations, installs declared dependencies
+unless `--no-install` is used, preserves existing `.env` values, and copies the
+components into `tools/`, `domains/`, or `tools/event_bus/`. The staged source
+remains available. Never treat source code from an external repository as
+trusted merely because its manifest validates.
 
 `microcoreos schema` is how you verify a migration. Do not reach for `sqlite3`
 (not installed) or `import aiosqlite` from the system interpreter (it lives in

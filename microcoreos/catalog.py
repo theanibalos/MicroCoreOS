@@ -203,7 +203,15 @@ def _env_state(existing: str, var: str) -> str:
     return "absent"
 
 
-def _append_env(root: str, name: str, entries) -> None:
+def _dotenv_value(value: str) -> str:
+    """Quote values that dotenv would otherwise truncate or interpolate."""
+    if value and value.strip() == value and not any(char in value for char in "#'\\$"):
+        return value
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+def _append_env(root: str, name: str, entries, command: str = "add") -> None:
     """
     Append the extra's settings to .env, once.
 
@@ -236,9 +244,9 @@ def _append_env(root: str, name: str, entries) -> None:
         print("   ✓ .env already has these settings — unchanged.")
         return
 
-    block = [""] + _env_section_header(name.upper(), f"microcoreos add {name}") + [""]
+    block = [""] + _env_section_header(name.upper(), f"microcoreos {command} {name}") + [""]
     for var, value, comment in missing:
-        block.append(f"{var}={value}" + (f"   # {comment}" if comment else ""))
+        block.append(f"{var}={_dotenv_value(str(value))}" + (f"   # {comment}" if comment else ""))
 
     with open(path, "a", encoding="utf-8") as f:
         f.write("\n".join(block) + "\n")

@@ -35,7 +35,7 @@ KERNEL_MODULES = [
 # docs/internal/DEV_PACKAGE_SPLIT.md and the two direction tests at the bottom of this
 # file, which are what keep it from coming back.
 DISTRIBUTION_MODULES = ["cli.py", "catalog.py", "scaffold.py", "upgrade.py",
-                        "project.py"]
+                        "project.py", "external_extras.py"]
 
 
 def _imported_roots(path: Path) -> set[str]:

@@ -76,6 +76,24 @@ uv run microcoreos add auth
 `uv run microcoreos add` with no argument lists them too. Each one writes its
 own `.env` keys and never overwrites a value you already set.
 
+External extras use a separate two-step flow. Install from a local directory or
+Git URL first; this stages the declared source without activating it or changing
+dependencies. Then enable it from the project root:
+
+```bash
+uv run microcoreos extra install https://github.com/acme/microcoreos-mail.git --ref v1.2.0
+uv run microcoreos extra enable mail
+```
+
+The repository must contain a `microcoreos-extra.toml` manifest. It declares a
+`name`, optional `python_dependencies`, optional `[environment]` defaults, and
+one or more `[[components]]` entries with `kind` (`tool`, `domain`, or `driver`),
+relative `source`, and active `target`. Install copies components into
+`extras/installed/<name>/` and records the resolved Git commit. Enable adds
+dependencies with `uv` unless `--no-install` is passed, appends missing `.env`
+defaults, and copies components to the Kernel's active directories. The staged
+source remains intact; existing active destinations are never overwritten.
+
 Use that rather than `uv add 'microcoreos[auth]'`. The extra is only the **dependency** — installing it alone leaves the source in `extras/`, where nothing discovers it, and the boot looks perfectly fine with the feature simply absent. `microcoreos add` does all three parts: the dependency, the source, and the `.env` keys.
 
 ### Development & AI Pipeline Commands
