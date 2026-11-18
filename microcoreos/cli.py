@@ -26,6 +26,7 @@ import asyncio
 
 from microcoreos.kernel import Kernel
 from microcoreos.catalog import add
+from microcoreos.external_extras import command as extra_command
 from microcoreos.scaffold import new
 from microcoreos.upgrade import upgrade
 
@@ -40,7 +41,9 @@ USAGE = """MicroCoreOS
 
 Usage:
   microcoreos new <path> [--force] [--no-ai-kit]  Materialize a new project
-  microcoreos add <extra> [--no-install]          Install an extra completely
+  microcoreos add <extra> [--no-install]          Activate a bundled extra
+  microcoreos extra install <source> [--ref REF]  Install an external extra, inactive
+  microcoreos extra enable <name> [--no-install]  Activate an installed external extra
   microcoreos upgrade [--apply]                   Report/apply upstream changes
   microcoreos [run] [--boot-tool <tool_name>]     Boot the Kernel in this directory
   microcoreos dev                                 Boot with auto-reload on .py changes
@@ -185,7 +188,7 @@ def _pipeline(name: str):
 
 
 COMMANDS = {
-    "new": new, "add": add, "upgrade": upgrade, "run": run, "dev": dev,
+    "new": new, "add": add, "extra": extra_command, "upgrade": upgrade, "run": run, "dev": dev,
     **{name: _pipeline(name) for name in PIPELINE_COMMANDS},
 }
 
