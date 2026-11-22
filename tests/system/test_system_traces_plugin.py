@@ -94,3 +94,38 @@ async def test_traces_stream_contains_subscribers(event_bus):
     assert node["event"] == "stream.test"
     assert len(node["subscribers"]) == 1
     assert "sub_c" in node["subscribers"][0]
+
+
+async def test_traces_include_tool_calls_from_registry(event_bus):
+    from microcoreos.container import Container
+    from tools.system.registry_tool import RegistryTool
+    from tools.state.state_tool import StateTool
+
+    container = Container()
+    reg_tool = RegistryTool()
+    state_tool = StateTool()
+    state_tool.setup()
+
+    container.register(reg_tool)
+    container.register(state_tool)
+    container.register(event_bus)
+
+    proxied_state = container.get("state")
+    proxied_bus = container.get("event_bus")
+    proxied_reg = container.get("registry")
+
+    async def on_order_created(event: EventEnvelope):
+        await proxied_state.set("last_order", event.payload["id"])
+
+    await proxied_bus.subscribe("order.created", on_order_created)
+    await proxied_bus.publish("order.created", {"id": 42})
+    await asyncio.sleep(0.05)
+
+    plugin = SystemTracesPlugin(http=None, event_bus=proxied_bus, registry=proxied_reg)
+    tree_res = await plugin.get_tree({})
+    assert tree_res["success"] is True
+
+    nodes = [n for n in tree_res["data"] if n["event"] == "order.created"]
+    assert len(nodes) == 1
+    tool_calls = nodes[0]["tool_calls"]
+    assert any(tc["tool"] == "state" and tc["method"] == "set" and tc["success"] is True for tc in tool_calls)

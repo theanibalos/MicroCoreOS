@@ -31,9 +31,10 @@ class SystemTracesStreamPlugin(BasePlugin):
                        If parent not found, treat as a new root.
     """
 
-    def __init__(self, http, event_bus):
+    def __init__(self, http, event_bus, registry=None):
         self.http = http
         self.event_bus = event_bus
+        self.registry = registry
         self._queues: set = set()
 
     async def on_boot(self):
@@ -61,12 +62,38 @@ class SystemTracesStreamPlugin(BasePlugin):
                     "subscribers": list(r.subscribers) if r.subscribers else [],
                     "payload_keys": list(env.payload.keys()),
                     "timestamp": float(env.timestamp.timestamp()),
+                    "tool_calls": [],
                 }
             else:
                 if r.subscribers:
                     for sub in r.subscribers:
                         if sub not in merged[eid]["subscribers"]:
                             merged[eid]["subscribers"].append(sub)
+
+        if self.registry is not None:
+            by_event: dict[str, list[dict]] = {}
+            for m in self.registry.get_metrics():
+                ev_id = m.get("event_id")
+                if not ev_id:
+                    continue
+                by_event.setdefault(ev_id, []).append({
+                    "caller": m.get("caller", "system"),
+                    "tool": m["tool"],
+                    "method": m["method"],
+                    "duration_ms": m["duration_ms"],
+                    "success": m["success"],
+                    "error": m.get("error"),
+                    "timestamp": m["timestamp"],
+                })
+            for eid, node in merged.items():
+                calls = []
+                parent_id = node.get("parent_id")
+                if parent_id and parent_id not in merged and parent_id in by_event:
+                    calls.extend(by_event[parent_id])
+                if eid in by_event:
+                    calls.extend(by_event[eid])
+                node["tool_calls"] = calls
+
         return list(merged.values())
 
     def _on_event(self, record: dict):

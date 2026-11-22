@@ -54,7 +54,7 @@ class RegistryTool(BaseTool):
                 A tool that silently stopped responding may still show "OK".
             - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
             - get_metrics() -> list[dict]: Last 1000 tool call records.
-                Each record: {tool, method, duration_ms, success, timestamp}.
+                Each record: {caller, event_id, tool, method, duration_ms, success, error, timestamp}.
                 Use to build /system/metrics or feed into an observability sink.
             - add_metrics_sink(callback): Register a sink for real-time metric records.
                 Signature: callback(record: dict).

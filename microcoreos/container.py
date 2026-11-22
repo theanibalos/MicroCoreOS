@@ -5,6 +5,7 @@ import threading
 from collections import deque
 from microcoreos.registry import Registry
 from microcoreos.base_tool import ToolUnavailableError
+from microcoreos.context import current_identity_var, current_event_id_var
 
 
 class ToolNotFoundError(Exception):
@@ -35,6 +36,16 @@ class ToolProxy:
         self._tool = tool
         self._registry = registry
         self._emit_metric = emit_metric
+        self._emit_takes_error = False
+        if emit_metric is not None:
+            try:
+                params = list(inspect.signature(emit_metric).parameters.values())
+                self._emit_takes_error = (
+                    len(params) >= 5
+                    or any(p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) for p in params)
+                )
+            except (ValueError, TypeError):
+                self._emit_takes_error = False
         self._make_span = make_span  # callable(tool, method) -> context manager
         self._wrapper_cache = {}
         self._consecutive_failures = 0
@@ -70,8 +81,17 @@ class ToolProxy:
             return attr
 
         emit = self._emit_metric
+        emit_takes_error = self._emit_takes_error
         make_span = self._make_span
         tool_name = self._tool.name
+
+        def _emit_err(duration_ms: float, exc: Exception):
+            if not emit:
+                return
+            if emit_takes_error:
+                emit(tool_name, name, duration_ms, False, type(exc).__name__)
+            else:
+                emit(tool_name, name, duration_ms, False)
 
         if inspect.iscoroutinefunction(attr):
             async def wrapper(*args, **kwargs):
@@ -85,8 +105,7 @@ class ToolProxy:
                             emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                         return result
                     except Exception as e:
-                        if emit:
-                            emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                        _emit_err((time.perf_counter() - start) * 1000, e)
                         self._record_failure(e)
                         raise e
         else:
@@ -108,8 +127,7 @@ class ToolProxy:
                                         emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, True)
                                     return r
                                 except Exception as e:
-                                    if emit:
-                                        emit(tool_name, name, (time.perf_counter() - inner_start) * 1000, False)
+                                    _emit_err((time.perf_counter() - inner_start) * 1000, e)
                                     self._record_failure(e)
                                     raise
                         return _monitored()
@@ -119,8 +137,7 @@ class ToolProxy:
                         emit(tool_name, name, (time.perf_counter() - start) * 1000, True)
                     return result
                 except Exception as e:
-                    if emit:
-                        emit(tool_name, name, (time.perf_counter() - start) * 1000, False)
+                    _emit_err((time.perf_counter() - start) * 1000, e)
                     self._record_failure(e)
                     raise e
 
@@ -149,7 +166,7 @@ class Container:
 
     def add_metrics_sink(self, callback):
         """Register a sink to receive metric records on every tool call.
-        Signature: callback(record: dict) — record has: tool, method, duration_ms, success, timestamp.
+        Signature: callback(record: dict) — record has: caller, event_id, tool, method, duration_ms, success, error, timestamp.
         """
         self._metrics_sinks.append(callback)
 
@@ -157,12 +174,15 @@ class Container:
         """Return the last 1000 metric records (chronological order)."""
         return list(self._metrics_buffer)
 
-    def _emit_metric(self, tool: str, method: str, duration_ms: float, success: bool):
+    def _emit_metric(self, tool: str, method: str, duration_ms: float, success: bool, error: str | None = None):
         record = {
+            "caller": current_identity_var.get() or "system",
+            "event_id": current_event_id_var.get(),
             "tool": tool,
             "method": method,
             "duration_ms": round(duration_ms, 3),
             "success": success,
+            "error": error,
             "timestamp": time.time(),
         }
         self._metrics_buffer.append(record)

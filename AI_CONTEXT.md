@@ -15,6 +15,95 @@ For plugin development guides, critical rules, and syntax examples, see [AGENTS.
 ## 🛠️ Available Tools
 Check method signatures before implementation.
 
+### 🔧 Tool: `config` (Status: ✅)
+
+**Public Signatures:**
+```python
+def get(key: str, default: Optional[str] = None, required: bool = False) -> Optional[str]
+def require(*keys: str) -> None
+```
+
+```text
+Configuration Tool (config):
+        - PURPOSE: Validated access to environment variables for plugins.
+          Tools read their own env vars with os.getenv() — this tool is for plugins.
+        - CAPABILITIES:
+            - get(key, default=None, required=False) -> str | None:
+                Returns the value of the environment variable.
+                If required=True and the variable is not set, raises EnvironmentError.
+            - require(*keys) -> None:
+                Validates that all specified variables are set.
+                Call in on_boot() to fail early with a clear error message.
+                Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
+```
+
+### 🔧 Tool: `event_bus` (Status: ✅)
+
+**Public Signatures:**
+```python
+def add_failure_listener(cb)
+def add_listener(cb)
+def get_subscribers() -> dict
+def get_trace_history() -> List[tools.event_bus.envelope.TraceNode]
+async def publish(event_name: str, data: dict, **kwargs)
+async def request(event_name: str, data: dict, timeout: float = 5)
+async def subscribe(event_name: str, callback: Callable, group: Optional[str] = None, retries: int = 0, backoff: float = 0.5, broadcast: bool = False)
+async def unsubscribe(event_name: str, callback: Callable)
+```
+
+```text
+Universal Event Bus (event_bus):
+        - publish(event_name, data, **kwargs): Broadcast an event.
+        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
+          Listen for events. group=None derives a STABLE group from the callback identity:
+          replicas of the same plugin consume each event exactly once across the fleet,
+          while distinct plugins each get their own copy. Use group="pool" for explicit
+          worker pools, broadcast=True ONLY for instance-local concerns (every replica
+          receives a copy — e.g. local cache invalidation).
+        - request(event_name, data, timeout=5): Async RPC (returns dict).
+        - unsubscribe(event_name, callback): Stop listening.
+        - get_trace_history() -> List[TraceNode]: Last 500 event records.
+        - get_subscribers() -> dict: Current subscriber map.
+        - add_listener(callback): Sink for all events (record: dict).
+        - add_failure_listener(callback): Sink for errors (record: dict).
+        
+        CRITICAL: Subscribing callbacks receive the event envelope as their single
+        argument — read event.payload. Leave the parameter untyped (no annotation,
+        no import needed): async def on_event(self, event): print(event.payload)
+        
+        RETRIES & IDEMPOTENCY:
+        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
+        - Ensure handlers are idempotent as they may run multiple times.
+
+        DEAD-LETTER QUEUE (DLQ):
+        - Final failures are published to '_dlq.<original_event>'.
+        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
+        - Loop protection: '_dlq.*' and '_reply.*' events are never dead-lettered.
+        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
+
+        UNIVERSAL CAPABILITIES (kwargs):
+        - key: String. Strict ordering PER KEY. Without a key, do NOT assume
+          cross-event ordering: it varies by transport (total in-process,
+          partition-dependent on Kafka).
+        - priority: Integer (1-10). Importance (RabbitMQ).
+        - delay: Integer (seconds). Delivery schedule. Crash-safe only when
+          the active transport claims delay=native (see ACTIVE TRANSPORT).
+        - ttl: Float (seconds). Message expiration hint. Counted from PUBLISH
+          time and therefore INCLUDES any delay (delay=60 + ttl=30 expires
+          before it can ever be delivered).
+        - correlation_id: String. Cross-reference for RPC.
+
+        RESILIENCE:
+        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
+        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
+          (payload: event, subscriber, error, consecutive_failures) so the drop
+          is observable — subscribe to it for alerting/monitoring.
+
+        ACTIVE TRANSPORT: InProcessDriver — capability claims: {'delay': 'in_bus', 'retries': 'in_bus', 'dlq': 'in_bus'}
+        ("native" = the broker implements it, crash-safe; "in_bus" = software
+        fallback in this process' memory).
+```
+
 ### 🔧 Tool: `http` (Status: ✅)
 
 **Public Signatures:**
@@ -94,28 +183,6 @@ HTTP Server Tool (http):
               instances are NOT serializable — always call .model_dump() before returning.
 ```
 
-### 🔧 Tool: `config` (Status: ✅)
-
-**Public Signatures:**
-```python
-def get(key: str, default: Optional[str] = None, required: bool = False) -> Optional[str]
-def require(*keys: str) -> None
-```
-
-```text
-Configuration Tool (config):
-        - PURPOSE: Validated access to environment variables for plugins.
-          Tools read their own env vars with os.getenv() — this tool is for plugins.
-        - CAPABILITIES:
-            - get(key, default=None, required=False) -> str | None:
-                Returns the value of the environment variable.
-                If required=True and the variable is not set, raises EnvironmentError.
-            - require(*keys) -> None:
-                Validates that all specified variables are set.
-                Call in on_boot() to fail early with a clear error message.
-                Example: self.config.require("STRIPE_KEY", "SENDGRID_KEY")
-```
-
 ### 🔧 Tool: `telemetry` (Status: ✅)
 
 **Public Signatures:**
@@ -156,73 +223,6 @@ Telemetry Tool (telemetry):
             framework-specific spans (SQL query text, HTTP route, etc.).
         - INSTALL:
             uv add opentelemetry-sdk opentelemetry-exporter-otlp
-```
-
-### 🔧 Tool: `event_bus` (Status: ✅)
-
-**Public Signatures:**
-```python
-def add_failure_listener(cb)
-def add_listener(cb)
-def get_subscribers() -> dict
-def get_trace_history() -> List[tools.event_bus.envelope.TraceNode]
-async def publish(event_name: str, data: dict, **kwargs)
-async def request(event_name: str, data: dict, timeout: float = 5)
-async def subscribe(event_name: str, callback: Callable, group: Optional[str] = None, retries: int = 0, backoff: float = 0.5, broadcast: bool = False)
-async def unsubscribe(event_name: str, callback: Callable)
-```
-
-```text
-Universal Event Bus (event_bus):
-        - publish(event_name, data, **kwargs): Broadcast an event.
-        - subscribe(event_name, callback, group=None, retries=0, backoff=0.5, broadcast=False):
-          Listen for events. group=None derives a STABLE group from the callback identity:
-          replicas of the same plugin consume each event exactly once across the fleet,
-          while distinct plugins each get their own copy. Use group="pool" for explicit
-          worker pools, broadcast=True ONLY for instance-local concerns (every replica
-          receives a copy — e.g. local cache invalidation).
-        - request(event_name, data, timeout=5): Async RPC (returns dict).
-        - unsubscribe(event_name, callback): Stop listening.
-        - get_trace_history() -> List[TraceNode]: Last 500 event records.
-        - get_subscribers() -> dict: Current subscriber map.
-        - add_listener(callback): Sink for all events (record: dict).
-        - add_failure_listener(callback): Sink for errors (record: dict).
-        
-        CRITICAL: Subscribing callbacks receive the event envelope as their single
-        argument — read event.payload. Leave the parameter untyped (no annotation,
-        no import needed): async def on_event(self, event): print(event.payload)
-        
-        RETRIES & IDEMPOTENCY:
-        - If 'retries' > 0, the handler will be re-executed on failure with exponential backoff.
-        - Ensure handlers are idempotent as they may run multiple times.
-
-        DEAD-LETTER QUEUE (DLQ):
-        - Final failures are published to '_dlq.<original_event>'.
-        - Payload includes 'original' envelope, 'subscriber', 'error', and 'attempts'.
-        - Loop protection: '_dlq.*' and '_reply.*' events are never dead-lettered.
-        - Toggle via EVENT_BUS_DLQ_ENABLED (default: true).
-
-        UNIVERSAL CAPABILITIES (kwargs):
-        - key: String. Strict ordering PER KEY. Without a key, do NOT assume
-          cross-event ordering: it varies by transport (total in-process,
-          partition-dependent on Kafka).
-        - priority: Integer (1-10). Importance (RabbitMQ).
-        - delay: Integer (seconds). Delivery schedule. Crash-safe only when
-          the active transport claims delay=native (see ACTIVE TRANSPORT).
-        - ttl: Float (seconds). Message expiration hint. Counted from PUBLISH
-          time and therefore INCLUDES any delay (delay=60 + ttl=30 expires
-          before it can ever be delivered).
-        - correlation_id: String. Cross-reference for RPC.
-
-        RESILIENCE:
-        - A subscriber that reaches 5 consecutive FINAL failures for a specific event is auto-unsubscribed.
-        - Each auto-unsubscribe publishes 'system.subscriber.dropped'
-          (payload: event, subscriber, error, consecutive_failures) so the drop
-          is observable — subscribe to it for alerting/monitoring.
-
-        ACTIVE TRANSPORT: InProcessDriver — capability claims: {'delay': 'in_bus', 'retries': 'in_bus', 'dlq': 'in_bus'}
-        ("native" = the broker implements it, crash-safe; "in_bus" = software
-        fallback in this process' memory).
 ```
 
 ### 🔧 Tool: `context_manager` (Status: ✅)
@@ -333,7 +333,7 @@ Systems Registry Tool (registry):
                 A tool that silently stopped responding may still show "OK".
             - get_domain_metadata() -> dict: Detailed analysis of models and schemas.
             - get_metrics() -> list[dict]: Last 1000 tool call records.
-                Each record: {tool, method, duration_ms, success, timestamp}.
+                Each record: {caller, event_id, tool, method, duration_ms, success, error, timestamp}.
                 Use to build /system/metrics or feed into an observability sink.
             - add_metrics_sink(callback): Register a sink for real-time metric records.
                 Signature: callback(record: dict).
@@ -421,13 +421,13 @@ Async SQLite Persistence Tool (sqlite):
   - `GET /system/events/schemas`
     - **res**: EventSchemasData(schemas: dict)
   - `GET /system/metrics`
-    - **res**: list[MetricRecord(tool: str, method: str, duration_ms: float, success: bool, timestamp: float)]
+    - **res**: list[MetricRecord(caller: str, event_id: Optional[str], tool: str, method: str, duration_ms: float, success: bool, error: Optional[str], timestamp: float)]
   - `GET /system/status`
     - **res**: SystemStatusData(tools: list[ToolStatus(name: str, status: str, message: Optional[str])], plugins: list[PluginStatus(name: str, domain: Optional[str], status: str, error: Optional[str], tools: list[str])])
   - `GET /system/traces/flat`
-    - **res**: list[TraceFlatNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int])]
+    - **res**: list[TraceFlatNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int], tool_calls: list[TraceToolCall])]
   - `GET /system/traces/tree`
-    - **res**: list[TraceNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int], children: list['TraceNode'])]
+    - **res**: list[TraceNode(id: str, parent_id: Optional[str], event: str, emitter: str, subscribers: list[str], payload_keys: list[str], timestamp: float, key: Optional[str], priority: Optional[int], delay: Optional[int], tool_calls: list[TraceToolCall], children: list['TraceNode'])]
   - `SSE /system/events/stream`
   - `SSE /system/logs/stream`
   - `SSE /system/metrics/stream`

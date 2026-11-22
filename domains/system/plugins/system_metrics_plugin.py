@@ -8,10 +8,13 @@ from microcoreos import BasePlugin
 # ── Modelos ───────────────────────────────────────────────────────────────────
 
 class MetricRecord(BaseModel):
+    caller: str = "system"
+    event_id: Optional[str] = None
     tool: str
     method: str
     duration_ms: float
     success: bool
+    error: Optional[str] = None
     timestamp: float
 
 class SystemMetricsResponse(BaseModel):
@@ -28,7 +31,7 @@ class SystemMetricsPlugin(BasePlugin):
     1. GET /system/metrics        — last 1000 records (snapshot).
     2. GET /system/metrics/stream — SSE stream, one record per tool call.
 
-    Each record: {tool, method, duration_ms, success, timestamp}
+    Each record: {caller, event_id, tool, method, duration_ms, success, error, timestamp}
     duration_ms uses time.perf_counter() — microsecond precision.
     """
 

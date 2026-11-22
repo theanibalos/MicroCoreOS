@@ -183,11 +183,49 @@ def test_container_metrics_sink():
     assert sink_records[0]["tool"] == "simple"
     assert sink_records[0]["method"] == "do_work"
     assert sink_records[0]["success"] is True
+    assert sink_records[0]["caller"] == "system"
+    assert sink_records[0]["event_id"] is None
+    assert sink_records[0]["error"] is None
 
     # Verificar que el buffer interno del contenedor lo haya guardado
     history = container.get_metrics()
     assert len(history) == 1
     assert history[0]["method"] == "do_work"
+
+
+def test_container_metrics_captures_caller_event_id_and_error():
+    from microcoreos.context import current_identity_var, current_event_id_var
+
+    container = Container()
+    container.register(FailingTool())
+    proxy = container.get("unstable_tool")
+
+    t_id = current_event_id_var.set("evt-123")
+    t_ident = current_identity_var.set("orders.CreateOrderPlugin.execute")
+    try:
+        proxy.sync_ok()
+        with pytest.raises(ValueError):
+            proxy.sync_fail()
+    finally:
+        current_event_id_var.reset(t_id)
+        current_identity_var.reset(t_ident)
+
+    history = container.get_metrics()
+    assert len(history) == 2
+
+    assert history[0]["caller"] == "orders.CreateOrderPlugin.execute"
+    assert history[0]["event_id"] == "evt-123"
+    assert history[0]["tool"] == "unstable_tool"
+    assert history[0]["method"] == "sync_ok"
+    assert history[0]["success"] is True
+    assert history[0]["error"] is None
+
+    assert history[1]["caller"] == "orders.CreateOrderPlugin.execute"
+    assert history[1]["event_id"] == "evt-123"
+    assert history[1]["tool"] == "unstable_tool"
+    assert history[1]["method"] == "sync_fail"
+    assert history[1]["success"] is False
+    assert history[1]["error"] == "ValueError"
 
 
 def test_proxy_setattr_delegation(registry):

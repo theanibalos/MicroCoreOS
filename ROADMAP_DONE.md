@@ -917,3 +917,9 @@ mid-handler another replica reclaims via XAUTOCLAIM (idle >
   an error finding rather than silently reporting empty findings.
 - Runtime endpoint `GET /system/lint` now includes `discovery_naming_violations` in `SystemLintData`.
 - Tests: `tests/dev/test_lint_runner.py`, `tests/dev/test_pipeline.py`.
+
+**Issue 56 — ✅ Unified causal observability: `caller`, `event_id` and `error` on tool metrics & trace nodes**
+- Shipped. `Container._emit_metric()` and `ToolProxy` now record `caller` (`current_identity_var.get()`), `event_id` (`current_event_id_var.get()`), and `error` (`type(exc).__name__` on failure, `None` on success) on every tool call record in stdlib-only core.
+- `SystemMetricsPlugin` (`GET /system/metrics` and `/system/metrics/stream`) exposes `caller`, `event_id`, and `error` on every `MetricRecord` — covering both plugins that emit events and plugins that do not (e.g. pure HTTP reads where `event_id` carries the HTTP `request_id`, or boot/background calls where `event_id` is `None`).
+- `SystemTracesPlugin` (`GET /system/traces/tree`, `GET /system/traces/flat`) and `SystemTracesStreamPlugin` (`GET /system/traces/stream`) inject `registry` and attach matching `tool_calls` (`TraceToolCall`) to each causal event node.
+- Tests: `tests/core/test_tool_proxy.py`, `tests/system/test_system_traces_plugin.py`.

@@ -13,10 +13,10 @@
 
 | Area | Status / next work |
 |---|---|
-| Core lifecycle | Issue 49 shipped (see ROADMAP_DONE.md) |
-| Harness/devtools | Optional event types 47; unified check report 53, import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
-| HTTP tool | Issues 48 & 51 shipped (see ROADMAP_DONE.md) |
-| Distribution | Packaged tools 44, demo 43, test distribution 42 (partial), marketplace 40 (deferred) |
+| Core lifecycle | Issues 49 & 56 shipped (see ROADMAP_DONE.md) |
+| Harness/devtools | Automatic checklist verification 57; optional event types 47; unified check report 53, import gap 46 & signatures 50 shipped (see ROADMAP_DONE.md); remaining scopes 14/37/38 |
+| HTTP tool | Issues 48 & 51 shipped (see ROADMAP_DONE.md); validation and exception data minimization proposed in 55 |
+| Distribution | Packaged tools 44, demo 43, test distribution 42 (partial), marketplace 40 (partial: external extras shipped in PR #14) |
 | Event infrastructure | TLS/auth 45; ACL 16 and runtime contracts 23 still unimplemented; Context isolation & explicit emitter 54 |
 | Integrity | Outbox 28 requires a confirmed transport handoff first |
 | Exploratory | Starlette 10, event locality 24, driver optimizations 36, payload encryption 52 |
@@ -57,6 +57,28 @@ remain explicitly unverifiable. This is independent of Issue 23's runtime guard.
 ---
 
 **Issue 53 — ✅ Unified checker report, application-owned CI policy (shipped; see [ROADMAP_DONE.md](ROADMAP_DONE.md))**
+
+---
+
+**Issue 56 — ✅ Unified causal observability: `caller`, `event_id` and `error` on tool metrics & trace nodes (shipped; see [ROADMAP_DONE.md](ROADMAP_DONE.md))**
+
+---
+
+**Issue 57 — 🟡 Automatic checklist verification & interrupted-wave recovery (`plan sync` / `status`)**
+
+Today `plans/active_plan.md` is generated with unchecked `- [ ]` boxes and relies on the coordinator agent manually editing the markdown file as tasks finish. If an agent session runs out of tokens or the machine loses power mid-wave (after several write-only executors have already written their files on disk), `active_plan.md` remains stale and does not reflect what was actually completed or left half-written.
+
+**Design & scope:**
+
+1. **Deterministic on-disk & test verification in `plan sync` / `status`:**
+   - **Phase 0 tasks (`migrations`, `models`, `tools`, `microcoreos migrate`)**: automatically mark `- [x]` when the declared files exist on disk, declared tables are present in the live schema, and `AI_CONTEXT.md` is fresher than the migrations.
+   - **Phase 2 feature tasks (`file` + `test`)**:
+     - Neither file exists → `- [ ]` (Pending).
+     - Only one file exists, or `probe` / `pytest` fails on the pair → `- [ ]` flagged as `INCOMPLETE / BROKEN (delete and respawn executor)`. Because plugins are disposable black-box blocks written from a frozen prefix (`AI_CONTEXT.md` + `plans/active_plan.yaml`), interrupted or broken blocks are never patched line-by-line; they are deleted and regenerated from scratch.
+     - Both files exist, pass `plan probe` against the active plan contract, and pass their unit test → automatically mark `- [x]`.
+   - **Phase 3 flow tasks (`e2e_test`, `sad_path_test`, `idempotency_test`)**: automatically mark `- [x]` when the declared test exists and passes `pytest`.
+2. **Pre-wave clean for modified features:**
+   - When a plan modifies an existing feature whose file already exists on disk from an earlier plan, pre-wave sync treats unverified targets as disposable replacements (overwritten from scratch by the write-only executor rather than read and patched, preserving the byte-identical prompt cache prefix across the wave).
 
 ---
 
@@ -505,13 +527,41 @@ longer exists.
 
 ---
 
+**Issue 55 — 🟡 HTTP validation and exception data minimization (proposed)**
+
+Issue 11 standardized the 422 envelope; it did not address sensitive data.
+`HttpServerTool.setup()` currently returns `RequestValidationError.errors()`
+including rejected `input` and potentially `ctx` and custom messages. Returning
+input to the client that submitted it is not by itself proof of a vulnerability,
+although responses may also reach logs, intermediaries or monitoring systems.
+`pipeline.py` and the WebSocket handler also print unhandled exception text,
+which can contain secrets or personal data from dependencies.
+
+Define and test a safe 422 contract that preserves useful field locations and
+controlled validation messages without echoing input, arbitrary validator text
+or context. Consider dynamic dictionary keys in locations as potentially
+sensitive too. Maintain the standard envelope; document compatibility and
+migration for clients relying on existing `error`/`details` fields. Separately
+choose a diagnostic policy for HTTP and WebSocket exceptions that avoids raw
+secret-bearing messages while retaining useful correlation and operational
+visibility; do not assume an internal log sink is safe by default.
+
+Acceptance: HTTP tests with password/token inputs and custom validator errors,
+including nested and dynamic keys, show no secrets in response or logs; tests
+cover HTTP and WebSocket exception paths, preserve intended status codes and
+safe validation information, and exercise existing clients/contracts. Review
+scaffolded copies and documentation. Do not claim this eliminates leaks from
+application plugins, external middleware or all logging sinks.
+
+---
+
 **Issue 10 — 🔬 Migrate HttpServerTool from FastAPI to pure Starlette (exploratory)**
 
 FastAPI is already a thin wrapper over Starlette. Most imports in `http_server_tool.py` are Starlette classes re-exported by FastAPI (`Request`, `WebSocket`, `JSONResponse`, `StreamingResponse`, `StaticFiles`, `CORSMiddleware`, `run_in_threadpool`). What is exclusively FastAPI is minimal: the app object, `Depends()` for GET query params, `response_model`/`tags` in `add_api_route`, and the auto-generated docs at `/docs`.
 
 ---
 
-**Issue 40 — 🟡 Drop-in marketplace for tools and domains (deferred until one exists)**
+**Issue 40 — 🟡 Drop-in marketplace for tools and domains (PARTIALLY DELIVERED — PR #14)**
 
 WordPress plugins land in `wp-content/plugins/`, VS Code extensions in the
 user's extensions dir — both are "drop a directory in, it is discovered". The
@@ -540,13 +590,14 @@ answer is already executable: `tests/tools/db/test_db_parity.py`,
 A tool published as `db` must pass the db parity suite. Written for Issue 22,
 reusable as-is.
 
-**Already delivered:** `microcoreos add` installs the bundled extras through
-`microcoreos/catalog.py`; this is not a third-party marketplace client.
-**Still missing:** a third-party catalog/manifest (name, version, author,
-contract and env settings) and a trust story, since
-drop-in code runs at boot with full access — the security history of WordPress
-plugins is the cautionary tale. Worth deciding before third parties publish,
-not before.
+**Already delivered:**
+- `microcoreos add` installs the bundled extras through `microcoreos/catalog.py`.
+- `microcoreos extra install <source> [--ref REF]` + `microcoreos extra enable <name> [--no-install]` (PR #14, `microcoreos/external_extras.py`) installs external local/Git extras via `microcoreos-extra.toml` in two explicit steps: staging components inactive under `extras/installed/<name>/` (with URL credential redaction, symlink/traversal checks, and commit pinning) before copying to `tools/`, `domains/`, or `tools/event_bus/` without overwriting existing paths or `.env` values.
+
+**Still missing / follow-up improvements:**
+- Lifecycle management commands: `extra list` (installed/enabled status + commit), `extra remove`/`disable`, and `extra update`.
+- Resolve the `container.py` silent `tool.name` collision prerequisite above (folder collisions are blocked by `extra enable`, but two distinct folders declaring the same `BaseTool.name` still overwrite silently at boot).
+- Optional third-party catalog index, publisher metadata/signatures, and running parity/check gates automatically post-enable.
 
 ---
 

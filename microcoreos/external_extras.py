@@ -56,6 +56,8 @@ def _safe_source(source: str) -> str:
     if "://" in source:
         parsed = urlsplit(source)
         host = parsed.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
         if parsed.port:
             host = f"{host}:{parsed.port}"
         return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
@@ -458,7 +460,13 @@ def command(argv: list[str]) -> int:
         return 0
     action, args = argv[0], argv[1:]
     if action == "install":
-        if not args or args[0].startswith("-"):
+        if not args:
+            print(USAGE)
+            return 2
+        if args[0] in ("-h", "--help"):
+            print(USAGE)
+            return 0
+        if args[0].startswith("-"):
             print(USAGE)
             return 2
         source, *options = args
@@ -483,16 +491,16 @@ def command(argv: list[str]) -> int:
             print(f"[MicroCoreOS] Could not install the extra: {exc}")
             return 2
     if action == "enable":
-        no_install = "--no-install" in args
-        positional = [arg for arg in args if not arg.startswith("-")]
-        if len(positional) != 1 or any(
-            arg not in ("--no-install", "-h", "--help") for arg in args if arg.startswith("-")
-        ):
-            print(USAGE)
-            return 2
         if "-h" in args or "--help" in args:
             print(USAGE)
             return 0
+        no_install = "--no-install" in args
+        positional = [arg for arg in args if not arg.startswith("-")]
+        if len(positional) != 1 or any(
+            arg != "--no-install" for arg in args if arg.startswith("-")
+        ):
+            print(USAGE)
+            return 2
         try:
             return enable(positional[0], no_install=no_install)
         except ExtraError as exc:

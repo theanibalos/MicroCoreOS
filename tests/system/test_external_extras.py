@@ -238,7 +238,15 @@ def test_invalid_git_ref_is_rejected_before_clone(tmp_path, monkeypatch, capsys)
 
 
 def test_cli_help_describes_two_phase_flow(capsys):
-    assert cli.main(["extra", "--help"]) == 0
-    output = capsys.readouterr().out
-    assert "extra install" in output
-    assert "extra enable" in output
+    for argv in (["extra", "--help"], ["extra", "install", "--help"], ["extra", "enable", "--help"]):
+        assert cli.main(argv) == 0
+        output = capsys.readouterr().out
+        assert "extra install" in output
+        assert "extra enable" in output
+
+
+def test_safe_source_preserves_ipv6_brackets():
+    assert (
+        external_extras._safe_source("https://user:secret@[::1]:8443/org/mailer.git?token=x")
+        == "https://[::1]:8443/org/mailer.git"
+    )
