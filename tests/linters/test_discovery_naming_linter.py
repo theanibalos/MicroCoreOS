@@ -139,3 +139,11 @@ def test_the_safe_name_is_not_flagged(tmp_path):
 def test_real_repo_has_no_test_the_kernel_would_import():
     """CI gate: this shipped once and broke `microcoreos add auth` in a packaged install."""
     assert check_discovery_naming() == []
+
+
+def test_installed_external_extras_staging_is_skipped(tmp_path):
+    staged = tmp_path / "extras" / "installed" / "mailer" / "tests" / "test_bad_plugin.py"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("def test_dummy(): pass\n", encoding="utf-8")
+
+    assert check_discovery_naming(root=str(tmp_path)) == []

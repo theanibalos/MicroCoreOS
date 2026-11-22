@@ -44,6 +44,7 @@ Usage:
   microcoreos add <extra> [--no-install]          Activate a bundled extra
   microcoreos extra install <source> [--ref REF]  Install an external extra, inactive
   microcoreos extra enable <name> [--no-install]  Activate an installed external extra
+  microcoreos extra list                          List installed external extras
   microcoreos upgrade [--apply]                   Report/apply upstream changes
   microcoreos [run] [--boot-tool <tool_name>]     Boot the Kernel in this directory
   microcoreos dev                                 Boot with auto-reload on .py changes

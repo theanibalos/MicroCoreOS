@@ -87,7 +87,7 @@ path = "hatch_build.py"
 # when `microcoreos add` moves it into tools/. This repo installs no extras,
 # so it collects extras/ too — a generated project collects only tests/ and
 # tools/, and an extra's tests join the suite the moment it is installed.
-testpaths = ["tests", "tools", "extras"]
+testpaths = ["tests", "tools", "extras/available_tools", "extras/available_domains"]
 pythonpath = ["."]
 markers = [
     "migrations(*domains): apply these domains' real migrations to the `db` fixture",

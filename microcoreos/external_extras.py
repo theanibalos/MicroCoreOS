@@ -444,9 +444,52 @@ def enable(name: str, no_install: bool = False) -> int:
     return 0
 
 
+def list_extras() -> int:
+    """List external extras staged under extras/installed/."""
+    root = _project_root()
+    stage_parent = root / "extras" / "installed"
+    if not stage_parent.is_dir():
+        print("No external extras installed.")
+        return 0
+
+    entries = sorted(
+        p for p in stage_parent.iterdir()
+        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+    )
+    if not entries:
+        print("No external extras installed.")
+        return 0
+
+    for entry in entries:
+        meta_path = entry / INSTALL_META
+        status = "unknown"
+        details: list[str] = []
+        if meta_path.is_file() and not meta_path.is_symlink():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(meta, dict):
+                    enabled = meta.get("enabled")
+                    if enabled is True:
+                        status = "enabled"
+                    elif enabled is False:
+                        status = "inactive"
+                    if meta.get("source"):
+                        details.append(f"source={meta['source']}")
+                    if meta.get("ref"):
+                        details.append(f"ref={meta['ref']}")
+                    if meta.get("commit"):
+                        details.append(f"commit={str(meta['commit'])[:12]}")
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                status = "invalid metadata"
+        suffix = ("  " + "  ".join(details)) if details else ""
+        print(f"  {entry.name}  [{status}]{suffix}")
+    return 0
+
+
 USAGE = """Usage:
   microcoreos extra install <local-path|git-url> [--ref <ref>]
   microcoreos extra enable <name> [--no-install]
+  microcoreos extra list
 
 Install stages an inactive extra. Enable copies its declared components to
 tools/, domains/, or tools/event_bus/ and applies its dependencies and .env defaults.
@@ -508,6 +551,21 @@ def command(argv: list[str]) -> int:
             return 2
         except OSError as exc:
             print(f"[MicroCoreOS] Could not enable the extra: {exc}")
+            return 2
+    if action == "list":
+        if "-h" in args or "--help" in args:
+            print(USAGE)
+            return 0
+        if args:
+            print(USAGE)
+            return 2
+        try:
+            return list_extras()
+        except ExtraError as exc:
+            print(f"[MicroCoreOS] {exc}")
+            return 2
+        except OSError as exc:
+            print(f"[MicroCoreOS] Could not list extras: {exc}")
             return 2
     print(f"Unknown extra operation: {action}\n\n{USAGE}")
     return 2

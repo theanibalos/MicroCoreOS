@@ -107,6 +107,7 @@ commit:
 ```bash
 uv run microcoreos extra install ../microcoreos-mail
 uv run microcoreos extra enable mail
+uv run microcoreos extra list
 ```
 
 Installation stages the declared components under

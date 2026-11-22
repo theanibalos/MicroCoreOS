@@ -250,3 +250,27 @@ def test_safe_source_preserves_ipv6_brackets():
         external_extras._safe_source("https://user:secret@[::1]:8443/org/mailer.git?token=x")
         == "https://[::1]:8443/org/mailer.git"
     )
+
+
+def test_extra_list_shows_empty_inactive_and_enabled_states(tmp_path, monkeypatch, capsys):
+    project = _project(tmp_path / "project")
+    source = _source(tmp_path / "source")
+    monkeypatch.chdir(project)
+
+    assert cli.main(["extra", "list"]) == 0
+    assert "No external extras installed." in capsys.readouterr().out
+
+    assert cli.main(["extra", "install", str(source)]) == 0
+    assert cli.main(["extra", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "mailer" in out
+    assert "[inactive]" in out
+
+    assert cli.main(["extra", "enable", "mailer", "--no-install"]) == 0
+    assert cli.main(["extra", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "mailer" in out
+    assert "[enabled]" in out
+
+    assert cli.main(["extra", "list", "--help"]) == 0
+    assert "extra list" in capsys.readouterr().out

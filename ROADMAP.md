@@ -592,10 +592,10 @@ reusable as-is.
 
 **Already delivered:**
 - `microcoreos add` installs the bundled extras through `microcoreos/catalog.py`.
-- `microcoreos extra install <source> [--ref REF]` + `microcoreos extra enable <name> [--no-install]` (PR #14, `microcoreos/external_extras.py`) installs external local/Git extras via `microcoreos-extra.toml` in two explicit steps: staging components inactive under `extras/installed/<name>/` (with URL credential redaction, symlink/traversal checks, and commit pinning) before copying to `tools/`, `domains/`, or `tools/event_bus/` without overwriting existing paths or `.env` values.
+- `microcoreos extra install <source> [--ref REF]`, `microcoreos extra enable <name> [--no-install]`, and `microcoreos extra list` (`microcoreos/external_extras.py`) install external local/Git extras via `microcoreos-extra.toml` in two explicit steps: staging components inactive under `extras/installed/<name>/` (with URL credential redaction, symlink/traversal checks, and commit pinning) before copying to `tools/`, `domains/`, or `tools/event_bus/` without overwriting existing paths or `.env` values.
 
 **Still missing / follow-up improvements:**
-- Lifecycle management commands: `extra list` (installed/enabled status + commit), `extra remove`/`disable`, and `extra update`.
+- Lifecycle management commands: `extra remove`/`disable` and `extra update`.
 - Resolve the `container.py` silent `tool.name` collision prerequisite above (folder collisions are blocked by `extra enable`, but two distinct folders declaring the same `BaseTool.name` still overwrite silently at boot).
 - Optional third-party catalog index, publisher metadata/signatures, and running parity/check gates automatically post-enable.
 

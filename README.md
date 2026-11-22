@@ -83,6 +83,7 @@ dependencies. Then enable it from the project root:
 ```bash
 uv run microcoreos extra install https://github.com/acme/microcoreos-mail.git --ref v1.2.0
 uv run microcoreos extra enable mail
+uv run microcoreos extra list
 ```
 
 The repository must contain a `microcoreos-extra.toml` manifest. It declares a

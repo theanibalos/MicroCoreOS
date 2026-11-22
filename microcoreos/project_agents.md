@@ -130,6 +130,7 @@ uv run -m pytest tests/test_file.py                     # Run a single test
 docker compose -f dev_infra/docker-compose.yml up -d    # Start dev infrastructure (PostgreSQL)
 microcoreos extra install <source> [--ref REF]          # Stage an external extra, inactive
 microcoreos extra enable <name> [--no-install]          # Copy it into active tool/domain paths
+microcoreos extra list                                  # List staged/enabled external extras
 ```
 
 The plan pipeline — prefix with `uv run` if the package is installed in a venv:

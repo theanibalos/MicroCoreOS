@@ -17,12 +17,17 @@ DISCOVERY_RULES = {
 
 
 def _iter_source_files(base_dir: str, *roots: str) -> Iterator[str]:
+    extras_installed = os.path.normpath(os.path.join(base_dir, "extras", "installed"))
     for root in roots:
         target = os.path.join(base_dir, root) if not os.path.isabs(root) else root
         if not os.path.isdir(target):
             continue
         for current, dirs, files in os.walk(target):
-            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            dirs[:] = sorted(
+                d for d in dirs
+                if d != "__pycache__"
+                and os.path.normpath(os.path.join(current, d)) != extras_installed
+            )
             for filename in sorted(files):
                 if filename.endswith(".py") and filename != "__init__.py":
                     yield os.path.join(current, filename)
