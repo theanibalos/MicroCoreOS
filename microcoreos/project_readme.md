@@ -82,6 +82,40 @@ nothing happens at all, since the Kernel only discovers what is under `tools/`
 and `domains/`. `--no-install` skips the dependency step if you manage it
 yourself.
 
+## Install an external extra without activating it
+
+External extras are installed first and activated separately. The source
+directory or Git repository must have a `microcoreos-extra.toml` at its root.
+For example:
+
+```toml
+name = "mail"
+python_dependencies = ["some-mail-client>=1"]
+
+[environment]
+MAIL_HOST = "localhost"
+
+[[components]]
+kind = "domain"
+source = "domains/mail"
+target = "mail"
+```
+
+Install from a local path or Git URL; `--ref` selects a Git branch, tag, or
+commit:
+
+```bash
+uv run microcoreos extra install ../microcoreos-mail
+uv run microcoreos extra enable mail
+```
+
+Installation stages the declared components under
+`extras/installed/<name>/`, records the resolved Git commit, and leaves them
+inactive. Later, `microcoreos extra enable <name>` installs the dependencies
+and copies the components to their active destinations. The staged source
+remains intact. Use `--no-install` to manage Python dependencies yourself.
+Existing destinations are not overwritten.
+
 ## Work with an AI agent
 
 `AGENTS.md` is the entry point — point your agent at it. It sets the reading
